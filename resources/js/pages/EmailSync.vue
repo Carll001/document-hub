@@ -1,23 +1,37 @@
 <script setup lang="ts">
-import { Form, Head, usePage } from '@inertiajs/vue3';
-import { computed, ref, watch } from 'vue';
-import Heading from '@/components/Heading.vue';
+import { Form, Head } from '@inertiajs/vue3';
+import {
+    ArrowDownToLine,
+    LoaderCircle,
+    Mail,
+    Paperclip,
+    RefreshCcw,
+    Search,
+} from 'lucide-vue-next';
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { toast } from 'vue-sonner';
 import InputError from '@/components/InputError.vue';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import {
     Card,
+    CardAction,
     CardContent,
     CardDescription,
+    CardFooter,
     CardHeader,
     CardTitle,
 } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Separator } from '@/components/ui/separator';
-import AppHeaderLayout from '@/layouts/app/AppHeaderLayout.vue';
-import { dashboard } from '@/routes';
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from '@/components/ui/select';
+import AppLayout from '@/layouts/AppLayout.vue';
 import emailSync from '@/routes/email-sync';
 import type { BreadcrumbItem } from '@/types';
 
@@ -26,6 +40,7 @@ type EmailAttachment = {
     fileName: string;
     fileSize: number | null;
     contentType: string | null;
+    isInline: boolean;
     downloadUrl: string;
 };
 
@@ -37,6 +52,8 @@ type EmailRecord = {
     subject: string | null;
     bodyPreview: string | null;
     bodyText: string | null;
+    hasHtmlBody: boolean;
+    htmlUrl: string | null;
     attachments: EmailAttachment[];
     receivedAt: string | null;
     syncedAt: string | null;
@@ -92,26 +109,27 @@ type BodySegment = {
     href?: string;
 };
 
+type InboxFilter = 'all' | 'attachments';
+
 const props = defineProps<Props>();
 
-const breadcrumbItems: BreadcrumbItem[] = [
+const breadcrumbs: BreadcrumbItem[] = [
     {
-        title: 'Dashboard',
-        href: dashboard(),
-    },
-    {
-        title: 'Email sync',
+        title: 'Inbox',
         href: emailSync.index(),
     },
 ];
-
-const page = usePage();
 
 const storedEmails = ref<EmailRecord[]>([...props.emails]);
 const hasMoreEmails = ref(props.hasMoreEmails);
 const nextCursor = ref(props.nextCursor);
 const isLoadingMore = ref(false);
 const loadMoreError = ref<string | null>(null);
+const expandedBodyEmailIds = ref<number[]>([]);
+const searchTerm = ref('');
+const inboxFilter = ref<InboxFilter>('all');
+const selectedEmailId = ref<number | null>(props.emails[0]?.id ?? null);
+const renderedEmailFrame = ref<HTMLIFrameElement | null>(null);
 const backfillMode = ref(
     props.backfill.presets[0] ? String(props.backfill.presets[0]) : 'all',
 );
@@ -124,6 +142,10 @@ const customBackfillLimit = ref(
     ),
 );
 
+const BODY_TRUNCATE_LIMIT = 1200;
+const PH_TIME_ZONE = 'Asia/Manila';
+let renderedEmailResizeObserver: ResizeObserver | null = null;
+
 watch(
     () => [props.emails, props.hasMoreEmails, props.nextCursor] as const,
     ([emails, hasMore, cursor]) => {
@@ -131,12 +153,11 @@ watch(
         hasMoreEmails.value = hasMore;
         nextCursor.value = cursor;
         loadMoreError.value = null;
+        expandedBodyEmailIds.value = expandedBodyEmailIds.value.filter((id) =>
+            emails.some((email) => email.id === id),
+        );
     },
     { deep: true },
-);
-
-const signedInUserEmail = computed(
-    () => page.props.auth?.user?.email ?? 'Unavailable',
 );
 
 const canBackfill = computed(() => props.stats.totalStored > 0);
@@ -155,28 +176,196 @@ const syncResultSummary = computed(() => {
     return `${result.fetched} fetched, ${result.created} created, ${result.updated} updated in ${result.mailbox}.`;
 });
 
+watch(
+    () =>
+        [
+            props.flash.success,
+            props.flash.error,
+            syncResultSummary.value,
+        ] as const,
+    ([success, error, summary]) => {
+        if (success) {
+            toast.success(success, {
+                description: summary ?? undefined,
+            });
+
+            return;
+        }
+
+        if (error) {
+            toast.error(error);
+        }
+    },
+    { immediate: true },
+);
+
 const loadMoreButtonLabel = computed(() =>
     isLoadingMore.value ? 'Loading older email...' : 'Load more',
 );
+
+const filteredEmails = computed(() => {
+    const query = searchTerm.value.trim().toLowerCase();
+
+    return storedEmails.value.filter((email) => {
+        if (
+            inboxFilter.value === 'attachments' &&
+            visibleAttachments(email).length === 0
+        ) {
+            return false;
+        }
+
+        if (query === '') {
+            return true;
+        }
+
+        return emailSearchableText(email).includes(query);
+    });
+});
+
+watch(
+    () => filteredEmails.value.map((email) => email.id),
+    (emailIds) => {
+        if (
+            selectedEmailId.value !== null &&
+            emailIds.includes(selectedEmailId.value)
+        ) {
+            return;
+        }
+
+        selectedEmailId.value = emailIds[0] ?? null;
+    },
+    { immediate: true },
+);
+
+const selectedEmail = computed(
+    () =>
+        filteredEmails.value.find(
+            (email) => email.id === selectedEmailId.value,
+        ) ?? null,
+);
+
+const selectedEmailBodyLines = computed(() =>
+    bodyLines(
+        selectedEmail.value ? bodyTextForDisplay(selectedEmail.value) : null,
+    ),
+);
+
+const selectedEmailAttachments = computed(() =>
+    selectedEmail.value ? visibleAttachments(selectedEmail.value) : [],
+);
+
+const selectedEmailHtmlUrl = computed(() =>
+    selectedEmail.value?.hasHtmlBody ? selectedEmail.value.htmlUrl : null,
+);
+
+const emptyListMessage = computed(() => {
+    if (searchTerm.value.trim() !== '') {
+        return 'No synced email matches your search yet.';
+    }
+
+    if (storedEmails.value.length === 0) {
+        return 'No synced email yet. Sync your inbox to build the list.';
+    }
+
+    if (inboxFilter.value === 'attachments') {
+        return 'No synced email with attachments in the currently loaded list.';
+    }
+
+    return 'No email available right now.';
+});
+
+const emptyDetailMessage = computed(() => {
+    if (searchTerm.value.trim() !== '' || inboxFilter.value === 'attachments') {
+        return 'Choose a message from the filtered list once one appears.';
+    }
+
+    return 'Select a synced email to read it here.';
+});
+
+function setInboxFilter(filter: InboxFilter): void {
+    inboxFilter.value = filter;
+}
+
+function selectEmail(emailId: number): void {
+    selectedEmailId.value = emailId;
+}
 
 function formatDateTime(
     value: string | null,
     fallback = 'Unavailable',
 ): string {
-    if (!value) {
+    const date = parseDateValue(value);
+
+    if (!date) {
         return fallback;
+    }
+
+    return `${new Intl.DateTimeFormat('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+        timeZone: PH_TIME_ZONE,
+    }).format(date)} PH time`;
+}
+
+function formatRelativeTime(
+    value: string | null,
+    fallback = 'Unknown',
+): string {
+    const date = parseDateValue(value);
+
+    if (!date) {
+        return fallback;
+    }
+
+    const diffInSeconds = Math.round((date.getTime() - Date.now()) / 1000);
+    const formatter = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
+    const units = [
+        ['year', 60 * 60 * 24 * 365],
+        ['month', 60 * 60 * 24 * 30],
+        ['week', 60 * 60 * 24 * 7],
+        ['day', 60 * 60 * 24],
+        ['hour', 60 * 60],
+        ['minute', 60],
+    ] as const;
+
+    for (const [unit, seconds] of units) {
+        if (Math.abs(diffInSeconds) >= seconds) {
+            return formatter.format(Math.round(diffInSeconds / seconds), unit);
+        }
+    }
+
+    return 'just now';
+}
+
+function parseDateValue(value: string | null): Date | null {
+    if (!value) {
+        return null;
     }
 
     const date = new Date(value);
 
-    if (Number.isNaN(date.getTime())) {
-        return fallback;
+    return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function emailTimestampForDisplay(email: EmailRecord): string | null {
+    const receivedAt = parseDateValue(email.receivedAt);
+    const syncedAt = parseDateValue(email.syncedAt);
+
+    if (!receivedAt) {
+        return email.syncedAt;
     }
 
-    return new Intl.DateTimeFormat('en-US', {
-        dateStyle: 'medium',
-        timeStyle: 'short',
-    }).format(date);
+    if (!syncedAt) {
+        return email.receivedAt;
+    }
+
+    return receivedAt.getTime() > syncedAt.getTime()
+        ? email.syncedAt
+        : email.receivedAt;
 }
 
 function formatFileSize(bytes: number | null): string {
@@ -204,16 +393,61 @@ function emailHeading(email: EmailRecord): string {
     return email.subject?.trim() || '(No subject)';
 }
 
-function senderLine(email: EmailRecord): string {
-    if (email.fromName && email.fromEmail) {
-        return `${email.fromName} <${email.fromEmail}>`;
-    }
+function senderDisplayName(email: EmailRecord): string {
+    return (
+        email.fromName?.trim() || email.fromEmail?.trim() || 'Unknown sender'
+    );
+}
 
-    return email.fromEmail || email.fromName || 'Unknown sender';
+function senderLine(email: EmailRecord): string {
+    return email.fromEmail?.trim() || 'No reply-to address';
 }
 
 function previewLine(email: EmailRecord): string {
     return email.bodyPreview?.trim() || 'No preview available yet.';
+}
+
+function emailSearchableText(email: EmailRecord): string {
+    return [
+        email.subject,
+        email.fromName,
+        email.fromEmail,
+        email.bodyPreview,
+        email.bodyText,
+    ]
+        .filter((value): value is string => Boolean(value))
+        .join(' ')
+        .toLowerCase();
+}
+
+function visibleAttachments(email: EmailRecord): EmailAttachment[] {
+    return email.attachments.filter((attachment) => {
+        if (!attachment.isInline) {
+            return true;
+        }
+
+        return !(
+            email.hasHtmlBody &&
+            (attachment.contentType?.startsWith('image/') ?? false)
+        );
+    });
+}
+
+function attachmentCountLabel(email: EmailRecord): string {
+    const attachmentCount = visibleAttachments(email).length;
+
+    return attachmentCount === 1 ? '1 file' : `${attachmentCount} files`;
+}
+
+function avatarText(email: EmailRecord): string {
+    return senderDisplayName(email)
+        .split(/\s+/)
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((chunk) => chunk.charAt(0))
+        .join('')
+        .toUpperCase()
+        .slice(0, 2);
 }
 
 function bodyLines(bodyText: string | null): BodySegment[][] {
@@ -272,6 +506,136 @@ function linkifyLine(line: string): BodySegment[] {
     return segments.length > 0 ? segments : [{ type: 'text', value: line }];
 }
 
+function isBodyExpanded(emailId: number): boolean {
+    return expandedBodyEmailIds.value.includes(emailId);
+}
+
+function toggleBodyExpanded(emailId: number): void {
+    if (isBodyExpanded(emailId)) {
+        expandedBodyEmailIds.value = expandedBodyEmailIds.value.filter(
+            (id) => id !== emailId,
+        );
+
+        return;
+    }
+
+    expandedBodyEmailIds.value = [...expandedBodyEmailIds.value, emailId];
+}
+
+function bodyTextForDisplay(email: EmailRecord): string | null {
+    if (!email.bodyText || email.bodyText.trim() === '') {
+        return null;
+    }
+
+    if (
+        isBodyExpanded(email.id) ||
+        email.bodyText.length <= BODY_TRUNCATE_LIMIT
+    ) {
+        return email.bodyText;
+    }
+
+    return truncatedBodyText(email.bodyText);
+}
+
+function shouldShowBodyToggle(email: EmailRecord): boolean {
+    return (email.bodyText?.length ?? 0) > BODY_TRUNCATE_LIMIT;
+}
+
+function truncatedBodyText(bodyText: string): string {
+    if (bodyText.length <= BODY_TRUNCATE_LIMIT) {
+        return bodyText;
+    }
+
+    const truncatedText = bodyText.slice(0, BODY_TRUNCATE_LIMIT);
+    const lastWhitespace = truncatedText.lastIndexOf(' ');
+    const safeEnd =
+        lastWhitespace > BODY_TRUNCATE_LIMIT * 0.7
+            ? lastWhitespace
+            : BODY_TRUNCATE_LIMIT;
+
+    return `${truncatedText.slice(0, safeEnd).trimEnd()}...`;
+}
+
+function cleanupRenderedEmailObserver(): void {
+    renderedEmailResizeObserver?.disconnect();
+    renderedEmailResizeObserver = null;
+}
+
+function resizeRenderedEmailFrame(): void {
+    const frame = renderedEmailFrame.value;
+    const document = frame?.contentDocument;
+    const body = document?.body;
+    const root = document?.documentElement;
+
+    if (!frame || !body || !root) {
+        return;
+    }
+
+    const height = Math.max(
+        body.scrollHeight,
+        body.offsetHeight,
+        root.scrollHeight,
+        root.offsetHeight,
+        320,
+    );
+
+    frame.style.height = `${height}px`;
+}
+
+function bindRenderedEmailFrameObserver(): void {
+    cleanupRenderedEmailObserver();
+    resizeRenderedEmailFrame();
+
+    if (typeof window === 'undefined' || !('ResizeObserver' in window)) {
+        return;
+    }
+
+    const frame = renderedEmailFrame.value;
+    const document = frame?.contentDocument;
+    const body = document?.body;
+    const root = document?.documentElement;
+
+    if (!body || !root) {
+        return;
+    }
+
+    renderedEmailResizeObserver = new window.ResizeObserver(() => {
+        resizeRenderedEmailFrame();
+    });
+
+    renderedEmailResizeObserver.observe(body);
+    renderedEmailResizeObserver.observe(root);
+}
+
+async function onRenderedEmailLoad(): Promise<void> {
+    await nextTick();
+    bindRenderedEmailFrameObserver();
+
+    if (typeof window === 'undefined') {
+        return;
+    }
+
+    for (const delay of [150, 600, 1500]) {
+        window.setTimeout(() => {
+            resizeRenderedEmailFrame();
+        }, delay);
+    }
+}
+
+watch(selectedEmailHtmlUrl, async () => {
+    cleanupRenderedEmailObserver();
+
+    await nextTick();
+
+    if (renderedEmailFrame.value) {
+        renderedEmailFrame.value.style.height = '320px';
+    }
+});
+
+onBeforeUnmount(() => {
+    cleanupRenderedEmailObserver();
+});
+
 async function loadMoreEmails(): Promise<void> {
     if (!nextCursor.value || isLoadingMore.value) {
         return;
@@ -321,624 +685,283 @@ async function loadMoreEmails(): Promise<void> {
 </script>
 
 <template>
-    <Head title="Email sync" />
+    <Head title="Inbox" />
 
-    <AppHeaderLayout :breadcrumbs="breadcrumbItems">
-        <div class="flex flex-1 flex-col gap-6 p-4 md:p-6">
-            <Heading
-                title="Email sync"
-                description="Keep a local inbox view that syncs new mail incrementally and imports older history when you ask for it."
-            />
+    <AppLayout :breadcrumbs="breadcrumbs">
+        <template #subheader>
+            <div class="flex flex-col gap-2 lg:items-end">
+                <div class="flex flex-wrap items-center gap-2 lg:justify-end">
+                    <Form
+                        v-bind="emailSync.sync.form()"
+                        v-slot="{ processing }"
+                    >
+                        <Button
+                            type="submit"
+                            size="sm"
+                            class="gap-1.5 text-xs"
+                            :disabled="processing || !connection.imapConfigured"
+                        >
+                            <LoaderCircle
+                                v-if="processing"
+                                class="size-3.5 animate-spin"
+                            />
+                            <RefreshCcw v-else class="size-3.5" />
+                            {{ processing ? 'Syncing...' : 'Sync inbox' }}
+                        </Button>
+                    </Form>
 
+                    <Form
+                        v-bind="emailSync.backfill.form()"
+                        class="flex flex-wrap items-center gap-2 lg:justify-end"
+                        v-slot="{ errors, processing }"
+                    >
+                        <input
+                            type="hidden"
+                            name="mode"
+                            :value="backfillMode"
+                        />
+
+                        <Badge
+                            variant="outline"
+                            class="rounded-full px-2.5 py-0.5 text-[11px]"
+                        >
+                            Limit
+                        </Badge>
+
+                        <Select
+                            v-model="backfillMode"
+                            :disabled="
+                                processing ||
+                                !canBackfill ||
+                                !connection.imapConfigured
+                            "
+                        >
+                            <SelectTrigger
+                                size="sm"
+                                class="w-[96px] rounded-full text-xs"
+                            >
+                                <SelectValue placeholder="Limit" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem
+                                    v-for="preset in backfill.presets"
+                                    :key="preset"
+                                    :value="String(preset)"
+                                >
+                                    {{ preset }}
+                                </SelectItem>
+                                <SelectItem value="all">All</SelectItem>
+                                <SelectItem value="custom">Custom</SelectItem>
+                            </SelectContent>
+                        </Select>
+
+                        <Input
+                            v-if="backfillMode === 'custom'"
+                            v-model="customBackfillLimit"
+                            name="customLimit"
+                            type="number"
+                            min="1"
+                            :max="backfill.customMax"
+                            inputmode="numeric"
+                            class="h-8 w-24 rounded-full text-xs"
+                            placeholder="Custom"
+                            :disabled="
+                                processing ||
+                                !canBackfill ||
+                                !connection.imapConfigured
+                            "
+                        />
+
+                        <Button
+                            type="submit"
+                            variant="outline"
+                            size="sm"
+                            class="gap-1.5 rounded-full text-xs"
+                            :disabled="
+                                processing ||
+                                !canBackfill ||
+                                !connection.imapConfigured
+                            "
+                        >
+                            <LoaderCircle
+                                v-if="processing"
+                                class="size-3.5 animate-spin"
+                            />
+                            <ArrowDownToLine v-else class="size-3.5" />
+                            {{ processing ? 'Importing...' : 'Import older' }}
+                        </Button>
+
+                        <InputError
+                            class="basis-full text-[11px] lg:text-right"
+                            :message="errors.mode"
+                        />
+                        <InputError
+                            class="basis-full text-[11px] lg:text-right"
+                            :message="errors.customLimit"
+                        />
+                    </Form>
+                </div>
+
+                <p class="text-[11px] text-muted-foreground">
+                    {{ stats.totalStored }} stored - Last sync
+                    {{ latestSyncLabel }}
+                </p>
+            </div>
+        </template>
+        <div class="p-2 md:p-4">
             <div
-                class="grid gap-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1.3fr)]"
+                class="overflow-hidden rounded-[28px] border bg-background shadow-sm"
             >
-                <div class="space-y-4">
-                    <Card>
-                        <CardHeader>
-                            <CardTitle>Mailbox context</CardTitle>
-                            <CardDescription>
-                                Your signed-in account and the configured Gmail
-                                mailbox are shown separately so the app identity
-                                stays distinct from the mailbox used for IMAP
-                                and SMTP.
-                            </CardDescription>
-                        </CardHeader>
-                        <CardContent class="space-y-4">
-                            <div class="rounded-lg border bg-muted/30 p-4">
-                                <p
-                                    class="text-xs font-medium tracking-wide text-muted-foreground uppercase"
-                                >
-                                    Signed-in user
-                                </p>
-                                <p class="mt-1 text-sm font-medium">
-                                    {{ signedInUserEmail }}
-                                </p>
-                            </div>
+                <div
+                    class="flex min-h-[calc(100vh-10rem)] flex-col lg:h-[calc(100vh-10rem)]"
+                >
+                    <div
+                        class="grid min-h-0 flex-1 lg:grid-cols-[360px_minmax(0,1fr)]"
+                    >
+                        <aside
+                            class="flex min-h-0 flex-col border-r lg:overflow-hidden"
+                        >
+                            <div class="border-b px-5 py-4">
+                                <div class="relative">
+                                    <Search
+                                        class="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
+                                    />
+                                    <Input
+                                        v-model="searchTerm"
+                                        class="h-10 rounded-2xl pl-10 text-sm"
+                                        type="search"
+                                        placeholder="Search mail"
+                                    />
+                                </div>
 
-                            <div class="rounded-lg border bg-muted/30 p-4">
                                 <div
-                                    class="flex items-center justify-between gap-3"
+                                    class="mt-3 flex flex-wrap items-center gap-2"
                                 >
-                                    <p
-                                        class="text-xs font-medium tracking-wide text-muted-foreground uppercase"
-                                    >
-                                        Configured Gmail mailbox
-                                    </p>
-                                    <Badge
+                                    <Button
+                                        type="button"
+                                        size="sm"
                                         :variant="
-                                            connection.imapConfigured
+                                            inboxFilter === 'all'
                                                 ? 'default'
                                                 : 'secondary'
                                         "
+                                        class="rounded-full text-xs"
+                                        @click="setInboxFilter('all')"
                                     >
-                                        {{
-                                            connection.imapConfigured
-                                                ? 'Configured'
-                                                : 'Needs setup'
-                                        }}
-                                    </Badge>
-                                </div>
-                                <p class="mt-1 text-sm font-medium">
-                                    {{
-                                        connection.gmailAddressMasked ??
-                                        'Set MAIL_USERNAME to the Gmail mailbox you want this app to sync.'
-                                    }}
-                                </p>
-                                <p class="mt-2 text-xs text-muted-foreground">
-                                    Sync and outgoing email still use the
-                                    configured Gmail mailbox from your `.env`
-                                    settings.
-                                </p>
-                            </div>
-
-                            <div class="grid gap-3 sm:grid-cols-2">
-                                <div class="rounded-lg border p-4">
-                                    <div
-                                        class="flex items-center justify-between gap-2"
+                                        All
+                                    </Button>
+                                    <Button
+                                        type="button"
+                                        size="sm"
+                                        :variant="
+                                            inboxFilter === 'attachments'
+                                                ? 'default'
+                                                : 'secondary'
+                                        "
+                                        class="rounded-full text-xs"
+                                        @click="setInboxFilter('attachments')"
                                     >
-                                        <p class="text-sm font-medium">
-                                            Gmail IMAP
-                                        </p>
-                                        <Badge
-                                            :variant="
-                                                connection.imapConfigured
-                                                    ? 'default'
-                                                    : 'secondary'
-                                            "
-                                        >
-                                            {{
-                                                connection.imapConfigured
-                                                    ? 'Ready'
-                                                    : 'Setup needed'
-                                            }}
-                                        </Badge>
-                                    </div>
-                                    <p
-                                        class="mt-2 text-sm text-muted-foreground"
-                                    >
-                                        {{
-                                            connection.imapHost
-                                                ? `${connection.imapHost}:${connection.imapPort} (${connection.imapEncryption || 'none'})`
-                                                : 'IMAP host not configured'
-                                        }}
-                                    </p>
-                                    <p
-                                        class="mt-1 text-xs text-muted-foreground"
-                                    >
-                                        Mailbox:
-                                        {{ connection.mailbox || 'INBOX' }}
-                                    </p>
-                                </div>
-
-                                <div class="rounded-lg border p-4">
-                                    <div
-                                        class="flex items-center justify-between gap-2"
-                                    >
-                                        <p class="text-sm font-medium">
-                                            Gmail SMTP
-                                        </p>
-                                        <Badge
-                                            :variant="
-                                                connection.smtpConfigured
-                                                    ? 'default'
-                                                    : 'secondary'
-                                            "
-                                        >
-                                            {{
-                                                connection.smtpConfigured
-                                                    ? 'Ready'
-                                                    : 'Setup needed'
-                                            }}
-                                        </Badge>
-                                    </div>
-                                    <p
-                                        class="mt-2 text-sm text-muted-foreground"
-                                    >
-                                        {{
-                                            connection.smtpHost
-                                                ? `${connection.smtpHost}:${connection.smtpPort} (${connection.smtpScheme || 'default'})`
-                                                : 'SMTP host not configured'
-                                        }}
-                                    </p>
-                                    <p
-                                        class="mt-1 text-xs text-muted-foreground"
-                                    >
-                                        Sending stays tied to the configured
-                                        Gmail mailbox, not the signed-in user
-                                        identity.
-                                    </p>
+                                        With files
+                                    </Button>
                                 </div>
                             </div>
-                        </CardContent>
-                    </Card>
 
-                    <Card>
-                        <CardHeader>
-                            <CardTitle>Sync controls</CardTitle>
-                            <CardDescription>
-                                Sync new mail like Gmail does: the first run
-                                imports your newest 25 emails, and later syncs
-                                only pull newer messages. Use older-mail import
-                                only when you want more history.
-                            </CardDescription>
-                        </CardHeader>
-                        <CardContent class="space-y-6">
-                            <Form
-                                v-bind="emailSync.sync.form()"
-                                class="space-y-3"
-                                v-slot="{ processing }"
-                            >
-                                <div class="rounded-lg border bg-muted/30 p-4">
-                                    <p class="text-sm font-medium">
-                                        Sync inbox now
-                                    </p>
-                                    <p
-                                        class="mt-1 text-sm text-muted-foreground"
-                                    >
-                                        Imports the newest 25 emails on the
-                                        first run, then only newer emails than
-                                        your latest saved message.
-                                    </p>
-                                </div>
-                                <Button
-                                    type="submit"
-                                    class="w-full sm:w-auto"
-                                    :disabled="
-                                        processing || !connection.imapConfigured
-                                    "
-                                >
-                                    {{
-                                        processing
-                                            ? 'Syncing inbox...'
-                                            : 'Sync inbox now'
-                                    }}
-                                </Button>
-                            </Form>
-
-                            <Separator />
-
-                            <Form
-                                v-bind="emailSync.backfill.form()"
-                                class="space-y-4"
-                                v-slot="{ errors, processing }"
-                            >
-                                <div class="space-y-2">
-                                    <div
-                                        class="rounded-lg border bg-muted/30 p-4"
-                                    >
-                                        <p class="text-sm font-medium">
-                                            Import older mail
-                                        </p>
-                                        <p
-                                            class="mt-1 text-sm text-muted-foreground"
-                                        >
-                                            Pulls older unsaved messages that
-                                            sit behind your oldest saved email.
-                                            This does not change your normal
-                                            incremental sync behavior.
-                                        </p>
-                                    </div>
-
-                                    <div
-                                        v-if="!canBackfill"
-                                        class="rounded-lg border border-dashed p-4 text-sm text-muted-foreground"
-                                    >
-                                        Run your first inbox sync before
-                                        importing older history.
-                                    </div>
-                                </div>
-
+                            <div class="min-h-0 flex-1 overflow-y-auto p-3">
                                 <div
-                                    class="grid gap-4 md:grid-cols-[minmax(0,220px)_minmax(0,1fr)]"
+                                    v-if="filteredEmails.length === 0"
+                                    class="rounded-2xl border border-dashed px-4 py-6 text-sm text-muted-foreground"
                                 >
-                                    <div class="grid gap-2">
-                                        <Label for="backfill-mode">
-                                            Import size
-                                        </Label>
-                                        <select
-                                            id="backfill-mode"
-                                            v-model="backfillMode"
-                                            name="mode"
-                                            class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
-                                            :disabled="
-                                                processing ||
-                                                !canBackfill ||
-                                                !connection.imapConfigured
-                                            "
-                                        >
-                                            <option
-                                                v-for="preset in backfill.presets"
-                                                :key="preset"
-                                                :value="String(preset)"
+                                    {{ emptyListMessage }}
+                                </div>
+
+                                <div v-else class="space-y-3">
+                                    <Card
+                                        v-for="email in filteredEmails"
+                                        :key="email.id"
+                                        role="button"
+                                        tabindex="0"
+                                        class="w-full cursor-pointer gap-0 py-0 text-left transition"
+                                        :class="
+                                            selectedEmail?.id === email.id
+                                                ? 'border-foreground/10 bg-muted shadow-sm'
+                                                : 'border-border bg-background hover:bg-muted/40'
+                                        "
+                                        @click="selectEmail(email.id)"
+                                        @keydown.enter.prevent="
+                                            selectEmail(email.id)
+                                        "
+                                        @keydown.space.prevent="
+                                            selectEmail(email.id)
+                                        "
+                                    >
+                                        <CardHeader class="px-4 pt-4 pb-0">
+                                            <CardTitle
+                                                class="min-w-0 truncate text-base"
                                             >
-                                                {{ preset }} emails
-                                            </option>
-                                            <option value="all">
-                                                All remaining older mail
-                                            </option>
-                                            <option value="custom">
-                                                Custom amount
-                                            </option>
-                                        </select>
-                                    </div>
-
-                                    <div
-                                        v-if="backfillMode === 'custom'"
-                                        class="grid gap-2"
-                                    >
-                                        <Label for="custom-limit">
-                                            Custom amount
-                                        </Label>
-                                        <Input
-                                            id="custom-limit"
-                                            v-model="customBackfillLimit"
-                                            name="customLimit"
-                                            type="number"
-                                            min="1"
-                                            :max="backfill.customMax"
-                                            inputmode="numeric"
-                                            placeholder="Enter a custom amount"
-                                            :disabled="
-                                                processing ||
-                                                !canBackfill ||
-                                                !connection.imapConfigured
-                                            "
-                                        />
-                                        <p
-                                            class="text-xs text-muted-foreground"
-                                        >
-                                            Enter a value from 1 to
-                                            {{ backfill.customMax }}.
-                                        </p>
-                                        <InputError
-                                            :message="errors.customLimit"
-                                        />
-                                    </div>
-                                </div>
-
-                                <InputError :message="errors.mode" />
-
-                                <Button
-                                    type="submit"
-                                    class="w-full sm:w-auto"
-                                    variant="secondary"
-                                    :disabled="
-                                        processing ||
-                                        !canBackfill ||
-                                        !connection.imapConfigured
-                                    "
-                                >
-                                    {{
-                                        processing
-                                            ? 'Importing older mail...'
-                                            : 'Import older mail'
-                                    }}
-                                </Button>
-                            </Form>
-                        </CardContent>
-                    </Card>
-                </div>
-                <div class="space-y-4">
-                    <Card>
-                        <CardHeader>
-                            <CardTitle>Saved inbox</CardTitle>
-                            <CardDescription>
-                                Stored email is loaded from your database in
-                                batches of 25. Use Load more to browse older
-                                saved messages without hitting Gmail again.
-                            </CardDescription>
-                        </CardHeader>
-                        <CardContent class="space-y-4">
-                            <div class="grid gap-3 sm:grid-cols-3">
-                                <div class="rounded-lg border bg-muted/30 p-4">
-                                    <p
-                                        class="text-xs font-medium tracking-wide text-muted-foreground uppercase"
-                                    >
-                                        Stored emails
-                                    </p>
-                                    <p class="mt-1 text-2xl font-semibold">
-                                        {{ stats.totalStored }}
-                                    </p>
-                                </div>
-                                <div class="rounded-lg border bg-muted/30 p-4">
-                                    <p
-                                        class="text-xs font-medium tracking-wide text-muted-foreground uppercase"
-                                    >
-                                        Last sync
-                                    </p>
-                                    <p class="mt-1 text-sm font-medium">
-                                        {{ latestSyncLabel }}
-                                    </p>
-                                </div>
-                                <div class="rounded-lg border bg-muted/30 p-4">
-                                    <p
-                                        class="text-xs font-medium tracking-wide text-muted-foreground uppercase"
-                                    >
-                                        Saved mailbox
-                                    </p>
-                                    <p class="mt-1 text-sm font-medium">
-                                        {{ connection.mailbox || 'INBOX' }}
-                                    </p>
-                                </div>
-                            </div>
-
-                            <Alert
-                                v-if="flash.success"
-                                class="border-emerald-200 bg-emerald-50 text-emerald-950"
-                            >
-                                <AlertTitle>Success</AlertTitle>
-                                <AlertDescription class="space-y-1">
-                                    <p>{{ flash.success }}</p>
-                                    <p
-                                        v-if="syncResultSummary"
-                                        class="text-sm text-emerald-800"
-                                    >
-                                        {{ syncResultSummary }}
-                                    </p>
-                                </AlertDescription>
-                            </Alert>
-
-                            <Alert v-if="flash.error" variant="destructive">
-                                <AlertTitle>Sync problem</AlertTitle>
-                                <AlertDescription>
-                                    {{ flash.error }}
-                                </AlertDescription>
-                            </Alert>
-
-                            <div
-                                v-if="storedEmails.length === 0"
-                                class="rounded-lg border border-dashed p-6 text-sm text-muted-foreground"
-                            >
-                                No email has been saved locally yet. Start with
-                                Sync inbox now to import your newest messages.
-                            </div>
-
-                            <div v-else class="space-y-3">
-                                <details
-                                    v-for="email in storedEmails"
-                                    :key="email.id"
-                                    class="group rounded-xl border bg-card"
-                                >
-                                    <summary
-                                        class="cursor-pointer list-none p-4"
-                                    >
-                                        <div
-                                            class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between"
-                                        >
-                                            <div class="space-y-2">
-                                                <div
-                                                    class="flex flex-wrap items-center gap-2"
-                                                >
-                                                    <p
-                                                        class="text-base font-semibold"
-                                                    >
-                                                        {{
-                                                            emailHeading(email)
-                                                        }}
-                                                    </p>
-                                                    <Badge variant="secondary">
-                                                        {{ email.mailbox }}
-                                                    </Badge>
-                                                    <Badge
-                                                        v-if="
-                                                            email.attachments
-                                                                .length > 0
-                                                        "
-                                                        variant="outline"
-                                                    >
-                                                        {{
-                                                            email.attachments
-                                                                .length
-                                                        }}
-                                                        attachment{{
-                                                            email.attachments
-                                                                .length === 1
-                                                                ? ''
-                                                                : 's'
-                                                        }}
-                                                    </Badge>
-                                                </div>
-                                                <p
-                                                    class="text-sm text-muted-foreground"
-                                                >
-                                                    {{ senderLine(email) }}
-                                                </p>
-                                                <p
-                                                    class="text-sm leading-6 text-muted-foreground"
-                                                >
-                                                    {{ previewLine(email) }}
-                                                </p>
-                                            </div>
-
-                                            <div
-                                                class="min-w-0 text-sm text-muted-foreground md:text-right"
+                                                {{ senderDisplayName(email) }}
+                                            </CardTitle>
+                                            <CardAction
+                                                class="shrink-0 text-xs text-muted-foreground"
                                             >
-                                                <p>
-                                                    Received
-                                                    {{
-                                                        formatDateTime(
-                                                            email.receivedAt,
-                                                            'Unknown',
-                                                        )
-                                                    }}
-                                                </p>
-                                                <p class="mt-1">
-                                                    Saved
-                                                    {{
-                                                        formatDateTime(
-                                                            email.syncedAt,
-                                                            'Unknown',
-                                                        )
-                                                    }}
-                                                </p>
-                                                <p
-                                                    class="mt-2 text-xs font-medium tracking-wide uppercase group-open:hidden"
-                                                >
-                                                    Open message
-                                                </p>
-                                                <p
-                                                    class="mt-2 hidden text-xs font-medium tracking-wide uppercase group-open:block"
-                                                >
-                                                    Hide message
-                                                </p>
-                                            </div>
-                                        </div>
-                                    </summary>
+                                                {{
+                                                    formatRelativeTime(
+                                                        emailTimestampForDisplay(
+                                                            email,
+                                                        ),
+                                                        'Unknown',
+                                                    )
+                                                }}
+                                            </CardAction>
+                                            <CardDescription
+                                                class="mt-1 truncate text-xs font-medium text-foreground"
+                                            >
+                                                {{ emailHeading(email) }}
+                                            </CardDescription>
+                                        </CardHeader>
 
-                                    <div class="px-4 pb-4">
-                                        <Separator class="mb-4" />
+                                        <CardContent class="px-4 pt-3 pb-0">
+                                            <p
+                                                class="line-clamp-3 text-sm leading-6 text-muted-foreground"
+                                            >
+                                                {{ previewLine(email) }}
+                                            </p>
+                                        </CardContent>
 
-                                        <div class="space-y-4">
-                                            <div
+                                        <CardFooter
+                                            class="mt-4 flex flex-wrap items-center gap-2 px-4 pt-0 pb-4"
+                                        >
+                                            <Badge
                                                 v-if="
-                                                    bodyLines(email.bodyText)
+                                                    visibleAttachments(email)
                                                         .length > 0
                                                 "
-                                                class="rounded-lg border bg-muted/20 p-4"
+                                                variant="outline"
+                                                class="gap-1 rounded-full"
                                             >
-                                                <p
-                                                    class="text-xs font-medium tracking-wide text-muted-foreground uppercase"
-                                                >
-                                                    Message body
-                                                </p>
-                                                <div
-                                                    class="mt-3 space-y-2 text-sm leading-6 break-words whitespace-pre-wrap text-foreground"
-                                                >
-                                                    <div
-                                                        v-for="(
-                                                            line, lineIndex
-                                                        ) in bodyLines(
-                                                            email.bodyText,
-                                                        )"
-                                                        :key="lineIndex"
-                                                        class="min-h-6"
-                                                    >
-                                                        <template
-                                                            v-if="
-                                                                line.length > 0
-                                                            "
-                                                        >
-                                                            <template
-                                                                v-for="(
-                                                                    segment,
-                                                                    segmentIndex
-                                                                ) in line"
-                                                                :key="`${lineIndex}-${segmentIndex}`"
-                                                            >
-                                                                <a
-                                                                    v-if="
-                                                                        segment.type ===
-                                                                        'link'
-                                                                    "
-                                                                    :href="
-                                                                        segment.href
-                                                                    "
-                                                                    target="_blank"
-                                                                    rel="noopener noreferrer"
-                                                                    class="font-medium text-primary underline underline-offset-4"
-                                                                >
-                                                                    {{
-                                                                        segment.value
-                                                                    }}
-                                                                </a>
-                                                                <template
-                                                                    v-else
-                                                                >
-                                                                    {{
-                                                                        segment.value
-                                                                    }}
-                                                                </template>
-                                                            </template>
-                                                        </template>
-                                                        <template v-else>
-                                                            &nbsp;
-                                                        </template>
-                                                    </div>
-                                                </div>
-                                            </div>
-
-                                            <div
-                                                v-if="
-                                                    email.attachments.length > 0
-                                                "
-                                                class="space-y-3"
+                                                <Paperclip class="size-3" />
+                                                {{
+                                                    attachmentCountLabel(email)
+                                                }}
+                                            </Badge>
+                                            <Badge
+                                                variant="secondary"
+                                                class="rounded-full"
                                             >
-                                                <p
-                                                    class="text-xs font-medium tracking-wide text-muted-foreground uppercase"
-                                                >
-                                                    Attachments
-                                                </p>
-                                                <div class="space-y-2">
-                                                    <a
-                                                        v-for="attachment in email.attachments"
-                                                        :key="attachment.id"
-                                                        :href="
-                                                            attachment.downloadUrl
-                                                        "
-                                                        class="flex items-center justify-between gap-3 rounded-lg border p-3 text-sm transition-colors hover:bg-muted/40"
-                                                    >
-                                                        <div class="min-w-0">
-                                                            <p
-                                                                class="truncate font-medium"
-                                                            >
-                                                                {{
-                                                                    attachment.fileName
-                                                                }}
-                                                            </p>
-                                                            <p
-                                                                class="text-xs text-muted-foreground"
-                                                            >
-                                                                {{
-                                                                    attachment.contentType ||
-                                                                    'Unknown type'
-                                                                }}
-                                                            </p>
-                                                        </div>
-                                                        <span
-                                                            class="shrink-0 text-xs text-muted-foreground"
-                                                        >
-                                                            {{
-                                                                formatFileSize(
-                                                                    attachment.fileSize,
-                                                                )
-                                                            }}
-                                                        </span>
-                                                    </a>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </details>
+                                                {{ email.mailbox }}
+                                            </Badge>
+                                        </CardFooter>
+                                    </Card>
+                                </div>
 
-                                <div class="space-y-3 pt-2">
+                                <div class="mt-3">
                                     <Alert
                                         v-if="loadMoreError"
                                         variant="destructive"
+                                        class="mb-3"
                                     >
-                                        <AlertTitle>
-                                            Unable to load more email
-                                        </AlertTitle>
+                                        <AlertTitle
+                                            >Load more failed</AlertTitle
+                                        >
                                         <AlertDescription>
                                             {{ loadMoreError }}
                                         </AlertDescription>
@@ -948,18 +971,355 @@ async function loadMoreEmails(): Promise<void> {
                                         v-if="hasMoreEmails"
                                         type="button"
                                         variant="outline"
-                                        class="w-full"
+                                        size="sm"
+                                        class="w-full rounded-full text-xs"
                                         :disabled="isLoadingMore"
                                         @click="loadMoreEmails"
                                     >
+                                        <LoaderCircle
+                                            v-if="isLoadingMore"
+                                            class="mr-2 size-4 animate-spin"
+                                        />
                                         {{ loadMoreButtonLabel }}
                                     </Button>
+
+                                    <p
+                                        v-else-if="storedEmails.length > 0"
+                                        class="px-1 text-xs text-muted-foreground"
+                                    >
+                                        You are caught up with the email saved
+                                        in this view.
+                                    </p>
                                 </div>
                             </div>
-                        </CardContent>
-                    </Card>
+                        </aside>
+
+                        <section
+                            class="flex min-h-0 flex-col lg:overflow-hidden"
+                        >
+                            <template v-if="selectedEmail">
+                                <div class="border-b p-4">
+                                    <div
+                                        class="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between"
+                                    >
+                                        <div class="flex items-start gap-4">
+                                            <div
+                                                class="flex size-14 shrink-0 items-center justify-center rounded-full bg-muted text-base font-semibold"
+                                            >
+                                                {{ avatarText(selectedEmail) }}
+                                            </div>
+
+                                            <div class="min-w-0 space-y-2">
+                                                <div
+                                                    class="flex flex-wrap items-center gap-2"
+                                                >
+                                                    <p
+                                                        class="text-lg font-semibold tracking-tight"
+                                                    >
+                                                        {{
+                                                            senderDisplayName(
+                                                                selectedEmail,
+                                                            )
+                                                        }}
+                                                    </p>
+                                                    <Badge
+                                                        variant="outline"
+                                                        class="rounded-full"
+                                                    >
+                                                        {{
+                                                            selectedEmail.mailbox
+                                                        }}
+                                                    </Badge>
+                                                    <Badge
+                                                        v-if="
+                                                            selectedEmailAttachments.length >
+                                                            0
+                                                        "
+                                                        variant="secondary"
+                                                        class="gap-1 rounded-full"
+                                                    >
+                                                        <Paperclip
+                                                            class="size-3"
+                                                        />
+                                                        {{
+                                                            attachmentCountLabel(
+                                                                selectedEmail,
+                                                            )
+                                                        }}
+                                                    </Badge>
+                                                </div>
+
+                                                <p class="text-md font-medium">
+                                                    {{
+                                                        emailHeading(
+                                                            selectedEmail,
+                                                        )
+                                                    }}
+                                                </p>
+                                                <p
+                                                    class="text-sm text-muted-foreground"
+                                                >
+                                                    Reply-To:
+                                                    {{
+                                                        senderLine(
+                                                            selectedEmail,
+                                                        )
+                                                    }}
+                                                </p>
+                                            </div>
+                                        </div>
+
+                                        <div
+                                            class="text-sm text-muted-foreground xl:text-right"
+                                        >
+                                            <p>
+                                                {{
+                                                    formatDateTime(
+                                                        emailTimestampForDisplay(
+                                                            selectedEmail,
+                                                        ),
+                                                        'Unknown date',
+                                                    )
+                                                }}
+                                            </p>
+                                            <p class="mt-1">
+                                                Saved
+                                                {{
+                                                    formatRelativeTime(
+                                                        selectedEmail.syncedAt,
+                                                        'Unknown',
+                                                    )
+                                                }}
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="min-h-0 flex-1 overflow-y-auto p-2">
+                                    <div class="max-w-4xl space-y-6">
+                                        <Card
+                                            v-if="selectedEmailHtmlUrl"
+                                            class="gap-0 overflow-hidden rounded-[24px] bg-background py-0"
+                                        >
+                                            <CardContent class="p-0">
+                                                <iframe
+                                                    ref="renderedEmailFrame"
+                                                    :src="selectedEmailHtmlUrl"
+                                                    title="Rendered email body"
+                                                    class="block min-h-[320px] w-full border-0 bg-transparent"
+                                                    sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+                                                    referrerpolicy="no-referrer"
+                                                    @load="onRenderedEmailLoad"
+                                                />
+                                            </CardContent>
+                                        </Card>
+
+                                        <Card
+                                            v-else-if="
+                                                selectedEmailBodyLines.length >
+                                                0
+                                            "
+                                            class="gap-0 rounded-[24px] bg-muted/20 py-0"
+                                        >
+                                            <CardContent
+                                                class="space-y-3 px-5 py-5 text-[15px] leading-8 break-words whitespace-pre-wrap text-foreground"
+                                            >
+                                                <div
+                                                    v-for="(
+                                                        line, lineIndex
+                                                    ) in selectedEmailBodyLines"
+                                                    :key="lineIndex"
+                                                    class="min-h-6"
+                                                >
+                                                    <template
+                                                        v-if="line.length > 0"
+                                                    >
+                                                        <template
+                                                            v-for="(
+                                                                segment,
+                                                                segmentIndex
+                                                            ) in line"
+                                                            :key="`${lineIndex}-${segmentIndex}`"
+                                                        >
+                                                            <a
+                                                                v-if="
+                                                                    segment.type ===
+                                                                    'link'
+                                                                "
+                                                                :href="
+                                                                    segment.href
+                                                                "
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                                class="font-medium text-primary underline underline-offset-4"
+                                                            >
+                                                                {{
+                                                                    segment.value
+                                                                }}
+                                                            </a>
+                                                            <template v-else>
+                                                                {{
+                                                                    segment.value
+                                                                }}
+                                                            </template>
+                                                        </template>
+                                                    </template>
+                                                    <template v-else>
+                                                        &nbsp;
+                                                    </template>
+                                                </div>
+                                            </CardContent>
+
+                                            <CardFooter
+                                                v-if="
+                                                    shouldShowBodyToggle(
+                                                        selectedEmail,
+                                                    )
+                                                "
+                                                class="px-5 pt-0 pb-5"
+                                            >
+                                                <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    size="sm"
+                                                    class="rounded-full text-xs"
+                                                    @click="
+                                                        toggleBodyExpanded(
+                                                            selectedEmail.id,
+                                                        )
+                                                    "
+                                                >
+                                                    {{
+                                                        isBodyExpanded(
+                                                            selectedEmail.id,
+                                                        )
+                                                            ? 'Show less'
+                                                            : 'Show full body'
+                                                    }}
+                                                </Button>
+                                            </CardFooter>
+                                        </Card>
+
+                                        <Card
+                                            v-else
+                                            class="gap-0 rounded-[24px] border-dashed py-0 shadow-none"
+                                        >
+                                            <CardContent
+                                                class="px-5 py-6 text-sm text-muted-foreground"
+                                            >
+                                                No message body was extracted
+                                                for this email yet.
+                                            </CardContent>
+                                        </Card>
+
+                                        <div
+                                            v-if="
+                                                selectedEmailAttachments.length >
+                                                0
+                                            "
+                                            class="space-y-3"
+                                        >
+                                            <div
+                                                class="flex items-center gap-2"
+                                            >
+                                                <Paperclip
+                                                    class="size-4 text-muted-foreground"
+                                                />
+                                                <p
+                                                    class="text-sm font-semibold"
+                                                >
+                                                    Attachments
+                                                </p>
+                                            </div>
+
+                                            <div
+                                                class="grid gap-3 md:grid-cols-2"
+                                            >
+                                                <a
+                                                    v-for="attachment in selectedEmailAttachments"
+                                                    :key="attachment.id"
+                                                    :href="
+                                                        attachment.downloadUrl
+                                                    "
+                                                    class="block"
+                                                >
+                                                    <Card
+                                                        class="gap-0 rounded-2xl py-0 transition hover:bg-muted/40"
+                                                    >
+                                                        <CardContent
+                                                            class="px-4 py-4"
+                                                        >
+                                                            <div
+                                                                class="flex items-start gap-3"
+                                                            >
+                                                                <div
+                                                                    class="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-full bg-muted"
+                                                                >
+                                                                    <Paperclip
+                                                                        class="size-4 text-muted-foreground"
+                                                                    />
+                                                                </div>
+
+                                                                <div
+                                                                    class="min-w-0"
+                                                                >
+                                                                    <p
+                                                                        class="truncate font-medium"
+                                                                    >
+                                                                        {{
+                                                                            attachment.fileName
+                                                                        }}
+                                                                    </p>
+                                                                    <p
+                                                                        class="mt-1 text-xs text-muted-foreground"
+                                                                    >
+                                                                        {{
+                                                                            attachment.contentType ||
+                                                                            'Unknown type'
+                                                                        }}
+                                                                        -
+                                                                        {{
+                                                                            formatFileSize(
+                                                                                attachment.fileSize,
+                                                                            )
+                                                                        }}
+                                                                    </p>
+                                                                </div>
+                                                            </div>
+                                                        </CardContent>
+                                                    </Card>
+                                                </a>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </template>
+
+                            <div
+                                v-else
+                                class="flex flex-1 items-center justify-center px-6 py-10"
+                            >
+                                <div class="max-w-sm text-center">
+                                    <div
+                                        class="mx-auto flex size-16 items-center justify-center rounded-full bg-muted"
+                                    >
+                                        <Mail
+                                            class="size-7 text-muted-foreground"
+                                        />
+                                    </div>
+                                    <h2 class="mt-4 text-xl font-semibold">
+                                        No email selected
+                                    </h2>
+                                    <p
+                                        class="mt-2 text-sm text-muted-foreground"
+                                    >
+                                        {{ emptyDetailMessage }}
+                                    </p>
+                                </div>
+                            </div>
+                        </section>
+                    </div>
                 </div>
             </div>
         </div>
-    </AppHeaderLayout>
+    </AppLayout>
 </template>

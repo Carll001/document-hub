@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Link } from '@inertiajs/vue3';
-import { BookOpen, FolderGit2, LayoutGrid, Mail } from 'lucide-vue-next';
+import { BookOpen, Files, FolderGit2, LayoutGrid, Mail } from 'lucide-vue-next';
 import AppLogo from '@/components/AppLogo.vue';
 import NavFooter from '@/components/NavFooter.vue';
 import NavMain from '@/components/NavMain.vue';
@@ -15,6 +15,8 @@ import {
     SidebarMenuItem,
 } from '@/components/ui/sidebar';
 import { dashboard } from '@/routes';
+import docMerge from '@/routes/doc-merge';
+import emailSync from '@/routes/email-sync';
 import type { NavItem } from '@/types';
 
 const mainNavItems: NavItem[] = [
@@ -25,8 +27,13 @@ const mainNavItems: NavItem[] = [
     },
     {
         title: 'Email Sync',
-        href: '/email-sync',
+        href: emailSync.index(),
         icon: Mail,
+    },
+    {
+        title: 'Doc Merge',
+        href: docMerge.index(),
+        icon: Files,
     },
 ];
 

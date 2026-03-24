@@ -131,6 +131,7 @@ class EmailSyncService
                     'subject' => $message['subject'],
                     'received_at' => $message['received_at'],
                     'body_text' => $message['body_text'],
+                    'body_html' => $message['body_html'],
                     'body_preview' => $this->previewFromBody($message['body_text']),
                     'synced_at' => $syncedAt,
                 ],
@@ -204,7 +205,7 @@ class EmailSyncService
     /**
      * Store the latest attachment set for a synced email.
      *
-     * @param  list<array{file_name: string, content_type: string|null, content: string, size: int}>  $attachments
+     * @param  list<array{file_name: string, content_type: string|null, content: string, size: int, content_id: string|null, is_inline: bool}>  $attachments
      */
     private function syncAttachments(SyncedEmail $email, array $attachments): void
     {
@@ -224,6 +225,8 @@ class EmailSyncService
                 'file_name' => $attachment['file_name'],
                 'storage_path' => $storagePath,
                 'content_type' => $attachment['content_type'],
+                'content_id' => $attachment['content_id'] ?? null,
+                'is_inline' => $attachment['is_inline'] ?? false,
                 'file_size' => $attachment['size'],
             ]);
         }

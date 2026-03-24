@@ -11,6 +11,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
     'file_name',
     'storage_path',
     'content_type',
+    'content_id',
+    'is_inline',
     'file_size',
 ])]
 class SyncedEmailAttachment extends Model
@@ -24,6 +26,7 @@ class SyncedEmailAttachment extends Model
     {
         return [
             'file_size' => 'integer',
+            'is_inline' => 'boolean',
         ];
     }
 

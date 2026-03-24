@@ -150,11 +150,14 @@ class GmailImapClient implements EmailSyncClient
      *     subject: string|null,
      *     received_at: CarbonImmutable|null,
      *     body_text: string|null,
+     *     body_html: string|null,
      *     attachments: list<array{
      *         file_name: string,
      *         content_type: string|null,
      *         content: string,
-     *         size: int
+     *         size: int,
+     *         content_id: string|null,
+     *         is_inline: bool
      *     }>
      * }
      */
@@ -184,6 +187,7 @@ class GmailImapClient implements EmailSyncClient
             'subject' => $this->trimHeader($this->headerValue($headers, 'Subject')),
             'received_at' => $this->parseDate($this->headerValue($headers, 'Date')),
             'body_text' => $payload['body_text'],
+            'body_html' => $payload['body_html'],
             'attachments' => $payload['attachments'],
         ];
     }
@@ -464,7 +468,7 @@ class GmailImapClient implements EmailSyncClient
         }
 
         try {
-            return CarbonImmutable::parse($value);
+            return CarbonImmutable::parse($value)->utc();
         } catch (\Throwable) {
             return null;
         }

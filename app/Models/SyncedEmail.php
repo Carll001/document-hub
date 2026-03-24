@@ -18,6 +18,7 @@ use Illuminate\Support\Facades\Storage;
     'subject',
     'body_preview',
     'body_text',
+    'body_html',
     'received_at',
     'synced_at',
 ])]

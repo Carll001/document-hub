@@ -4,11 +4,13 @@ namespace App\Http\Controllers;
 
 use App\Models\SyncedEmail;
 use App\Models\SyncedEmailAttachment;
+use App\Services\EmailSync\EmailHtmlRenderer;
 use App\Services\EmailSync\EmailSyncService;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response as HttpResponse;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
@@ -86,15 +88,67 @@ class EmailSyncController extends Controller
      */
     public function downloadAttachment(Request $request, SyncedEmail $syncedEmail, SyncedEmailAttachment $attachment): StreamedResponse
     {
-        abort_unless(
-            $syncedEmail->user->is($request->user())
-                && $attachment->syncedEmail->is($syncedEmail),
-            404,
-        );
+        $this->abortUnlessOwnsAttachment($request, $syncedEmail, $attachment);
 
         return Storage::disk('local')->download(
             $attachment->storage_path,
             $attachment->file_name,
+        );
+    }
+
+    /**
+     * Stream an attachment inline so rendered email HTML can reference it.
+     */
+    public function inlineAttachment(Request $request, SyncedEmail $syncedEmail, SyncedEmailAttachment $attachment): StreamedResponse
+    {
+        $this->abortUnlessOwnsAttachment($request, $syncedEmail, $attachment);
+
+        return Storage::disk('local')->response(
+            $attachment->storage_path,
+            $attachment->file_name,
+            [
+                'Content-Type' => $attachment->content_type ?: 'application/octet-stream',
+                'Cache-Control' => 'private, max-age=3600',
+                'X-Content-Type-Options' => 'nosniff',
+            ],
+        );
+    }
+
+    /**
+     * Return a rendered HTML document for a stored email.
+     */
+    public function renderedMessage(
+        Request $request,
+        SyncedEmail $syncedEmail,
+        EmailHtmlRenderer $renderer,
+    ): HttpResponse {
+        abort_unless($syncedEmail->user->is($request->user()), 404);
+
+        $syncedEmail->loadMissing('attachments');
+
+        $inlineAttachmentUrls = $syncedEmail->attachments
+            ->filter(fn (SyncedEmailAttachment $attachment): bool => $attachment->is_inline && filled($attachment->content_id))
+            ->mapWithKeys(fn (SyncedEmailAttachment $attachment): array => [
+                $attachment->content_id => route('email-sync.attachments.inline', [
+                    'syncedEmail' => $syncedEmail,
+                    'attachment' => $attachment,
+                ]),
+            ])
+            ->all();
+
+        return response(
+            $renderer->renderDocument(
+                $syncedEmail->body_html,
+                $syncedEmail->body_text,
+                $inlineAttachmentUrls,
+            ),
+            200,
+            [
+                'Content-Type' => 'text/html; charset=UTF-8',
+                'Content-Security-Policy' => "default-src 'none'; img-src 'self' data: http: https:; media-src 'self' data: http: https:; style-src 'unsafe-inline' http: https:; font-src data: http: https:; connect-src 'none'; script-src 'none'; object-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none';",
+                'Referrer-Policy' => 'no-referrer',
+                'X-Content-Type-Options' => 'nosniff',
+            ],
         );
     }
 
@@ -175,7 +229,9 @@ class EmailSyncController extends Controller
         return SyncedEmail::query()
             ->whereBelongsTo($user)
             ->with('attachments')
-            ->orderByDesc('received_at')
+            ->orderByRaw(
+                'CASE WHEN received_at IS NULL OR received_at > synced_at THEN synced_at ELSE received_at END DESC',
+            )
             ->orderByDesc('id')
             ->paginate(self::EMAILS_PER_PAGE, ['*'], 'page', $page);
     }
@@ -217,11 +273,16 @@ class EmailSyncController extends Controller
             'subject' => $email->subject,
             'bodyPreview' => $email->body_preview,
             'bodyText' => $email->body_text,
+            'hasHtmlBody' => filled($email->body_html),
+            'htmlUrl' => filled($email->body_html)
+                ? route('email-sync.rendered', ['syncedEmail' => $email])
+                : null,
             'attachments' => $email->attachments->map(fn (SyncedEmailAttachment $attachment): array => [
                 'id' => $attachment->id,
                 'fileName' => $attachment->file_name,
                 'fileSize' => $attachment->file_size,
                 'contentType' => $attachment->content_type,
+                'isInline' => $attachment->is_inline,
                 'downloadUrl' => route('email-sync.attachments.download', [
                     'syncedEmail' => $email,
                     'attachment' => $attachment,
@@ -283,6 +344,21 @@ class EmailSyncController extends Controller
             $local[0],
             str_repeat('*', max(strlen($local) - 1, 1)),
             $domain,
+        );
+    }
+
+    /**
+     * Ensure the current user owns both the email and attachment.
+     */
+    private function abortUnlessOwnsAttachment(
+        Request $request,
+        SyncedEmail $syncedEmail,
+        SyncedEmailAttachment $attachment,
+    ): void {
+        abort_unless(
+            $syncedEmail->user->is($request->user())
+                && $attachment->syncedEmail->is($syncedEmail),
+            404,
         );
     }
 }

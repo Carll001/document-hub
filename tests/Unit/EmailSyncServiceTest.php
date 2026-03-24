@@ -53,6 +53,7 @@ class EmailSyncServiceTest extends TestCase
             'user_id' => $user->id,
             'imap_uid' => '9001',
             'subject' => 'Message 9001',
+            'body_html' => '<p>Body 9001</p>',
         ]);
         $this->assertDatabaseHas('synced_email_attachments', [
             'file_name' => 'brief.txt',
@@ -156,7 +157,15 @@ class EmailSyncServiceTest extends TestCase
 
     /**
      * @param  array{
-     *     attachments?: list<array{file_name: string, content_type: string|null, content: string, size: int}>
+     *     body_html?: string|null,
+     *     attachments?: list<array{
+     *         file_name: string,
+     *         content_type: string|null,
+     *         content: string,
+     *         size: int,
+     *         content_id?: string|null,
+     *         is_inline?: bool
+     *     }>
      * }  $overrides
      * @return array{
      *     imap_uid: string,
@@ -166,7 +175,15 @@ class EmailSyncServiceTest extends TestCase
      *     subject: string,
      *     received_at: CarbonImmutable,
      *     body_text: string,
-     *     attachments: list<array{file_name: string, content_type: string|null, content: string, size: int}>
+     *     body_html: string|null,
+     *     attachments: list<array{
+     *         file_name: string,
+     *         content_type: string|null,
+     *         content: string,
+     *         size: int,
+     *         content_id?: string|null,
+     *         is_inline?: bool
+     *     }>
      * }
      */
     private function messagePayload(int $uid, array $overrides = []): array
@@ -179,6 +196,7 @@ class EmailSyncServiceTest extends TestCase
             'subject' => "Message {$uid}",
             'received_at' => CarbonImmutable::parse('2026-03-24 10:00:00')->addMinutes($uid),
             'body_text' => "Body {$uid}",
+            'body_html' => "<p>Body {$uid}</p>",
             'attachments' => [],
         ], $overrides);
     }
@@ -228,7 +246,15 @@ class FakeEmailSyncClient implements EmailSyncClient
      *     subject: string,
      *     received_at: CarbonImmutable,
      *     body_text: string,
-     *     attachments: list<array{file_name: string, content_type: string|null, content: string, size: int}>
+     *     body_html: string|null,
+     *     attachments: list<array{
+     *         file_name: string,
+     *         content_type: string|null,
+     *         content: string,
+     *         size: int,
+     *         content_id?: string|null,
+     *         is_inline?: bool
+     *     }>
      * }>  $messages
      */
     public function __construct(

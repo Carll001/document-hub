@@ -1,7 +1,15 @@
 <script setup lang="ts">
 import { Link, usePage } from '@inertiajs/vue3';
-import { BookOpen, Folder, LayoutGrid, Menu, Search } from 'lucide-vue-next';
-import { computed } from 'vue';
+import {
+    BookOpen,
+    Files,
+    Folder,
+    LayoutGrid,
+    Mail,
+    Menu,
+    Search,
+} from 'lucide-vue-next';
+import { computed, useSlots } from 'vue';
 import AppLogo from '@/components/AppLogo.vue';
 import AppLogoIcon from '@/components/AppLogoIcon.vue';
 import Breadcrumbs from '@/components/Breadcrumbs.vue';
@@ -36,6 +44,8 @@ import { useCurrentUrl } from '@/composables/useCurrentUrl';
 import { getInitials } from '@/composables/useInitials';
 import { toUrl } from '@/lib/utils';
 import { dashboard } from '@/routes';
+import docMerge from '@/routes/doc-merge';
+import emailSync from '@/routes/email-sync';
 import type { BreadcrumbItem, NavItem } from '@/types';
 
 type Props = {
@@ -45,6 +55,7 @@ type Props = {
 const props = withDefaults(defineProps<Props>(), {
     breadcrumbs: () => [],
 });
+const slots = useSlots();
 
 const page = usePage();
 const auth = computed(() => page.props.auth);
@@ -58,6 +69,16 @@ const mainNavItems: NavItem[] = [
         title: 'Dashboard',
         href: dashboard(),
         icon: LayoutGrid,
+    },
+    {
+        title: 'Email Sync',
+        href: emailSync.index(),
+        icon: Mail,
+    },
+    {
+        title: 'Doc Merge',
+        href: docMerge.index(),
+        icon: Files,
     },
 ];
 
@@ -270,13 +291,14 @@ const rightNavItems: NavItem[] = [
         </div>
 
         <div
-            v-if="props.breadcrumbs.length > 1"
+            v-if="props.breadcrumbs.length > 1 || slots.subheader"
             class="flex w-full border-b border-sidebar-border/70"
         >
             <div
-                class="mx-auto flex h-12 w-full items-center justify-start px-4 text-neutral-500 md:max-w-7xl"
+                class="mx-auto flex min-h-12 w-full items-center px-4 text-neutral-500 md:max-w-7xl"
             >
-                <Breadcrumbs :breadcrumbs="breadcrumbs" />
+                <slot v-if="slots.subheader" name="subheader" />
+                <Breadcrumbs v-else :breadcrumbs="breadcrumbs" />
             </div>
         </div>
     </div>

@@ -48,11 +48,14 @@ interface EmailSyncClient
      *     subject: string|null,
      *     received_at: CarbonImmutable|null,
      *     body_text: string|null,
+     *     body_html: string|null,
      *     attachments: list<array{
      *         file_name: string,
      *         content_type: string|null,
      *         content: string,
-     *         size: int
+     *         size: int,
+     *         content_id: string|null,
+     *         is_inline: bool
      *     }>
      * }
      */

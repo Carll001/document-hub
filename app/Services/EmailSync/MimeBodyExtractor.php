@@ -17,11 +17,14 @@ class MimeBodyExtractor
      *
      * @return array{
      *     body_text: string|null,
+     *     body_html: string|null,
      *     attachments: list<array{
      *         file_name: string,
      *         content_type: string|null,
      *         content: string,
-     *         size: int
+     *         size: int,
+     *         content_id: string|null,
+     *         is_inline: bool
      *     }>
      * }
      */
@@ -81,16 +84,19 @@ class MimeBodyExtractor
     }
 
     /**
-     * Extract body text and attachments from a MIME part.
+     * Extract body text, HTML, and attachments from a MIME part.
      *
      * @param  array<string, string>  $headers
      * @return array{
      *     body_text: string|null,
+     *     body_html: string|null,
      *     attachments: list<array{
      *         file_name: string,
      *         content_type: string|null,
      *         content: string,
-     *         size: int
+     *         size: int,
+     *         content_id: string|null,
+     *         is_inline: bool
      *     }>
      * }
      */
@@ -110,7 +116,7 @@ class MimeBodyExtractor
             );
         }
 
-        if ($this->isAttachment($contentDisposition, $contentType)) {
+        if ($this->isAttachment($contentDisposition, $contentType, $headers)) {
             $attachment = $this->buildAttachment(
                 $contentType,
                 $contentDisposition,
@@ -118,10 +124,12 @@ class MimeBodyExtractor
                     $body,
                     $headers['content-transfer-encoding'] ?? null,
                 ),
+                $headers['content-id'] ?? null,
             );
 
             return [
                 'body_text' => null,
+                'body_html' => null,
                 'attachments' => $attachment !== null ? [$attachment] : [],
             ];
         }
@@ -135,30 +143,36 @@ class MimeBodyExtractor
         return match ($mediaType) {
             'text/plain' => [
                 'body_text' => $this->normalizeText($decodedBody),
+                'body_html' => null,
                 'attachments' => [],
             ],
             'text/html' => [
                 'body_text' => $this->htmlToText($decodedBody),
+                'body_html' => $this->normalizeHtml($decodedBody),
                 'attachments' => [],
             ],
             'message/rfc822' => $this->extractPayloadFromRawMessage($decodedBody),
             default => [
                 'body_text' => null,
+                'body_html' => null,
                 'attachments' => [],
             ],
         };
     }
 
     /**
-     * Prefer plain text parts, then fall back to HTML converted to text.
+     * Prefer plain text parts and keep HTML when the message provides it.
      *
      * @return array{
      *     body_text: string|null,
+     *     body_html: string|null,
      *     attachments: list<array{
      *         file_name: string,
      *         content_type: string|null,
      *         content: string,
-     *         size: int
+     *         size: int,
+     *         content_id: string|null,
+     *         is_inline: bool
      *     }>
      * }
      */
@@ -167,12 +181,14 @@ class MimeBodyExtractor
         if ($boundary === '') {
             return [
                 'body_text' => null,
+                'body_html' => null,
                 'attachments' => [],
             ];
         }
 
         $plainTextBody = null;
         $fallbackBody = null;
+        $htmlBody = null;
         $attachments = [];
 
         foreach ($this->splitMultipartBody($body, $boundary) as $part) {
@@ -183,21 +199,23 @@ class MimeBodyExtractor
 
             $attachments = [...$attachments, ...$payload['attachments']];
 
-            if ($payload['body_text'] === null) {
-                continue;
-            }
-
-            if ($partContentType['value'] === 'text/plain') {
+            if ($partContentType['value'] === 'text/plain' && $payload['body_text'] !== null) {
                 $plainTextBody ??= $payload['body_text'];
 
                 continue;
             }
 
+            if ($partContentType['value'] === 'text/html') {
+                $htmlBody ??= $payload['body_html'];
+            }
+
             $fallbackBody ??= $payload['body_text'];
+            $htmlBody ??= $payload['body_html'];
         }
 
         return [
             'body_text' => $plainTextBody ?? $fallbackBody,
+            'body_html' => $htmlBody,
             'attachments' => $attachments,
         ];
     }
@@ -305,6 +323,16 @@ class MimeBodyExtractor
     }
 
     /**
+     * Keep the decoded HTML body when the message contains markup.
+     */
+    private function normalizeHtml(?string $html): ?string
+    {
+        $html = trim((string) $html);
+
+        return $html === '' ? null : $html;
+    }
+
+    /**
      * Normalize whitespace while keeping paragraph breaks readable.
      */
     private function normalizeText(?string $text): ?string
@@ -351,9 +379,13 @@ class MimeBodyExtractor
      *
      * @param  array{value: string, parameters: array<string, string>}  $contentDisposition
      * @param  array{value: string, parameters: array<string, string>}  $contentType
+     * @param  array<string, string>  $headers
      */
-    private function isAttachment(array $contentDisposition, array $contentType): bool
+    private function isAttachment(array $contentDisposition, array $contentType, array $headers): bool
     {
+        $mediaType = strtolower($contentType['value']);
+        $hasContentId = $this->normalizeContentId($headers['content-id'] ?? null) !== null;
+
         return $contentDisposition['value'] === 'attachment'
             || $contentDisposition['value'] === 'inline'
                 && (
@@ -361,7 +393,9 @@ class MimeBodyExtractor
                     || array_key_exists('filename*', $contentDisposition['parameters'])
                 )
             || array_key_exists('name', $contentType['parameters'])
-            || array_key_exists('name*', $contentType['parameters']);
+            || array_key_exists('name*', $contentType['parameters'])
+            || $hasContentId
+                && ! in_array($mediaType, ['text/plain', 'text/html'], true);
     }
 
     /**
@@ -373,13 +407,20 @@ class MimeBodyExtractor
      *     file_name: string,
      *     content_type: string|null,
      *     content: string,
-     *     size: int
+     *     size: int,
+     *     content_id: string|null,
+     *     is_inline: bool
      * }|null
      */
-    private function buildAttachment(array $contentType, array $contentDisposition, string $content): ?array
-    {
+    private function buildAttachment(
+        array $contentType,
+        array $contentDisposition,
+        string $content,
+        ?string $contentId = null,
+    ): ?array {
         $fileName = $this->resolveAttachmentFilename($contentDisposition, $contentType)
             ?? $this->fallbackAttachmentFilename($contentType['value']);
+        $normalizedContentId = $this->normalizeContentId($contentId);
 
         if ($fileName === null || trim($fileName) === '') {
             return null;
@@ -390,7 +431,31 @@ class MimeBodyExtractor
             'content_type' => $contentType['value'] !== '' ? $contentType['value'] : null,
             'content' => $content,
             'size' => strlen($content),
+            'content_id' => $normalizedContentId,
+            'is_inline' => $this->shouldTreatAsInlineAsset(
+                $contentDisposition['value'],
+                $contentType['value'],
+                $normalizedContentId,
+            ),
         ];
+    }
+
+    /**
+     * Hide only likely embedded assets from the file list.
+     */
+    private function shouldTreatAsInlineAsset(
+        string $contentDisposition,
+        string $mediaType,
+        ?string $contentId,
+    ): bool {
+        $mediaType = strtolower(trim($mediaType));
+        $isEmbeddableImage = str_starts_with($mediaType, 'image/');
+
+        return $isEmbeddableImage
+            && (
+                strtolower(trim($contentDisposition)) === 'inline'
+                || $contentId !== null
+            );
     }
 
     /**
@@ -447,11 +512,23 @@ class MimeBodyExtractor
             'application/pdf' => 'pdf',
             'image/jpeg' => 'jpg',
             'image/png' => 'png',
+            'image/gif' => 'gif',
+            'image/webp' => 'webp',
             default => null,
         };
 
         return $extension !== null
             ? "attachment.{$extension}"
             : 'attachment.bin';
+    }
+
+    /**
+     * Normalize content IDs so stored attachments can be matched by CID URLs.
+     */
+    private function normalizeContentId(?string $contentId): ?string
+    {
+        $contentId = trim((string) $contentId, " \t\n\r\0\x0B<>");
+
+        return $contentId === '' ? null : $contentId;
     }
 }

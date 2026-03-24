@@ -45,6 +45,7 @@ class EmailSyncTest extends TestCase
             'subject' => 'Quarterly update',
             'body_preview' => 'Your quarterly account update is ready to review.',
             'body_text' => "Hello there,\n\nYour quarterly account update is ready to review.",
+            'body_html' => '<p>Hello there,</p><p>Your quarterly account update is ready to review.</p>',
             'received_at' => now()->subHour(),
             'synced_at' => now(),
         ]);
@@ -73,6 +74,8 @@ class EmailSyncTest extends TestCase
                 ->where('emails.0.fromEmail', 'support@example.com')
                 ->where('emails.0.bodyPreview', 'Your quarterly account update is ready to review.')
                 ->where('emails.0.bodyText', "Hello there,\n\nYour quarterly account update is ready to review.")
+                ->where('emails.0.hasHtmlBody', true)
+                ->where('emails.0.htmlUrl', route('email-sync.rendered', ['syncedEmail' => $email]))
                 ->where('emails.0.attachments.0.fileName', 'quarterly-update.pdf')
                 ->where('emails.0.attachments.0.fileSize', 4096),
             );
@@ -111,6 +114,50 @@ class EmailSyncTest extends TestCase
                 ->where('stats.totalStored', 26)
                 ->where('emails.0.subject', 'Message 1')
                 ->where('emails.24.subject', 'Message 25'),
+            );
+    }
+
+    public function test_future_received_timestamps_do_not_sort_above_the_latest_synced_email()
+    {
+        $this->withoutVite();
+
+        $user = User::factory()->create();
+
+        SyncedEmail::query()->create([
+            'user_id' => $user->id,
+            'mailbox' => 'INBOX',
+            'imap_uid' => '4001',
+            'message_id' => '<message-4001@example.com>',
+            'from_name' => 'Cj Carreon',
+            'from_email' => 'cj@example.com',
+            'subject' => 'Stored with future time',
+            'body_preview' => 'Older sync with a bad future timestamp.',
+            'body_text' => 'Older sync with a bad future timestamp.',
+            'received_at' => now()->addHours(6),
+            'synced_at' => now()->subHour(),
+        ]);
+
+        SyncedEmail::query()->create([
+            'user_id' => $user->id,
+            'mailbox' => 'INBOX',
+            'imap_uid' => '4002',
+            'message_id' => '<message-4002@example.com>',
+            'from_name' => 'Cj Carreon',
+            'from_email' => 'cj@example.com',
+            'subject' => 'Actual latest email',
+            'body_preview' => 'Newest synced email should stay on top.',
+            'body_text' => 'Newest synced email should stay on top.',
+            'received_at' => now()->subMinutes(2),
+            'synced_at' => now(),
+        ]);
+
+        $this->actingAs($user)
+            ->get(route('email-sync.index'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('EmailSync')
+                ->where('emails.0.subject', 'Actual latest email')
+                ->where('emails.1.subject', 'Stored with future time'),
             );
     }
 
@@ -301,5 +348,53 @@ class EmailSyncTest extends TestCase
             ]))
             ->assertOk()
             ->assertDownload('report.txt');
+    }
+
+    public function test_authenticated_users_can_view_rendered_email_html_with_inline_cid_images()
+    {
+        Storage::fake('local');
+
+        $user = User::factory()->create();
+
+        $email = SyncedEmail::query()->create([
+            'user_id' => $user->id,
+            'mailbox' => 'INBOX',
+            'imap_uid' => '1200',
+            'message_id' => '<message-1200@example.com>',
+            'from_name' => 'Google',
+            'from_email' => 'no-reply@accounts.google.com',
+            'subject' => 'Security alert',
+            'body_preview' => 'A new sign-in on Windows',
+            'body_text' => "A new sign-in on Windows\nCheck activity",
+            'body_html' => '<div><img src="cid:google-logo"><p>A new sign-in on Windows</p><a href="https://accounts.google.com">Check activity</a></div>',
+            'received_at' => now()->subMinutes(10),
+            'synced_at' => now(),
+        ]);
+
+        $attachment = SyncedEmailAttachment::query()->create([
+            'synced_email_id' => $email->id,
+            'file_name' => 'google.png',
+            'storage_path' => 'email-sync/'.$user->id.'/'.$email->id.'/01-google.png',
+            'content_type' => 'image/png',
+            'content_id' => 'google-logo',
+            'is_inline' => true,
+            'file_size' => 16,
+        ]);
+
+        Storage::disk('local')->put($attachment->storage_path, 'fake-image-bytes');
+
+        $this->actingAs($user)
+            ->get(route('email-sync.rendered', ['syncedEmail' => $email]))
+            ->assertOk()
+            ->assertHeader('Content-Type', 'text/html; charset=UTF-8')
+            ->assertSee('A new sign-in on Windows', false)
+            ->assertSee(
+                route('email-sync.attachments.inline', [
+                    'syncedEmail' => $email,
+                    'attachment' => $attachment,
+                ]),
+                false,
+            )
+            ->assertDontSee('cid:google-logo', false);
     }
 }
