@@ -158,4 +158,33 @@ EOT;
         $this->assertSame('report-file', $payload['attachments'][0]['content_id']);
         $this->assertFalse($payload['attachments'][0]['is_inline']);
     }
+
+    public function test_ignores_blank_html_shells_for_attachment_only_messages()
+    {
+        $message = <<<'EOT'
+From: Example <support@example.com>
+Subject: Attachment only
+Content-Type: multipart/mixed; boundary="mixed-789"
+
+--mixed-789
+Content-Type: text/html; charset=UTF-8
+
+<div dir="ltr"><br></div>
+--mixed-789
+Content-Type: application/pdf; name="receipt.pdf"
+Content-Disposition: attachment; filename="receipt.pdf"
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjQK
+--mixed-789--
+EOT;
+
+        $extractor = new MimeBodyExtractor;
+        $payload = $extractor->extractPayloadFromRawMessage($message);
+
+        $this->assertNull($payload['body_text']);
+        $this->assertNull($payload['body_html']);
+        $this->assertCount(1, $payload['attachments']);
+        $this->assertSame('receipt.pdf', $payload['attachments'][0]['file_name']);
+    }
 }

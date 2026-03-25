@@ -109,6 +109,11 @@ type BodySegment = {
     href?: string;
 };
 
+type HighlightSegment = {
+    value: string;
+    isMatch: boolean;
+};
+
 type InboxFilter = 'all' | 'attachments';
 
 const props = defineProps<Props>();
@@ -404,7 +409,43 @@ function senderLine(email: EmailRecord): string {
 }
 
 function previewLine(email: EmailRecord): string {
-    return email.bodyPreview?.trim() || 'No preview available yet.';
+    const preview = email.bodyPreview?.trim();
+
+    if (preview) {
+        return preview;
+    }
+
+    if (visibleAttachments(email).length > 0) {
+        return 'Attachment-only email.';
+    }
+
+    return 'No preview available yet.';
+}
+
+function highlightText(value: string): HighlightSegment[] {
+    if (value === '') {
+        return [];
+    }
+
+    const query = searchTerm.value.trim();
+
+    if (query === '') {
+        return [{ value, isMatch: false }];
+    }
+
+    const pattern = new RegExp(`(${escapeRegExp(query)})`, 'gi');
+
+    return value
+        .split(pattern)
+        .filter((part) => part !== '')
+        .map((part) => ({
+            value: part,
+            isMatch: part.toLowerCase() === query.toLowerCase(),
+        }));
+}
+
+function escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function emailSearchableText(email: EmailRecord): string {
@@ -414,6 +455,7 @@ function emailSearchableText(email: EmailRecord): string {
         email.fromEmail,
         email.bodyPreview,
         email.bodyText,
+        ...visibleAttachments(email).map((attachment) => attachment.fileName),
     ]
         .filter((value): value is string => Boolean(value))
         .join(' ')
@@ -554,6 +596,14 @@ function truncatedBodyText(bodyText: string): string {
             : BODY_TRUNCATE_LIMIT;
 
     return `${truncatedText.slice(0, safeEnd).trimEnd()}...`;
+}
+
+function emptyBodyMessage(email: EmailRecord): string {
+    if (visibleAttachments(email).length > 0) {
+        return 'This email does not have message text. You can download its attachment below.';
+    }
+
+    return 'No message body was extracted for this email yet.';
 }
 
 function cleanupRenderedEmailObserver(): void {
@@ -830,7 +880,7 @@ async function loadMoreEmails(): Promise<void> {
                                         v-model="searchTerm"
                                         class="h-10 rounded-2xl pl-10 text-sm"
                                         type="search"
-                                        placeholder="Search mail"
+                                        placeholder="Search sender, subject, body, or file"
                                     />
                                 </div>
 
@@ -898,7 +948,26 @@ async function loadMoreEmails(): Promise<void> {
                                             <CardTitle
                                                 class="min-w-0 truncate text-base"
                                             >
-                                                {{ senderDisplayName(email) }}
+                                                <template
+                                                    v-for="(
+                                                        segment, segmentIndex
+                                                    ) in highlightText(
+                                                        senderDisplayName(
+                                                            email,
+                                                        ),
+                                                    )"
+                                                    :key="`sender-${email.id}-${segmentIndex}`"
+                                                >
+                                                    <mark
+                                                        v-if="segment.isMatch"
+                                                        class="rounded bg-amber-200/80 px-0.5 text-inherit"
+                                                    >
+                                                        {{ segment.value }}
+                                                    </mark>
+                                                    <template v-else>
+                                                        {{ segment.value }}
+                                                    </template>
+                                                </template>
                                             </CardTitle>
                                             <CardAction
                                                 class="shrink-0 text-xs text-muted-foreground"
@@ -915,7 +984,24 @@ async function loadMoreEmails(): Promise<void> {
                                             <CardDescription
                                                 class="mt-1 truncate text-xs font-medium text-foreground"
                                             >
-                                                {{ emailHeading(email) }}
+                                                <template
+                                                    v-for="(
+                                                        segment, segmentIndex
+                                                    ) in highlightText(
+                                                        emailHeading(email),
+                                                    )"
+                                                    :key="`subject-${email.id}-${segmentIndex}`"
+                                                >
+                                                    <mark
+                                                        v-if="segment.isMatch"
+                                                        class="rounded bg-amber-200/80 px-0.5 text-inherit"
+                                                    >
+                                                        {{ segment.value }}
+                                                    </mark>
+                                                    <template v-else>
+                                                        {{ segment.value }}
+                                                    </template>
+                                                </template>
                                             </CardDescription>
                                         </CardHeader>
 
@@ -923,7 +1009,24 @@ async function loadMoreEmails(): Promise<void> {
                                             <p
                                                 class="line-clamp-3 text-sm leading-6 text-muted-foreground"
                                             >
-                                                {{ previewLine(email) }}
+                                                <template
+                                                    v-for="(
+                                                        segment, segmentIndex
+                                                    ) in highlightText(
+                                                        previewLine(email),
+                                                    )"
+                                                    :key="`preview-${email.id}-${segmentIndex}`"
+                                                >
+                                                    <mark
+                                                        v-if="segment.isMatch"
+                                                        class="rounded bg-amber-200/80 px-0.5 text-inherit"
+                                                    >
+                                                        {{ segment.value }}
+                                                    </mark>
+                                                    <template v-else>
+                                                        {{ segment.value }}
+                                                    </template>
+                                                </template>
                                             </p>
                                         </CardContent>
 
@@ -1016,11 +1119,33 @@ async function loadMoreEmails(): Promise<void> {
                                                     <p
                                                         class="text-lg font-semibold tracking-tight"
                                                     >
-                                                        {{
-                                                            senderDisplayName(
-                                                                selectedEmail,
-                                                            )
-                                                        }}
+                                                        <template
+                                                            v-for="(
+                                                                segment,
+                                                                segmentIndex
+                                                            ) in highlightText(
+                                                                senderDisplayName(
+                                                                    selectedEmail,
+                                                                ),
+                                                            )"
+                                                            :key="`detail-sender-${selectedEmail.id}-${segmentIndex}`"
+                                                        >
+                                                            <mark
+                                                                v-if="
+                                                                    segment.isMatch
+                                                                "
+                                                                class="rounded bg-amber-200/80 px-0.5 text-inherit"
+                                                            >
+                                                                {{
+                                                                    segment.value
+                                                                }}
+                                                            </mark>
+                                                            <template v-else>
+                                                                {{
+                                                                    segment.value
+                                                                }}
+                                                            </template>
+                                                        </template>
                                                     </p>
                                                     <Badge
                                                         variant="outline"
@@ -1050,21 +1175,57 @@ async function loadMoreEmails(): Promise<void> {
                                                 </div>
 
                                                 <p class="text-md font-medium">
-                                                    {{
-                                                        emailHeading(
-                                                            selectedEmail,
-                                                        )
-                                                    }}
+                                                    <template
+                                                        v-for="(
+                                                            segment,
+                                                            segmentIndex
+                                                        ) in highlightText(
+                                                            emailHeading(
+                                                                selectedEmail,
+                                                            ),
+                                                        )"
+                                                        :key="`detail-subject-${selectedEmail.id}-${segmentIndex}`"
+                                                    >
+                                                        <mark
+                                                            v-if="
+                                                                segment.isMatch
+                                                            "
+                                                            class="rounded bg-amber-200/80 px-0.5 text-inherit"
+                                                        >
+                                                            {{ segment.value }}
+                                                        </mark>
+                                                        <template v-else>
+                                                            {{ segment.value }}
+                                                        </template>
+                                                    </template>
                                                 </p>
                                                 <p
                                                     class="text-sm text-muted-foreground"
                                                 >
                                                     Reply-To:
-                                                    {{
-                                                        senderLine(
-                                                            selectedEmail,
-                                                        )
-                                                    }}
+                                                    <template
+                                                        v-for="(
+                                                            segment,
+                                                            segmentIndex
+                                                        ) in highlightText(
+                                                            senderLine(
+                                                                selectedEmail,
+                                                            ),
+                                                        )"
+                                                        :key="`detail-reply-${selectedEmail.id}-${segmentIndex}`"
+                                                    >
+                                                        <mark
+                                                            v-if="
+                                                                segment.isMatch
+                                                            "
+                                                            class="rounded bg-amber-200/80 px-0.5 text-inherit"
+                                                        >
+                                                            {{ segment.value }}
+                                                        </mark>
+                                                        <template v-else>
+                                                            {{ segment.value }}
+                                                        </template>
+                                                    </template>
                                                 </p>
                                             </div>
                                         </div>
@@ -1100,7 +1261,7 @@ async function loadMoreEmails(): Promise<void> {
                                             v-if="selectedEmailHtmlUrl"
                                             class="gap-0 overflow-hidden rounded-[24px] bg-background py-0"
                                         >
-                                            <CardContent class="p-0">
+                                            <CardContent class="p-2">
                                                 <iframe
                                                     ref="renderedEmailFrame"
                                                     :src="selectedEmailHtmlUrl"
@@ -1152,14 +1313,62 @@ async function loadMoreEmails(): Promise<void> {
                                                                 rel="noopener noreferrer"
                                                                 class="font-medium text-primary underline underline-offset-4"
                                                             >
-                                                                {{
-                                                                    segment.value
-                                                                }}
+                                                                <template
+                                                                    v-for="(
+                                                                        highlighted,
+                                                                        highlightIndex
+                                                                    ) in highlightText(
+                                                                        segment.value,
+                                                                    )"
+                                                                    :key="`${lineIndex}-${segmentIndex}-link-${highlightIndex}`"
+                                                                >
+                                                                    <mark
+                                                                        v-if="
+                                                                            highlighted.isMatch
+                                                                        "
+                                                                        class="rounded bg-amber-200/80 px-0.5 text-inherit"
+                                                                    >
+                                                                        {{
+                                                                            highlighted.value
+                                                                        }}
+                                                                    </mark>
+                                                                    <template
+                                                                        v-else
+                                                                    >
+                                                                        {{
+                                                                            highlighted.value
+                                                                        }}
+                                                                    </template>
+                                                                </template>
                                                             </a>
                                                             <template v-else>
-                                                                {{
-                                                                    segment.value
-                                                                }}
+                                                                <template
+                                                                    v-for="(
+                                                                        highlighted,
+                                                                        highlightIndex
+                                                                    ) in highlightText(
+                                                                        segment.value,
+                                                                    )"
+                                                                    :key="`${lineIndex}-${segmentIndex}-text-${highlightIndex}`"
+                                                                >
+                                                                    <mark
+                                                                        v-if="
+                                                                            highlighted.isMatch
+                                                                        "
+                                                                        class="rounded bg-amber-200/80 px-0.5 text-inherit"
+                                                                    >
+                                                                        {{
+                                                                            highlighted.value
+                                                                        }}
+                                                                    </mark>
+                                                                    <template
+                                                                        v-else
+                                                                    >
+                                                                        {{
+                                                                            highlighted.value
+                                                                        }}
+                                                                    </template>
+                                                                </template>
                                                             </template>
                                                         </template>
                                                     </template>
@@ -1206,8 +1415,11 @@ async function loadMoreEmails(): Promise<void> {
                                             <CardContent
                                                 class="px-5 py-6 text-sm text-muted-foreground"
                                             >
-                                                No message body was extracted
-                                                for this email yet.
+                                                {{
+                                                    emptyBodyMessage(
+                                                        selectedEmail,
+                                                    )
+                                                }}
                                             </CardContent>
                                         </Card>
 
@@ -1265,9 +1477,33 @@ async function loadMoreEmails(): Promise<void> {
                                                                     <p
                                                                         class="truncate font-medium"
                                                                     >
-                                                                        {{
-                                                                            attachment.fileName
-                                                                        }}
+                                                                        <template
+                                                                            v-for="(
+                                                                                segment,
+                                                                                segmentIndex
+                                                                            ) in highlightText(
+                                                                                attachment.fileName,
+                                                                            )"
+                                                                            :key="`attachment-${attachment.id}-${segmentIndex}`"
+                                                                        >
+                                                                            <mark
+                                                                                v-if="
+                                                                                    segment.isMatch
+                                                                                "
+                                                                                class="rounded bg-amber-200/80 px-0.5 text-inherit"
+                                                                            >
+                                                                                {{
+                                                                                    segment.value
+                                                                                }}
+                                                                            </mark>
+                                                                            <template
+                                                                                v-else
+                                                                            >
+                                                                                {{
+                                                                                    segment.value
+                                                                                }}
+                                                                            </template>
+                                                                        </template>
                                                                     </p>
                                                                     <p
                                                                         class="mt-1 text-xs text-muted-foreground"

@@ -265,32 +265,62 @@ class EmailSyncController extends Controller
      */
     private function transformEmails(Collection $emails): array
     {
-        return $emails->map(fn (SyncedEmail $email): array => [
-            'id' => $email->id,
-            'mailbox' => $email->mailbox,
-            'fromName' => $email->from_name,
-            'fromEmail' => $email->from_email,
-            'subject' => $email->subject,
-            'bodyPreview' => $email->body_preview,
-            'bodyText' => $email->body_text,
-            'hasHtmlBody' => filled($email->body_html),
-            'htmlUrl' => filled($email->body_html)
-                ? route('email-sync.rendered', ['syncedEmail' => $email])
-                : null,
-            'attachments' => $email->attachments->map(fn (SyncedEmailAttachment $attachment): array => [
-                'id' => $attachment->id,
-                'fileName' => $attachment->file_name,
-                'fileSize' => $attachment->file_size,
-                'contentType' => $attachment->content_type,
-                'isInline' => $attachment->is_inline,
-                'downloadUrl' => route('email-sync.attachments.download', [
-                    'syncedEmail' => $email,
-                    'attachment' => $attachment,
-                ]),
-            ])->all(),
-            'receivedAt' => $email->received_at?->toIso8601String(),
-            'syncedAt' => $email->synced_at?->toIso8601String(),
-        ])->all();
+        return $emails->map(function (SyncedEmail $email): array {
+            $hasHtmlBody = $this->hasMeaningfulHtmlBody($email->body_html);
+
+            return [
+                'id' => $email->id,
+                'mailbox' => $email->mailbox,
+                'fromName' => $email->from_name,
+                'fromEmail' => $email->from_email,
+                'subject' => $email->subject,
+                'bodyPreview' => $email->body_preview,
+                'bodyText' => $email->body_text,
+                'hasHtmlBody' => $hasHtmlBody,
+                'htmlUrl' => $hasHtmlBody
+                    ? route('email-sync.rendered', ['syncedEmail' => $email])
+                    : null,
+                'attachments' => $email->attachments->map(fn (SyncedEmailAttachment $attachment): array => [
+                    'id' => $attachment->id,
+                    'fileName' => $attachment->file_name,
+                    'fileSize' => $attachment->file_size,
+                    'contentType' => $attachment->content_type,
+                    'isInline' => $attachment->is_inline,
+                    'downloadUrl' => route('email-sync.attachments.download', [
+                        'syncedEmail' => $email,
+                        'attachment' => $attachment,
+                    ]),
+                ])->all(),
+                'receivedAt' => $email->received_at?->toIso8601String(),
+                'syncedAt' => $email->synced_at?->toIso8601String(),
+            ];
+        })->all();
+    }
+
+    /**
+     * Treat blank HTML shells like "<div><br></div>" as no visible body.
+     */
+    private function hasMeaningfulHtmlBody(?string $bodyHtml): bool
+    {
+        $bodyHtml = trim((string) $bodyHtml);
+
+        if ($bodyHtml === '') {
+            return false;
+        }
+
+        $textContent = html_entity_decode(
+            strip_tags($bodyHtml),
+            ENT_QUOTES | ENT_HTML5,
+            'UTF-8',
+        );
+        $textContent = str_replace("\u{00A0}", ' ', $textContent);
+        $textContent = preg_replace('/\s+/u', '', $textContent) ?? '';
+
+        if ($textContent !== '') {
+            return true;
+        }
+
+        return preg_match('/<(img|svg|video|audio|table|hr|canvas)\b/i', $bodyHtml) === 1;
     }
 
     /**

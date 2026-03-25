@@ -397,4 +397,47 @@ class EmailSyncTest extends TestCase
             )
             ->assertDontSee('cid:google-logo', false);
     }
+
+    public function test_attachment_only_emails_with_blank_html_shells_do_not_render_as_html_messages()
+    {
+        $this->withoutVite();
+
+        $user = User::factory()->create();
+
+        $email = SyncedEmail::query()->create([
+            'user_id' => $user->id,
+            'mailbox' => 'INBOX',
+            'imap_uid' => '1300',
+            'message_id' => '<message-1300@example.com>',
+            'from_name' => 'Cj Carreon',
+            'from_email' => 'cj@example.com',
+            'subject' => null,
+            'body_preview' => null,
+            'body_text' => null,
+            'body_html' => '<div dir="ltr"><br></div>',
+            'received_at' => now()->subMinutes(5),
+            'synced_at' => now(),
+        ]);
+
+        $email->attachments()->create([
+            'file_name' => 'Payment_Confirmation_Receipt_Mockup.pdf',
+            'storage_path' => 'email-sync/'.$user->id.'/'.$email->id.'/01-payment-confirmation.pdf',
+            'content_type' => 'application/pdf',
+            'file_size' => 32768,
+            'is_inline' => false,
+        ]);
+
+        $this->actingAs($user)
+            ->get(route('email-sync.index'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('EmailSync')
+                ->where('emails.0.subject', null)
+                ->where('emails.0.bodyPreview', null)
+                ->where('emails.0.bodyText', null)
+                ->where('emails.0.hasHtmlBody', false)
+                ->where('emails.0.htmlUrl', null)
+                ->where('emails.0.attachments.0.fileName', 'Payment_Confirmation_Receipt_Mockup.pdf'),
+            );
+    }
 }

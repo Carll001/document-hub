@@ -14,6 +14,12 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('dashboard', DashboardController::class)->name('dashboard');
     Route::get('doc-merge', [DocMergeController::class, 'index'])->name('doc-merge.index');
     Route::post('doc-merge', [DocMergeController::class, 'store'])->name('doc-merge.store');
+    Route::delete('doc-merge', [DocMergeController::class, 'destroyMany'])->name('doc-merge.destroy-many');
+    Route::get('doc-merge/{mergedPdf}/preview', [DocMergeController::class, 'preview'])->name('doc-merge.preview');
+    Route::post('doc-merge/{mergedPdf}/receipt', [DocMergeController::class, 'storeReceipt'])->name('doc-merge.receipt.store');
+    Route::delete('doc-merge/{mergedPdf}/receipt', [DocMergeController::class, 'destroyReceipt'])->name('doc-merge.receipt.destroy');
+    Route::get('doc-merge/{mergedPdf}/receipt', [DocMergeController::class, 'downloadReceipt'])->name('doc-merge.receipt.download');
+    Route::post('doc-merge/{mergedPdf}/send-email', [DocMergeController::class, 'sendEmail'])->name('doc-merge.send-email');
     Route::get('doc-merge/{mergedPdf}', [DocMergeController::class, 'download'])->name('doc-merge.download');
     Route::get('email-sync', [EmailSyncController::class, 'index'])->name('email-sync.index');
     Route::get('email-sync/messages', [EmailSyncController::class, 'emails'])->name('email-sync.emails');

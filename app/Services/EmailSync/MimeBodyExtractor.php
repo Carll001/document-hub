@@ -329,7 +329,25 @@ class MimeBodyExtractor
     {
         $html = trim((string) $html);
 
-        return $html === '' ? null : $html;
+        if ($html === '') {
+            return null;
+        }
+
+        $textContent = html_entity_decode(
+            strip_tags($html),
+            ENT_QUOTES | ENT_HTML5,
+            'UTF-8',
+        );
+        $textContent = str_replace("\u{00A0}", ' ', $textContent);
+        $textContent = preg_replace('/\s+/u', '', $textContent) ?? '';
+
+        if ($textContent !== '') {
+            return $html;
+        }
+
+        return preg_match('/<(img|svg|video|audio|table|hr|canvas)\b/i', $html) === 1
+            ? $html
+            : null;
     }
 
     /**

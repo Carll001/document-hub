@@ -16,6 +16,9 @@ use Illuminate\Support\Facades\Storage;
     'file_size',
     'source_count',
     'source_file_names',
+    'receipt_file_name',
+    'receipt_storage_path',
+    'receipt_file_size',
 ])]
 class MergedPdf extends Model
 {
@@ -25,7 +28,20 @@ class MergedPdf extends Model
     protected static function booted(): void
     {
         static::deleting(function (self $mergedPdf): void {
-            Storage::disk('local')->delete($mergedPdf->storage_path);
+            $disk = Storage::disk('local');
+
+            $disk->delete($mergedPdf->storage_path);
+            $disk->deleteDirectory(
+                sprintf(
+                    'doc-merge/%d/receipt-bases/%d',
+                    $mergedPdf->user_id,
+                    $mergedPdf->id,
+                ),
+            );
+
+            if (filled($mergedPdf->receipt_storage_path)) {
+                $disk->delete($mergedPdf->receipt_storage_path);
+            }
         });
     }
 
@@ -40,6 +56,7 @@ class MergedPdf extends Model
             'file_size' => 'integer',
             'source_count' => 'integer',
             'source_file_names' => 'array',
+            'receipt_file_size' => 'integer',
         ];
     }
 
