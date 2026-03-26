@@ -16,6 +16,8 @@ use Illuminate\Support\Facades\Storage;
     'file_size',
     'source_count',
     'source_file_names',
+    'tin_number',
+    'footer_text',
     'receipt_file_name',
     'receipt_storage_path',
     'receipt_file_size',

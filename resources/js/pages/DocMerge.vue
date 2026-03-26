@@ -64,12 +64,17 @@ type FlashState = {
     error?: string | null;
 };
 
+type MergeHistoryRecordType = 'merged_pdf' | 'merge_failure';
+type BulkInputMode = 'zip' | 'folder';
+
 type MergedPdfRecord = {
+    recordType: 'merged_pdf';
     id: number;
     fileName: string;
     fileSize: number;
     sourceCount: number;
     sourceFileNames: string[];
+    tinNumber: string | null;
     hasReceipt: boolean;
     receiptFileName: string | null;
     receiptFileSize: number | null;
@@ -80,9 +85,43 @@ type MergedPdfRecord = {
     receiptRemoveUrl: string | null;
     receiptDownloadUrl: string | null;
     sendEmailUrl: string;
+    inputMode: null;
+    inputLabel: null;
+    groupLabel: null;
+    errorMessage: null;
 };
 
+type MergeFailureRecord = {
+    recordType: 'merge_failure';
+    id: number;
+    fileName: string;
+    fileSize: null;
+    sourceCount: null;
+    sourceFileNames: string[];
+    tinNumber: null;
+    hasReceipt: false;
+    receiptFileName: null;
+    receiptFileSize: null;
+    createdAt: string | null;
+    downloadUrl: null;
+    previewUrl: null;
+    receiptUploadUrl: null;
+    receiptRemoveUrl: null;
+    receiptDownloadUrl: null;
+    sendEmailUrl: null;
+    inputMode: BulkInputMode;
+    inputLabel: string;
+    groupLabel: string;
+    errorMessage: string;
+};
+
+type MergeHistoryRecord = MergedPdfRecord | MergeFailureRecord;
+
 type MergeSourceType = 'upload' | 'merged_pdf';
+type DeleteItemPayload = {
+    type: MergeHistoryRecordType;
+    id: number;
+};
 
 type MergeSourcePayload = {
     type: MergeSourceType;
@@ -100,9 +139,30 @@ type MergeQueueItem = {
     file?: File;
 };
 
+type DirectoryCapableFile = File & {
+    webkitRelativePath?: string;
+};
+
+type PageFolderUploadItem = {
+    key: string;
+    name: string;
+    number: number | null;
+    files: File[];
+    hasNestedEntries: boolean;
+    hasInvalidFiles: boolean;
+};
+
+type PageFolderPayload = {
+    name: string;
+    number: number;
+    hasNestedEntries: boolean;
+    hasInvalidFiles: boolean;
+    files: File[];
+};
+
 const props = defineProps<{
     flash: FlashState;
-    mergedPdfs: MergedPdfRecord[];
+    mergeHistory: MergeHistoryRecord[];
 }>();
 const page = usePage();
 
@@ -114,27 +174,36 @@ const breadcrumbs: BreadcrumbItem[] = [
 ];
 
 const fileInput = ref<HTMLInputElement | null>(null);
+const bulkZipInput = ref<HTMLInputElement | null>(null);
+const bulkPageFolderInput = ref<HTMLInputElement | null>(null);
+const bulkPageFolderContainerInput = ref<HTMLInputElement | null>(null);
 const mergeReceiptInput = ref<HTMLInputElement | null>(null);
 const printFrame = ref<HTMLIFrameElement | null>(null);
 const receiptInput = ref<HTMLInputElement | null>(null);
 const isMergeDialogOpen = ref(false);
+const isBulkZipDialogOpen = ref(false);
+const isBulkFolderDialogOpen = ref(false);
 const isPreviewDialogOpen = ref(false);
 const isDeleteDialogOpen = ref(false);
 const isRemoveReceiptDialogOpen = ref(false);
 const isReceiptDialogOpen = ref(false);
 const isSendEmailDialogOpen = ref(false);
-const mergedFileSearch = ref('');
+const isFailureDialogOpen = ref(false);
+const mergeHistorySearch = ref('');
 const mergeQueue = ref<MergeQueueItem[]>([]);
 const printFrameUrl = ref<string | null>(null);
 const previewedMergedPdf = ref<MergedPdfRecord | null>(null);
-const mergedPdfsForDeletion = ref<MergedPdfRecord[]>([]);
+const mergeHistoryForDeletion = ref<MergeHistoryRecord[]>([]);
 const mergedPdfForReceiptRemoval = ref<MergedPdfRecord | null>(null);
 const mergedPdfForReceipt = ref<MergedPdfRecord | null>(null);
 const mergedPdfForEmail = ref<MergedPdfRecord | null>(null);
+const mergeFailureForDialog = ref<MergeFailureRecord | null>(null);
+const selectedPageFolders = ref<PageFolderUploadItem[]>([]);
 const appendBaseMergedPdfId = ref<number | null>(null);
-const selectedMergedPdfIds = ref<number[]>([]);
+const selectedMergeHistoryKeys = ref<string[]>([]);
 
 let mergeSourceSequence = 0;
+let pageFolderSequence = 0;
 let isPrintPending = false;
 let printCleanupTimeoutId: number | null = null;
 
@@ -149,11 +218,25 @@ const form = useForm<{
     files: [],
     receipt: null,
 });
+const bulkZipForm = useForm<{
+    zip: File | null;
+    outputPrefix: string;
+}>({
+    zip: null,
+    outputPrefix: '',
+});
+const bulkFolderForm = useForm<{
+    outputPrefix: string;
+    pageFolders: PageFolderPayload[];
+}>({
+    outputPrefix: '',
+    pageFolders: [],
+});
 const removeReceiptForm = useForm<Record<string, never>>({});
 const deleteForm = useForm<{
-    ids: number[];
+    items: DeleteItemPayload[];
 }>({
-    ids: [],
+    items: [],
 });
 const sendEmailForm = useForm<{
     recipientEmail: string;
@@ -180,41 +263,112 @@ const appName = computed(() => {
 const canSubmit = computed(
     () => mergeQueue.value.length >= 2 && !form.processing,
 );
-const selectedMergedPdfSet = computed(
-    () => new Set(selectedMergedPdfIds.value),
+const canSubmitBulkZipMerge = computed(
+    () => bulkZipForm.zip instanceof File && !bulkZipForm.processing,
 );
-const visibleMergedPdfIds = computed(() =>
-    filteredMergedPdfs.value.map((mergedPdf) => mergedPdf.id),
+const selectedMergeHistorySet = computed(
+    () => new Set(selectedMergeHistoryKeys.value),
 );
-const visibleSelectedMergedPdfCount = computed(
+const duplicatePageFolderNumbers = computed(() => {
+    const duplicateNumbers = new Set<number>();
+    const counts = new Map<number, number>();
+
+    for (const pageFolder of selectedPageFolders.value) {
+        if (pageFolder.number === null) {
+            continue;
+        }
+
+        const nextCount = (counts.get(pageFolder.number) ?? 0) + 1;
+
+        counts.set(pageFolder.number, nextCount);
+
+        if (nextCount > 1) {
+            duplicateNumbers.add(pageFolder.number);
+        }
+    }
+
+    return duplicateNumbers;
+});
+const pageFoldersForDisplay = computed(() =>
+    [...selectedPageFolders.value]
+        .map((pageFolder) => ({
+            ...pageFolder,
+            issueMessage: pageFolderIssueMessage(pageFolder),
+        }))
+        .sort(comparePageFolderItems),
+);
+const validSelectedPageFolderCount = computed(
     () =>
-        visibleMergedPdfIds.value.filter((id) =>
-            selectedMergedPdfSet.value.has(id),
+        pageFoldersForDisplay.value.filter(
+            (pageFolder) => pageFolder.issueMessage === null,
         ).length,
 );
-const selectAllMergedPdfsState = computed<boolean | 'indeterminate'>(() => {
-    if (visibleSelectedMergedPdfCount.value === 0) {
+const bulkFolderOutputPreview = computed(() =>
+    bulkOutputPreview(bulkFolderForm.outputPrefix),
+);
+const bulkZipOutputPreview = computed(() =>
+    bulkOutputPreview(bulkZipForm.outputPrefix),
+);
+const bulkFolderInlineError = computed(
+    () =>
+        pageFoldersForDisplay.value.find(
+            (pageFolder) => pageFolder.issueMessage !== null,
+        )?.issueMessage ?? null,
+);
+const bulkFolderClientError = computed(() => {
+    if (bulkFolderInlineError.value) {
+        return bulkFolderInlineError.value;
+    }
+
+    if (selectedPageFolders.value.length < 2) {
+        return 'Add at least two page folders like PAGE 1 and PAGE 2.';
+    }
+
+    if (validSelectedPageFolderCount.value < 2) {
+        return 'Add at least two valid page folders like PAGE 1 and PAGE 2.';
+    }
+
+    return null;
+});
+const canSubmitBulkFolderMerge = computed(
+    () =>
+        bulkFolderClientError.value === null &&
+        validSelectedPageFolderCount.value >= 2 &&
+        !bulkFolderForm.processing,
+);
+const visibleMergeHistoryKeys = computed(() =>
+    filteredMergeHistory.value.map((record) => mergeHistoryRecordKey(record)),
+);
+const visibleSelectedMergeHistoryCount = computed(
+    () =>
+        visibleMergeHistoryKeys.value.filter((key) =>
+            selectedMergeHistorySet.value.has(key),
+        ).length,
+);
+const selectAllMergeHistoryState = computed<boolean | 'indeterminate'>(() => {
+    if (visibleSelectedMergeHistoryCount.value === 0) {
         return false;
     }
 
     if (
-        visibleSelectedMergedPdfCount.value === visibleMergedPdfIds.value.length
+        visibleSelectedMergeHistoryCount.value ===
+        visibleMergeHistoryKeys.value.length
     ) {
         return true;
     }
 
     return 'indeterminate';
 });
-const canBulkDeleteMergedPdfs = computed(
-    () => selectedMergedPdfIds.value.length > 0 && !deleteForm.processing,
+const canBulkDeleteMergeHistory = computed(
+    () => selectedMergeHistoryKeys.value.length > 0 && !deleteForm.processing,
 );
 const canConfirmDelete = computed(
-    () => mergedPdfsForDeletion.value.length > 0 && !deleteForm.processing,
+    () => mergeHistoryForDeletion.value.length > 0 && !deleteForm.processing,
 );
 const deleteDialogTitle = computed(() =>
-    mergedPdfsForDeletion.value.length === 1
-        ? 'Delete merged PDF'
-        : 'Delete merged PDFs',
+    mergeHistoryForDeletion.value.length === 1
+        ? 'Delete merge result'
+        : 'Delete merge results',
 );
 const canSendEmail = computed(
     () => mergedPdfForEmail.value !== null && !sendEmailForm.processing,
@@ -226,23 +380,15 @@ const canSubmitReceipt = computed(
         !receiptForm.processing,
 );
 
-const filteredMergedPdfs = computed(() => {
-    const query = mergedFileSearch.value.trim().toLowerCase();
+const filteredMergeHistory = computed(() => {
+    const query = mergeHistorySearch.value.trim().toLowerCase();
 
     if (query === '') {
-        return props.mergedPdfs;
+        return props.mergeHistory;
     }
 
-    return props.mergedPdfs.filter((mergedPdf) =>
-        [
-            mergedPdf.fileName,
-            ...mergedPdf.sourceFileNames,
-            mergedPdf.receiptFileName ?? '',
-            formatDateTime(mergedPdf.createdAt),
-        ]
-            .join(' ')
-            .toLowerCase()
-            .includes(query),
+    return props.mergeHistory.filter((record) =>
+        mergeHistorySearchText(record).includes(query),
     );
 });
 
@@ -259,6 +405,36 @@ const fileFieldError = computed(() => {
 
     return nestedEntry?.[1] ?? null;
 });
+const bulkZipFieldError = computed(() => {
+    const directError = bulkZipForm.errors.zip;
+
+    if (directError) {
+        return directError;
+    }
+
+    const nestedEntry = Object.entries(bulkZipForm.errors).find(([key]) =>
+        key.startsWith('zip.'),
+    );
+
+    return nestedEntry?.[1] ?? null;
+});
+const bulkZipOutputPrefixError = computed(() => bulkZipForm.errors.outputPrefix);
+const bulkFolderFieldError = computed(() => {
+    const directError = bulkFolderForm.errors.pageFolders;
+
+    if (directError) {
+        return directError;
+    }
+
+    const nestedEntry = Object.entries(bulkFolderForm.errors).find(([key]) =>
+        key.startsWith('pageFolders.'),
+    );
+
+    return nestedEntry?.[1] ?? null;
+});
+const bulkFolderOutputPrefixError = computed(
+    () => bulkFolderForm.errors.outputPrefix,
+);
 
 const sourceFieldError = computed(() => {
     const directError = form.errors.sources;
@@ -305,9 +481,13 @@ watch(
     ([success, error]) => {
         if (success) {
             resetMergeForm();
+            resetBulkZipForm();
+            resetBulkFolderForm();
             resetDeleteForm();
-            selectedMergedPdfIds.value = [];
+            selectedMergeHistoryKeys.value = [];
             isMergeDialogOpen.value = false;
+            isBulkZipDialogOpen.value = false;
+            isBulkFolderDialogOpen.value = false;
             toast.success(success);
 
             return;
@@ -320,11 +500,13 @@ watch(
     { immediate: true },
 );
 
-watch(filteredMergedPdfs, (mergedPdfs) => {
-    const visibleIds = new Set(mergedPdfs.map((mergedPdf) => mergedPdf.id));
+watch(filteredMergeHistory, (mergeHistory) => {
+    const visibleKeys = new Set(
+        mergeHistory.map((record) => mergeHistoryRecordKey(record)),
+    );
 
-    selectedMergedPdfIds.value = selectedMergedPdfIds.value.filter((id) =>
-        visibleIds.has(id),
+    selectedMergeHistoryKeys.value = selectedMergeHistoryKeys.value.filter(
+        (key) => visibleKeys.has(key),
     );
 });
 
@@ -360,6 +542,30 @@ function handleMergeDialogOpenChange(open: boolean): void {
     }
 
     isMergeDialogOpen.value = open;
+}
+
+function handleBulkZipDialogOpenChange(open: boolean): void {
+    if (bulkZipForm.processing) {
+        return;
+    }
+
+    if (!open) {
+        bulkZipForm.clearErrors();
+    }
+
+    isBulkZipDialogOpen.value = open;
+}
+
+function handleBulkFolderDialogOpenChange(open: boolean): void {
+    if (bulkFolderForm.processing) {
+        return;
+    }
+
+    if (!open) {
+        bulkFolderForm.clearErrors();
+    }
+
+    isBulkFolderDialogOpen.value = open;
 }
 
 function handlePreviewDialogOpenChange(open: boolean): void {
@@ -418,52 +624,95 @@ function handleSendEmailDialogOpenChange(open: boolean): void {
     }
 }
 
+function handleFailureDialogOpenChange(open: boolean): void {
+    isFailureDialogOpen.value = open;
+
+    if (!open) {
+        mergeFailureForDialog.value = null;
+    }
+}
+
 function openNewMergeDialog(): void {
     resetMergeForm();
     isMergeDialogOpen.value = true;
 }
 
-function openAppendDialog(mergedPdf: MergedPdfRecord): void {
+function openBulkZipDialog(): void {
+    resetBulkZipForm();
+    isBulkZipDialogOpen.value = true;
+}
+
+function openBulkFolderDialog(): void {
+    resetBulkFolderForm();
+    isBulkFolderDialogOpen.value = true;
+}
+
+function openAppendDialog(record: MergeHistoryRecord): void {
+    if (!isMergedPdfRecord(record)) {
+        return;
+    }
+
     resetMergeForm();
-    appendBaseMergedPdfId.value = mergedPdf.id;
-    form.outputName = mergedPdf.fileName;
-    mergeQueue.value = [createMergedPdfQueueItem(mergedPdf, true)];
+    appendBaseMergedPdfId.value = record.id;
+    form.outputName = record.fileName;
+    mergeQueue.value = [createMergedPdfQueueItem(record, true)];
     isMergeDialogOpen.value = true;
 }
 
-function openPreviewDialog(mergedPdf: MergedPdfRecord): void {
-    previewedMergedPdf.value = mergedPdf;
+function openPreviewDialog(record: MergeHistoryRecord): void {
+    if (!isMergedPdfRecord(record)) {
+        return;
+    }
+
+    previewedMergedPdf.value = record;
     isPreviewDialogOpen.value = true;
 }
 
-function openDeleteDialogForMergedPdf(mergedPdf: MergedPdfRecord): void {
-    mergedPdfsForDeletion.value = [mergedPdf];
+function openFailureDialog(record: MergeHistoryRecord): void {
+    if (!isMergeFailureRecord(record)) {
+        return;
+    }
+
+    mergeFailureForDialog.value = record;
+    isFailureDialogOpen.value = true;
+}
+
+function openDeleteDialogForRecord(record: MergeHistoryRecord): void {
+    mergeHistoryForDeletion.value = [record];
     deleteForm.clearErrors();
     isDeleteDialogOpen.value = true;
 }
 
 function openDeleteDialogForSelection(): void {
-    const selectedMergedPdfs = filteredMergedPdfs.value.filter((mergedPdf) =>
-        selectedMergedPdfSet.value.has(mergedPdf.id),
+    const selectedMergeHistory = filteredMergeHistory.value.filter((record) =>
+        selectedMergeHistorySet.value.has(mergeHistoryRecordKey(record)),
     );
 
-    if (selectedMergedPdfs.length === 0) {
+    if (selectedMergeHistory.length === 0) {
         return;
     }
 
-    mergedPdfsForDeletion.value = selectedMergedPdfs;
+    mergeHistoryForDeletion.value = selectedMergeHistory;
     deleteForm.clearErrors();
     isDeleteDialogOpen.value = true;
 }
 
-function openRemoveReceiptDialog(mergedPdf: MergedPdfRecord): void {
-    mergedPdfForReceiptRemoval.value = mergedPdf;
+function openRemoveReceiptDialog(record: MergeHistoryRecord): void {
+    if (!isMergedPdfRecord(record)) {
+        return;
+    }
+
+    mergedPdfForReceiptRemoval.value = record;
     removeReceiptForm.clearErrors();
     isRemoveReceiptDialogOpen.value = true;
 }
 
-function openReceiptDialog(mergedPdf: MergedPdfRecord): void {
-    mergedPdfForReceipt.value = mergedPdf;
+function openReceiptDialog(record: MergeHistoryRecord): void {
+    if (!isMergedPdfRecord(record)) {
+        return;
+    }
+
+    mergedPdfForReceipt.value = record;
     receiptForm.receipt = null;
     receiptForm.clearErrors();
 
@@ -474,11 +723,15 @@ function openReceiptDialog(mergedPdf: MergedPdfRecord): void {
     isReceiptDialogOpen.value = true;
 }
 
-function openSendEmailDialog(mergedPdf: MergedPdfRecord): void {
-    mergedPdfForEmail.value = mergedPdf;
+function openSendEmailDialog(record: MergeHistoryRecord): void {
+    if (!isMergedPdfRecord(record)) {
+        return;
+    }
+
+    mergedPdfForEmail.value = record;
     sendEmailForm.recipientEmail = '';
-    sendEmailForm.subject = defaultEmailSubject(mergedPdf);
-    sendEmailForm.message = defaultEmailMessage(mergedPdf);
+    sendEmailForm.subject = defaultEmailSubject(record);
+    sendEmailForm.message = defaultEmailMessage(record);
     sendEmailForm.clearErrors();
     isSendEmailDialogOpen.value = true;
 }
@@ -501,6 +754,30 @@ function resetMergeForm(): void {
     }
 }
 
+function resetBulkZipForm(): void {
+    bulkZipForm.reset();
+    bulkZipForm.clearErrors();
+
+    if (bulkZipInput.value) {
+        bulkZipInput.value.value = '';
+    }
+}
+
+function resetBulkFolderForm(): void {
+    selectedPageFolders.value = [];
+    bulkFolderForm.reset();
+    bulkFolderForm.clearErrors();
+    bulkFolderForm.pageFolders = [];
+
+    if (bulkPageFolderInput.value) {
+        bulkPageFolderInput.value.value = '';
+    }
+
+    if (bulkPageFolderContainerInput.value) {
+        bulkPageFolderContainerInput.value.value = '';
+    }
+}
+
 function resetSendEmailForm(): void {
     mergedPdfForEmail.value = null;
     sendEmailForm.reset();
@@ -508,7 +785,7 @@ function resetSendEmailForm(): void {
 }
 
 function resetDeleteForm(): void {
-    mergedPdfsForDeletion.value = [];
+    mergeHistoryForDeletion.value = [];
     deleteForm.reset();
     deleteForm.clearErrors();
 }
@@ -564,11 +841,323 @@ function handleMergeReceiptSelection(event: Event): void {
     form.clearErrors('receipt');
 }
 
+function handleBulkZipSelection(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    const [file] = Array.from(input.files ?? []);
+
+    bulkZipForm.zip = file ?? null;
+    bulkZipForm.clearErrors('zip');
+}
+
+function handlePageFolderSelection(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    const files = Array.from(input.files ?? []);
+
+    input.value = '';
+
+    if (files.length === 0) {
+        return;
+    }
+
+    const parsedPageFolders = parsePageFolderSelection(files);
+
+    if (parsedPageFolders.length === 0) {
+        return;
+    }
+
+    selectedPageFolders.value = [
+        ...selectedPageFolders.value,
+        ...parsedPageFolders,
+    ];
+    bulkFolderForm.clearErrors('pageFolders');
+}
+
+function handlePageFolderContainerSelection(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    const files = Array.from(input.files ?? []);
+
+    input.value = '';
+
+    if (files.length === 0) {
+        return;
+    }
+
+    const parsedPageFolders = parseContainerFolderSelection(files);
+
+    if (parsedPageFolders.length === 0) {
+        return;
+    }
+
+    selectedPageFolders.value = [
+        ...selectedPageFolders.value,
+        ...parsedPageFolders,
+    ];
+    bulkFolderForm.clearErrors('pageFolders');
+}
+
 function isPdfFile(file: File): boolean {
     return (
         file.type === 'application/pdf' ||
         file.name.toLowerCase().endsWith('.pdf')
     );
+}
+
+function nextPageFolderKey(): string {
+    pageFolderSequence += 1;
+
+    return `page-folder-${pageFolderSequence}`;
+}
+
+function pageFolderNumberFromName(name: string): number | null {
+    const match = name.trim().match(/(\d+)$/);
+
+    if (!match) {
+        return null;
+    }
+
+    const pageNumber = Number.parseInt(match[1] ?? '', 10);
+
+    return Number.isFinite(pageNumber) && pageNumber > 0 ? pageNumber : null;
+}
+
+function pageFolderIssueMessage(pageFolder: PageFolderUploadItem): string | null {
+    if (pageFolder.number === null) {
+        return `Folder ${pageFolder.name} must end with a positive number like PAGE 1.`;
+    }
+
+    if (duplicatePageFolderNumbers.value.has(pageFolder.number)) {
+        return `Page number ${pageFolder.number} is already selected by another folder.`;
+    }
+
+    if (pageFolder.hasNestedEntries) {
+        return `Folder ${pageFolder.name} contains nested folders. Only direct PDF files are allowed.`;
+    }
+
+    if (pageFolder.hasInvalidFiles) {
+        return `Folder ${pageFolder.name} contains non-PDF files. Only direct PDF files are allowed.`;
+    }
+
+    if (pageFolder.files.length === 0) {
+        return `Folder ${pageFolder.name} must contain at least one direct PDF file.`;
+    }
+
+    return null;
+}
+
+function bulkOutputPreview(prefix: string): string {
+    return `${prefix}PDF_NAME`;
+}
+
+function comparePageFolderItems(
+    left: Pick<PageFolderUploadItem, 'number' | 'name'>,
+    right: Pick<PageFolderUploadItem, 'number' | 'name'>,
+): number {
+    const leftNumber = left.number ?? Number.POSITIVE_INFINITY;
+    const rightNumber = right.number ?? Number.POSITIVE_INFINITY;
+
+    if (leftNumber !== rightNumber) {
+        return leftNumber - rightNumber;
+    }
+
+    const leftName = left.name.toLowerCase();
+    const rightName = right.name.toLowerCase();
+
+    if (leftName !== rightName) {
+        return leftName.localeCompare(rightName);
+    }
+
+    return left.name.localeCompare(right.name);
+}
+
+function fileRelativePath(file: File): string {
+    const relativePath = (file as DirectoryCapableFile).webkitRelativePath;
+
+    if (typeof relativePath === 'string' && relativePath.trim() !== '') {
+        return relativePath.replaceAll('\\', '/');
+    }
+
+    return file.name;
+}
+
+function fileRelativePathSegments(file: File): string[] {
+    return fileRelativePath(file)
+        .split('/')
+        .filter((segment) => segment !== '');
+}
+
+function looksLikeContainerFolderSelection(files: File[]): boolean {
+    const segmentedPaths = files
+        .map(fileRelativePathSegments)
+        .filter((segments) => segments.length > 0);
+
+    if (segmentedPaths.length === 0) {
+        return false;
+    }
+
+    const rootSegments = Array.from(
+        new Set(segmentedPaths.map(([rootSegment = '']) => rootSegment)),
+    ).filter((segment) => segment !== '');
+
+    if (rootSegments.length !== 1) {
+        return false;
+    }
+
+    const hasDirectRootFiles = segmentedPaths.some(
+        (segments) => segments.length === 2,
+    );
+
+    if (hasDirectRootFiles) {
+        return false;
+    }
+
+    const childFolderNames = Array.from(
+        new Set(
+            segmentedPaths
+                .filter((segments) => segments.length >= 3)
+                .map((segments) => segments[1] ?? ''),
+        ),
+    ).filter((segment) => segment !== '');
+
+    return (
+        childFolderNames.length > 0 &&
+        childFolderNames.every(
+            (folderName) => pageFolderNumberFromName(folderName) !== null,
+        )
+    );
+}
+
+function parsePageFolderSelection(files: File[]): PageFolderUploadItem[] {
+    if (looksLikeContainerFolderSelection(files)) {
+        return parseContainerFolderSelection(files);
+    }
+
+    const pageFolderMap = new Map<string, PageFolderUploadItem>();
+
+    for (const file of files) {
+        const segments = fileRelativePathSegments(file);
+        const [pageFolderName = ''] = segments;
+
+        if (pageFolderName === '') {
+            continue;
+        }
+
+        if (!pageFolderMap.has(pageFolderName)) {
+            pageFolderMap.set(pageFolderName, {
+                key: nextPageFolderKey(),
+                name: pageFolderName,
+                number: pageFolderNumberFromName(pageFolderName),
+                files: [],
+                hasNestedEntries: false,
+                hasInvalidFiles: false,
+            });
+        }
+
+        const pageFolder = pageFolderMap.get(pageFolderName);
+
+        if (!pageFolder) {
+            continue;
+        }
+
+        if (segments.length > 2) {
+            pageFolder.hasNestedEntries = true;
+
+            continue;
+        }
+
+        if (!isPdfFile(file)) {
+            pageFolder.hasInvalidFiles = true;
+
+            continue;
+        }
+
+        pageFolder.files.push(file);
+    }
+
+    const pageFolders = Array.from(pageFolderMap.values());
+
+    if (pageFolders.length === 0) {
+        bulkFolderForm.setError(
+            'pageFolders',
+            'Choose one or more page folders to add.',
+        );
+    }
+
+    return pageFolders;
+}
+
+function parseContainerFolderSelection(files: File[]): PageFolderUploadItem[] {
+    const rootSegments = Array.from(
+        new Set(
+            files.map((file) => {
+                const [rootSegment = ''] = fileRelativePath(file).split('/');
+
+                return rootSegment;
+            }),
+        ),
+    ).filter((segment) => segment !== '');
+
+    if (rootSegments.length !== 1) {
+        bulkFolderForm.setError(
+            'pageFolders',
+            'Choose one container folder at a time.',
+        );
+
+        return [];
+    }
+
+    const pageFolderMap = new Map<string, PageFolderUploadItem>();
+
+    for (const file of files) {
+        const segments = fileRelativePathSegments(file);
+
+        if (segments.length < 3) {
+            bulkFolderForm.setError(
+                'pageFolders',
+                'The container folder must contain only page folders.',
+            );
+
+            return [];
+        }
+
+        const pageFolderName = segments[1] ?? '';
+
+        if (!pageFolderMap.has(pageFolderName)) {
+            pageFolderMap.set(pageFolderName, {
+                key: nextPageFolderKey(),
+                name: pageFolderName,
+                number: pageFolderNumberFromName(pageFolderName),
+                files: [],
+                hasNestedEntries: false,
+                hasInvalidFiles: false,
+            });
+        }
+
+        const pageFolder = pageFolderMap.get(pageFolderName);
+
+        if (!pageFolder) {
+            continue;
+        }
+
+        if (segments.length > 3) {
+            pageFolder.hasNestedEntries = true;
+
+            continue;
+        }
+
+        if (!isPdfFile(file)) {
+            pageFolder.hasInvalidFiles = true;
+
+            continue;
+        }
+
+        pageFolder.files.push(file);
+    }
+
+    return Array.from(pageFolderMap.values());
+}
+
+function mergeFailureInputModeLabel(inputMode: BulkInputMode): string {
+    return inputMode === 'zip' ? 'ZIP upload' : 'Folder upload';
 }
 
 function createUploadQueueItem(file: File): MergeQueueItem {
@@ -653,41 +1242,64 @@ function clearMergeReceipt(): void {
     }
 }
 
-function isMergedPdfSelected(mergedPdfId: number): boolean {
-    return selectedMergedPdfSet.value.has(mergedPdfId);
+function openBulkZipPicker(): void {
+    bulkZipInput.value?.click();
 }
 
-function toggleMergedPdfSelection(
-    mergedPdfId: number,
+function openPageFolderPicker(): void {
+    bulkPageFolderInput.value?.click();
+}
+
+function openPageFolderContainerPicker(): void {
+    bulkPageFolderContainerInput.value?.click();
+}
+
+function removePageFolder(pageFolderKey: string): void {
+    selectedPageFolders.value = selectedPageFolders.value.filter(
+        (pageFolder) => pageFolder.key !== pageFolderKey,
+    );
+    bulkFolderForm.clearErrors('pageFolders');
+}
+
+function isMergeHistorySelected(record: MergeHistoryRecord): boolean {
+    return selectedMergeHistorySet.value.has(mergeHistoryRecordKey(record));
+}
+
+function toggleMergeHistorySelection(
+    record: MergeHistoryRecord,
     checked: boolean | 'indeterminate',
 ): void {
+    const recordKey = mergeHistoryRecordKey(record);
+
     if (checked === true) {
-        selectedMergedPdfIds.value = Array.from(
-            new Set([...selectedMergedPdfIds.value, mergedPdfId]),
+        selectedMergeHistoryKeys.value = Array.from(
+            new Set([...selectedMergeHistoryKeys.value, recordKey]),
         );
 
         return;
     }
 
-    selectedMergedPdfIds.value = selectedMergedPdfIds.value.filter(
-        (id) => id !== mergedPdfId,
+    selectedMergeHistoryKeys.value = selectedMergeHistoryKeys.value.filter(
+        (key) => key !== recordKey,
     );
 }
 
-function toggleAllVisibleMergedPdfs(checked: boolean | 'indeterminate'): void {
+function toggleAllVisibleMergeHistory(
+    checked: boolean | 'indeterminate',
+): void {
     if (checked === true) {
-        selectedMergedPdfIds.value = Array.from(
+        selectedMergeHistoryKeys.value = Array.from(
             new Set([
-                ...selectedMergedPdfIds.value,
-                ...visibleMergedPdfIds.value,
+                ...selectedMergeHistoryKeys.value,
+                ...visibleMergeHistoryKeys.value,
             ]),
         );
 
         return;
     }
 
-    selectedMergedPdfIds.value = selectedMergedPdfIds.value.filter(
-        (id) => !visibleMergedPdfIds.value.includes(id),
+    selectedMergeHistoryKeys.value = selectedMergeHistoryKeys.value.filter(
+        (key) => !visibleMergeHistoryKeys.value.includes(key),
     );
 }
 
@@ -737,14 +1349,50 @@ function submit(): void {
     });
 }
 
-function submitDelete(): void {
-    const ids = mergedPdfsForDeletion.value.map((mergedPdf) => mergedPdf.id);
-
-    if (ids.length === 0) {
+function submitBulkZipMerge(): void {
+    if (!(bulkZipForm.zip instanceof File)) {
         return;
     }
 
-    deleteForm.ids = ids;
+    bulkZipForm.post(docMerge.bulk.store.url(), {
+        forceFormData: true,
+        preserveScroll: true,
+    });
+}
+
+function submitBulkFolderMerge(): void {
+    if (!canSubmitBulkFolderMerge.value) {
+        return;
+    }
+
+    bulkFolderForm.pageFolders = selectedPageFolders.value.map((pageFolder) => ({
+        name: pageFolder.name,
+        number: pageFolder.number ?? 0,
+        hasNestedEntries: pageFolder.hasNestedEntries,
+        hasInvalidFiles: pageFolder.hasInvalidFiles,
+        files: pageFolder.files,
+    }));
+
+    bulkFolderForm.post(docMerge.bulkFolders.store.url(), {
+        forceFormData: true,
+        preserveScroll: true,
+    });
+}
+
+function submitDelete(): void {
+    const items = mergeHistoryForDeletion.value.map((record) => ({
+        type: record.recordType,
+        id: record.id,
+    }));
+    const deletedKeys = mergeHistoryForDeletion.value.map((record) =>
+        mergeHistoryRecordKey(record),
+    );
+
+    if (items.length === 0) {
+        return;
+    }
+
+    deleteForm.items = items;
     deleteForm.delete(docMerge.index.url(), {
         preserveScroll: true,
         onSuccess: (page) => {
@@ -752,14 +1400,59 @@ function submitDelete(): void {
                 ?.success;
 
             if (success) {
-                selectedMergedPdfIds.value = selectedMergedPdfIds.value.filter(
-                    (id) => !ids.includes(id),
-                );
+                selectedMergeHistoryKeys.value =
+                    selectedMergeHistoryKeys.value.filter(
+                        (key) => !deletedKeys.includes(key),
+                    );
+
+                if (
+                    mergeFailureForDialog.value &&
+                    deletedKeys.includes(
+                        mergeHistoryRecordKey(mergeFailureForDialog.value),
+                    )
+                ) {
+                    handleFailureDialogOpenChange(false);
+                }
+
                 isDeleteDialogOpen.value = false;
                 resetDeleteForm();
             }
         },
     });
+}
+
+function mergeHistoryRecordKey(record: MergeHistoryRecord): string {
+    return `${record.recordType}:${record.id}`;
+}
+
+function isMergedPdfRecord(record: MergeHistoryRecord): record is MergedPdfRecord {
+    return record.recordType === 'merged_pdf';
+}
+
+function isMergeFailureRecord(
+    record: MergeHistoryRecord,
+): record is MergeFailureRecord {
+    return record.recordType === 'merge_failure';
+}
+
+function mergeHistoryDeleteLabel(record: MergeHistoryRecord): string {
+    return record.fileName;
+}
+
+function mergeHistorySearchText(record: MergeHistoryRecord): string {
+    return [
+        record.fileName,
+        ...record.sourceFileNames,
+        record.tinNumber ?? '',
+        record.receiptFileName ?? '',
+        record.inputMode ?? '',
+        record.inputLabel ?? '',
+        record.groupLabel ?? '',
+        record.errorMessage ?? '',
+        formatDateTime(record.createdAt),
+    ]
+        .join(' ')
+        .toLowerCase();
 }
 
 function submitReceipt(): void {
@@ -861,8 +1554,12 @@ function handlePrintFrameLoad(): void {
     }, 700);
 }
 
-function printMergedPdf(mergedPdf: MergedPdfRecord): void {
-    const url = new URL(mergedPdf.previewUrl, window.location.origin);
+function printMergedPdf(record: MergeHistoryRecord): void {
+    if (!isMergedPdfRecord(record)) {
+        return;
+    }
+
+    const url = new URL(record.previewUrl, window.location.origin);
 
     url.searchParams.set('print', Date.now().toString());
     clearPrintCleanupTimeout();
@@ -951,7 +1648,27 @@ function formatDateTime(value: string | null): string {
 
     <AppLayout :breadcrumbs="breadcrumbs">
         <template #subheader>
-            <div class="flex items-center justify-end">
+            <div class="flex flex-wrap items-center justify-end gap-2">
+                <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    class="gap-2 text-xs"
+                    @click="openBulkFolderDialog"
+                >
+                    <Upload class="size-4" />
+                    Bulk merge folders
+                </Button>
+                <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    class="gap-2 text-xs"
+                    @click="openBulkZipDialog"
+                >
+                    <Upload class="size-4" />
+                    Bulk merge ZIP
+                </Button>
                 <Button
                     type="button"
                     size="sm"
@@ -976,10 +1693,10 @@ function formatDateTime(value: string | null): string {
         <div class="flex flex-1 flex-col gap-6 p-4 md:p-6">
             <Card class="rounded-3xl">
                 <CardHeader class="space-y-1">
-                    <CardTitle class="text-xl">Saved merged PDFs</CardTitle>
+                    <CardTitle class="text-xl">Merge history</CardTitle>
                     <CardDescription>
-                        Preview, download, email, or track receipts for any
-                        saved merged file.
+                        Review saved merges and failed bulk merge results in one
+                        place.
                     </CardDescription>
                 </CardHeader>
 
@@ -992,9 +1709,9 @@ function formatDateTime(value: string | null): string {
                                 class="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
                             />
                             <Input
-                                v-model="mergedFileSearch"
+                                v-model="mergeHistorySearch"
                                 type="search"
-                                placeholder="Search merged files"
+                                placeholder="Search merge history"
                                 class="pl-10"
                             />
                         </div>
@@ -1004,13 +1721,13 @@ function formatDateTime(value: string | null): string {
                             variant="destructive"
                             size="sm"
                             class="gap-2 self-end md:self-auto"
-                            :disabled="!canBulkDeleteMergedPdfs"
+                            :disabled="!canBulkDeleteMergeHistory"
                             @click="openDeleteDialogForSelection"
                         >
                             <Trash2 class="size-4" />
                             {{
-                                selectedMergedPdfIds.length > 0
-                                    ? `Delete selected (${selectedMergedPdfIds.length})`
+                                selectedMergeHistoryKeys.length > 0
+                                    ? `Delete selected (${selectedMergeHistoryKeys.length})`
                                     : 'Delete selected'
                             }}
                         </Button>
@@ -1024,21 +1741,23 @@ function formatDateTime(value: string | null): string {
                                 <TableRow>
                                     <TableHead class="w-[1%]">
                                         <Checkbox
-                                            :key="`select-all-${selectAllMergedPdfsState}`"
+                                            :key="`select-all-${selectAllMergeHistoryState}`"
                                             :model-value="
-                                                selectAllMergedPdfsState
+                                                selectAllMergeHistoryState
                                             "
                                             :disabled="
-                                                filteredMergedPdfs.length === 0
+                                                filteredMergeHistory.length === 0
                                             "
-                                            aria-label="Select all merged PDFs"
+                                            aria-label="Select all merge results"
                                             @update:model-value="
-                                                toggleAllVisibleMergedPdfs
+                                                toggleAllVisibleMergeHistory
                                             "
                                         />
                                     </TableHead>
                                     <TableHead class="w-[1%]">#</TableHead>
-                                    <TableHead>Merged file</TableHead>
+                                    <TableHead>Status</TableHead>
+                                    <TableHead>Result</TableHead>
+                                    <TableHead>TIN</TableHead>
                                     <TableHead>Sources</TableHead>
                                     <TableHead>Receipt</TableHead>
                                     <TableHead>Size</TableHead>
@@ -1050,25 +1769,23 @@ function formatDateTime(value: string | null): string {
                             </TableHeader>
 
                             <TableBody>
-                                <template v-if="filteredMergedPdfs.length > 0">
+                                <template v-if="filteredMergeHistory.length > 0">
                                     <TableRow
-                                        v-for="(
-                                            mergedPdf, index
-                                        ) in filteredMergedPdfs"
-                                        :key="mergedPdf.id"
+                                        v-for="(record, index) in filteredMergeHistory"
+                                        :key="mergeHistoryRecordKey(record)"
                                     >
                                         <TableCell>
                                             <Checkbox
-                                                :key="`select-${mergedPdf.id}-${isMergedPdfSelected(mergedPdf.id)}`"
+                                                :key="`select-${mergeHistoryRecordKey(record)}-${isMergeHistorySelected(record)}`"
                                                 :model-value="
-                                                    isMergedPdfSelected(
-                                                        mergedPdf.id,
+                                                    isMergeHistorySelected(
+                                                        record,
                                                     )
                                                 "
-                                                :aria-label="`Select ${mergedPdf.fileName}`"
+                                                :aria-label="`Select ${record.fileName}`"
                                                 @update:model-value="
-                                                    toggleMergedPdfSelection(
-                                                        mergedPdf.id,
+                                                    toggleMergeHistorySelection(
+                                                        record,
                                                         $event,
                                                     )
                                                 "
@@ -1080,63 +1797,129 @@ function formatDateTime(value: string | null): string {
                                             {{ index + 1 }}
                                         </TableCell>
                                         <TableCell>
+                                            <Badge
+                                                v-if="isMergedPdfRecord(record)"
+                                                variant="outline"
+                                                class="border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-800/70 dark:bg-emerald-950/40 dark:text-emerald-200"
+                                            >
+                                                Saved
+                                            </Badge>
+                                            <Button
+                                                v-else
+                                                type="button"
+                                                variant="outline"
+                                                size="sm"
+                                                class="h-auto rounded-full border-destructive/30 px-3 py-1 text-destructive hover:text-destructive"
+                                                @click="openFailureDialog(record)"
+                                            >
+                                                Error
+                                            </Button>
+                                        </TableCell>
+                                        <TableCell>
                                             <div class="min-w-0 space-y-1">
                                                 <p
                                                     class="max-w-[16rem] truncate font-medium text-foreground"
                                                 >
-                                                    {{ mergedPdf.fileName }}
+                                                    {{ record.fileName }}
                                                 </p>
                                                 <p
                                                     class="text-xs text-muted-foreground"
                                                 >
-                                                    {{ mergedPdf.sourceCount }}
-                                                    {{
-                                                        mergedPdf.sourceCount ===
-                                                        1
-                                                            ? 'source file'
-                                                            : 'source files'
-                                                    }}
+                                                    <template
+                                                        v-if="
+                                                            isMergedPdfRecord(
+                                                                record,
+                                                            )
+                                                        "
+                                                    >
+                                                        {{ record.sourceCount }}
+                                                        {{
+                                                            record.sourceCount ===
+                                                            1
+                                                                ? 'source file'
+                                                                : 'source files'
+                                                        }}
+                                                    </template>
+                                                    <template v-else>
+                                                        Matched PDF:
+                                                        {{ record.groupLabel }}
+                                                    </template>
                                                 </p>
                                             </div>
                                         </TableCell>
+                                        <TableCell
+                                            class="text-sm text-muted-foreground"
+                                        >
+                                            {{
+                                                record.tinNumber && record.tinNumber !== ''
+                                                    ? record.tinNumber
+                                                    : '—'
+                                            }}
+                                        </TableCell>
                                         <TableCell>
-                                            <div
-                                                class="flex max-w-[18rem] flex-wrap gap-1.5"
+                                            <template
+                                                v-if="isMergedPdfRecord(record)"
                                             >
-                                                <Badge
-                                                    v-for="sourceFileName in mergedPdf.sourceFileNames.slice(
-                                                        0,
-                                                        2,
-                                                    )"
-                                                    :key="sourceFileName"
-                                                    variant="secondary"
-                                                    class="max-w-full truncate"
+                                                <div
+                                                    class="flex max-w-[18rem] flex-wrap gap-1.5"
                                                 >
-                                                    {{ sourceFileName }}
-                                                </Badge>
-                                                <Badge
-                                                    v-if="
-                                                        mergedPdf
-                                                            .sourceFileNames
-                                                            .length > 2
-                                                    "
-                                                    variant="outline"
-                                                >
-                                                    +{{
-                                                        mergedPdf
-                                                            .sourceFileNames
-                                                            .length - 2
-                                                    }}
-                                                    more
-                                                </Badge>
-                                            </div>
+                                                    <Badge
+                                                        v-for="sourceFileName in record.sourceFileNames.slice(
+                                                            0,
+                                                            2,
+                                                        )"
+                                                        :key="sourceFileName"
+                                                        variant="secondary"
+                                                        class="max-w-full truncate"
+                                                    >
+                                                        {{ sourceFileName }}
+                                                    </Badge>
+                                                    <Badge
+                                                        v-if="
+                                                            record
+                                                                .sourceFileNames
+                                                                .length > 2
+                                                        "
+                                                        variant="outline"
+                                                    >
+                                                        +{{
+                                                            record
+                                                                .sourceFileNames
+                                                                .length - 2
+                                                        }}
+                                                        more
+                                                    </Badge>
+                                                </div>
+                                            </template>
+                                            <template v-else>
+                                                <div class="space-y-1 text-sm">
+                                                    <p
+                                                        class="font-medium text-foreground"
+                                                    >
+                                                        {{
+                                                            mergeFailureInputModeLabel(
+                                                                record.inputMode,
+                                                            )
+                                                        }}
+                                                    </p>
+                                                    <p
+                                                        class="max-w-[18rem] truncate text-xs text-muted-foreground"
+                                                    >
+                                                        {{ record.inputLabel }}
+                                                    </p>
+                                                </div>
+                                            </template>
                                         </TableCell>
                                         <TableCell>
                                             <div
                                                 class="flex min-w-[7.5rem] items-center"
                                             >
                                                 <Badge
-                                                    v-if="mergedPdf.hasReceipt"
+                                                    v-if="
+                                                        isMergedPdfRecord(
+                                                            record,
+                                                        ) && record.hasReceipt
+                                                    "
                                                     variant="outline"
                                                     class="border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-800/70 dark:bg-emerald-950/40 dark:text-emerald-200"
                                                 >
@@ -1154,9 +1937,11 @@ function formatDateTime(value: string | null): string {
                                             class="text-sm text-muted-foreground"
                                         >
                                             {{
-                                                formatFileSize(
-                                                    mergedPdf.fileSize,
-                                                )
+                                                record.fileSize === null
+                                                    ? '-'
+                                                    : formatFileSize(
+                                                          record.fileSize,
+                                                      )
                                             }}
                                         </TableCell>
                                         <TableCell
@@ -1164,7 +1949,7 @@ function formatDateTime(value: string | null): string {
                                         >
                                             {{
                                                 formatDateTime(
-                                                    mergedPdf.createdAt,
+                                                    record.createdAt,
                                                 )
                                             }}
                                         </TableCell>
@@ -1193,117 +1978,153 @@ function formatDateTime(value: string | null): string {
                                                         align="end"
                                                         class="w-48 rounded-lg"
                                                     >
-                                                        <DropdownMenuItem
-                                                            @select="
-                                                                openPreviewDialog(
-                                                                    mergedPdf,
-                                                                )
-                                                            "
-                                                        >
-                                                            <Eye
-                                                                class="size-4"
-                                                            />
-                                                            Preview
-                                                        </DropdownMenuItem>
-                                                        <DropdownMenuItem
-                                                            @select="
-                                                                printMergedPdf(
-                                                                    mergedPdf,
-                                                                )
-                                                            "
-                                                        >
-                                                            <Printer
-                                                                class="size-4"
-                                                            />
-                                                            Print
-                                                        </DropdownMenuItem>
-                                                        <DropdownMenuItem
-                                                            @select="
-                                                                openAppendDialog(
-                                                                    mergedPdf,
-                                                                )
-                                                            "
-                                                        >
-                                                            <Plus
-                                                                class="size-4"
-                                                            />
-                                                            Add Files
-                                                        </DropdownMenuItem>
-                                                        <DropdownMenuItem
-                                                            @select="
-                                                                openSendEmailDialog(
-                                                                    mergedPdf,
-                                                                )
-                                                            "
-                                                        >
-                                                            <Mail
-                                                                class="size-4"
-                                                            />
-                                                            Send Email
-                                                        </DropdownMenuItem>
-                                                        <DropdownMenuItem
-                                                            @select="
-                                                                openReceiptDialog(
-                                                                    mergedPdf,
-                                                                )
-                                                            "
-                                                        >
-                                                            <Upload
-                                                                class="size-4"
-                                                            />
-                                                            {{
-                                                                mergedPdf.hasReceipt
-                                                                    ? 'Replace Receipt'
-                                                                    : 'Add Receipt'
-                                                            }}
-                                                        </DropdownMenuItem>
-                                                        <DropdownMenuItem
+                                                        <template
                                                             v-if="
-                                                                mergedPdf.hasReceipt &&
-                                                                mergedPdf.receiptRemoveUrl
-                                                            "
-                                                            variant="destructive"
-                                                            @select="
-                                                                openRemoveReceiptDialog(
-                                                                    mergedPdf,
+                                                                isMergedPdfRecord(
+                                                                    record,
                                                                 )
                                                             "
                                                         >
-                                                            <Trash2
-                                                                class="size-4"
-                                                            />
-                                                            Remove Receipt
-                                                        </DropdownMenuItem>
-                                                        <DropdownMenuSeparator />
-                                                        <DropdownMenuItem
-                                                            variant="destructive"
-                                                            @select="
-                                                                openDeleteDialogForMergedPdf(
-                                                                    mergedPdf,
-                                                                )
-                                                            "
-                                                        >
-                                                            <Trash2
-                                                                class="size-4"
-                                                            />
-                                                            Delete
-                                                        </DropdownMenuItem>
-                                                        <DropdownMenuSeparator />
-                                                        <DropdownMenuItem
-                                                            :as-child="true"
-                                                        >
-                                                            <a
-                                                                :href="
-                                                                    mergedPdf.downloadUrl
+                                                            <DropdownMenuItem
+                                                                @select="
+                                                                    openPreviewDialog(
+                                                                        record,
+                                                                    )
                                                                 "
-                                                                class="flex w-full items-center gap-2"
                                                             >
-                                                                <Download
+                                                                <Eye
                                                                     class="size-4"
                                                                 />
-                                                                Download
-                                                            </a>
-                                                        </DropdownMenuItem>
+                                                                Preview
+                                                            </DropdownMenuItem>
+                                                            <DropdownMenuItem
+                                                                @select="
+                                                                    printMergedPdf(
+                                                                        record,
+                                                                    )
+                                                                "
+                                                            >
+                                                                <Printer
+                                                                    class="size-4"
+                                                                />
+                                                                Print
+                                                            </DropdownMenuItem>
+                                                            <DropdownMenuItem
+                                                                @select="
+                                                                    openAppendDialog(
+                                                                        record,
+                                                                    )
+                                                                "
+                                                            >
+                                                                <Plus
+                                                                    class="size-4"
+                                                                />
+                                                                Add Files
+                                                            </DropdownMenuItem>
+                                                            <DropdownMenuItem
+                                                                @select="
+                                                                    openSendEmailDialog(
+                                                                        record,
+                                                                    )
+                                                                "
+                                                            >
+                                                                <Mail
+                                                                    class="size-4"
+                                                                />
+                                                                Send Email
+                                                            </DropdownMenuItem>
+                                                            <DropdownMenuItem
+                                                                @select="
+                                                                    openReceiptDialog(
+                                                                        record,
+                                                                    )
+                                                                "
+                                                            >
+                                                                <Upload
+                                                                    class="size-4"
+                                                                />
+                                                                {{
+                                                                    record.hasReceipt
+                                                                        ? 'Replace Receipt'
+                                                                        : 'Add Receipt'
+                                                                }}
+                                                            </DropdownMenuItem>
+                                                            <DropdownMenuItem
+                                                                v-if="
+                                                                    record.hasReceipt &&
+                                                                    record.receiptRemoveUrl
+                                                                "
+                                                                variant="destructive"
+                                                                @select="
+                                                                    openRemoveReceiptDialog(
+                                                                        record,
+                                                                    )
+                                                                "
+                                                            >
+                                                                <Trash2
+                                                                    class="size-4"
+                                                                />
+                                                                Remove Receipt
+                                                            </DropdownMenuItem>
+                                                            <DropdownMenuSeparator />
+                                                            <DropdownMenuItem
+                                                                variant="destructive"
+                                                                @select="
+                                                                    openDeleteDialogForRecord(
+                                                                        record,
+                                                                    )
+                                                                "
+                                                            >
+                                                                <Trash2
+                                                                    class="size-4"
+                                                                />
+                                                                Delete
+                                                            </DropdownMenuItem>
+                                                            <DropdownMenuSeparator />
+                                                            <DropdownMenuItem
+                                                                :as-child="true"
+                                                            >
+                                                                <a
+                                                                    :href="
+                                                                        record.downloadUrl
+                                                                    "
+                                                                    class="flex w-full items-center gap-2"
+                                                                >
+                                                                    <Download
+                                                                        class="size-4"
+                                                                    />
+                                                                    Download
+                                                                </a>
+                                                            </DropdownMenuItem>
+                                                        </template>
+                                                        <template v-else>
+                                                            <DropdownMenuItem
+                                                                @select="
+                                                                    openFailureDialog(
+                                                                        record,
+                                                                    )
+                                                                "
+                                                            >
+                                                                <Eye
+                                                                    class="size-4"
+                                                                />
+                                                                View Error
+                                                            </DropdownMenuItem>
+                                                            <DropdownMenuSeparator />
+                                                            <DropdownMenuItem
+                                                                variant="destructive"
+                                                                @select="
+                                                                    openDeleteDialogForRecord(
+                                                                        record,
+                                                                    )
+                                                                "
+                                                            >
+                                                                <Trash2
+                                                                    class="size-4"
+                                                                />
+                                                                Delete
+                                                            </DropdownMenuItem>
+                                                        </template>
                                                     </DropdownMenuContent>
                                                 </DropdownMenu>
                                             </div>
@@ -1311,11 +2132,11 @@ function formatDateTime(value: string | null): string {
                                     </TableRow>
                                 </template>
 
-                                <TableEmpty v-else :colspan="8">
+                                <TableEmpty v-else :colspan="10">
                                     {{
-                                        props.mergedPdfs.length === 0
-                                            ? 'No merged PDFs saved yet.'
-                                            : 'No merged PDFs match your search.'
+                                        props.mergeHistory.length === 0
+                                            ? 'No merge history yet.'
+                                            : 'No merge results match your search.'
                                     }}
                                 </TableEmpty>
                             </TableBody>
@@ -1652,6 +2473,471 @@ function formatDateTime(value: string | null): string {
             </Dialog>
 
             <Dialog
+                :open="isBulkFolderDialogOpen"
+                @update:open="handleBulkFolderDialogOpenChange"
+            >
+                <DialogContent class="max-h-[85vh] overflow-y-auto sm:max-w-3xl">
+                    <DialogHeader class="space-y-3">
+                        <DialogTitle>Bulk merge folders</DialogTitle>
+                        <DialogDescription>
+                            Add one or more page folders like PAGE 1 and PAGE 2,
+                            or import one container folder with page folders
+                            inside it. PDFs with the same base name across every
+                            selected page folder will be merged together.
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    <form
+                        class="space-y-6"
+                        @submit.prevent="submitBulkFolderMerge"
+                    >
+                        <input
+                            ref="bulkPageFolderInput"
+                            type="file"
+                            accept=".pdf,application/pdf"
+                            webkitdirectory
+                            directory
+                            multiple
+                            class="hidden"
+                            @change="handlePageFolderSelection"
+                        />
+                        <input
+                            ref="bulkPageFolderContainerInput"
+                            type="file"
+                            accept=".pdf,application/pdf"
+                            webkitdirectory
+                            directory
+                            multiple
+                            class="hidden"
+                            @change="handlePageFolderContainerSelection"
+                        />
+
+                        <div
+                            class="rounded-2xl border bg-muted/20 p-4 text-sm text-muted-foreground"
+                        >
+                            <p class="font-medium text-foreground">
+                                Folder rules
+                            </p>
+                            <p class="mt-2">
+                                Each page folder name must end with a positive
+                                number like
+                                <span class="font-medium text-foreground">
+                                    PAGE 1
+                                </span>
+                                ,
+                                <span class="font-medium text-foreground">
+                                    PAGE 2
+                                </span>
+                                , or
+                                <span class="font-medium text-foreground">
+                                    PAGE 10
+                                </span>
+                                .
+                            </p>
+                            <p class="mt-2">
+                                Only direct PDF files are allowed inside each
+                                page folder. Matching uses the PDF name without
+                                the ending page number, so
+                                <span class="font-medium text-foreground">
+                                    invoice 1.pdf
+                                </span>
+                                and
+                                <span class="font-medium text-foreground">
+                                    invoice 2.pdf
+                                </span>
+                                become one output.
+                            </p>
+                            <p class="mt-2">
+                                If a PDF ends with a page number, that number
+                                must match the folder name, like
+                                <span class="font-medium text-foreground">
+                                    PAGE 2 / invoice 2.pdf
+                                </span>
+                                .
+                            </p>
+                            <p class="mt-2">
+                                To add multiple page folders in one pick, choose
+                                their parent folder so it contains PAGE 1, PAGE
+                                2, and the other page folders inside.
+                            </p>
+                        </div>
+
+                        <div class="space-y-2">
+                            <Label for="bulkFolderOutputPrefix">
+                                Output prefix
+                                <span class="text-muted-foreground">
+                                    (optional)
+                                </span>
+                            </Label>
+                            <Input
+                                id="bulkFolderOutputPrefix"
+                                v-model="bulkFolderForm.outputPrefix"
+                                type="text"
+                                placeholder="ClientA_"
+                            />
+                            <p class="text-xs text-muted-foreground">
+                                Each output becomes
+                                <span class="font-medium text-foreground">
+                                    {{ bulkFolderOutputPreview }}
+                                </span>
+                                .
+                            </p>
+                            <InputError
+                                :message="
+                                    bulkFolderOutputPrefixError ?? undefined
+                                "
+                            />
+                        </div>
+
+                        <div class="space-y-3">
+                            <div class="flex flex-wrap gap-2">
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    class="gap-2"
+                                    :disabled="bulkFolderForm.processing"
+                                    @click="openPageFolderPicker"
+                                >
+                                    <Upload class="size-4" />
+                                    Add page folders
+                                </Button>
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    class="gap-2"
+                                    :disabled="bulkFolderForm.processing"
+                                    @click="openPageFolderContainerPicker"
+                                >
+                                    <Upload class="size-4" />
+                                    Import container folder
+                                </Button>
+                            </div>
+                            <InputError
+                                :message="
+                                    bulkFolderFieldError ??
+                                    bulkFolderInlineError ??
+                                    undefined
+                                "
+                            />
+                            <p
+                                v-if="bulkFolderForm.progress"
+                                class="text-xs text-muted-foreground"
+                            >
+                                Uploading
+                                {{ bulkFolderForm.progress.percentage }}%
+                            </p>
+                        </div>
+
+                        <div
+                            class="rounded-2xl border bg-background p-4"
+                        >
+                            <div
+                                class="flex items-center justify-between gap-3"
+                            >
+                                <div>
+                                    <p class="font-medium text-foreground">
+                                        Page order preview
+                                    </p>
+                                    <p class="text-sm text-muted-foreground">
+                                        {{
+                                            pageFoldersForDisplay.length === 0
+                                                ? 'No page folders selected yet.'
+                                                : `${pageFoldersForDisplay.length} page folders selected.`
+                                        }}
+                                    </p>
+                                    <p class="mt-1 text-sm text-muted-foreground">
+                                        Each output becomes
+                                        <span class="font-medium text-foreground">
+                                            {{ bulkFolderOutputPreview }}
+                                        </span>
+                                        .
+                                    </p>
+                                </div>
+                                <Badge variant="outline">
+                                    {{ validSelectedPageFolderCount }} valid
+                                </Badge>
+                            </div>
+
+                            <div
+                                v-if="pageFoldersForDisplay.length > 0"
+                                class="mt-4 space-y-3"
+                            >
+                                <div
+                                    v-for="pageFolder in pageFoldersForDisplay"
+                                    :key="pageFolder.key"
+                                    class="rounded-2xl border bg-muted/20 p-4"
+                                >
+                                    <div
+                                        class="flex flex-wrap items-start justify-between gap-3"
+                                    >
+                                        <div class="min-w-0 space-y-1">
+                                            <p
+                                                class="max-w-[24rem] truncate font-medium text-foreground"
+                                            >
+                                                {{ pageFolder.name }}
+                                            </p>
+                                            <p
+                                                class="text-sm text-muted-foreground"
+                                            >
+                                                {{
+                                                    pageFolder.number === null
+                                                        ? 'Needs page number'
+                                                        : `Page ${pageFolder.number}`
+                                                }}
+                                                •
+                                                {{
+                                                    pageFolder.files.length === 1
+                                                        ? '1 direct PDF'
+                                                        : `${pageFolder.files.length} direct PDFs`
+                                                }}
+                                            </p>
+                                        </div>
+                                        <div
+                                            class="flex items-center gap-2"
+                                        >
+                                            <Badge
+                                                v-if="pageFolder.issueMessage"
+                                                variant="destructive"
+                                            >
+                                                Needs attention
+                                            </Badge>
+                                            <Badge
+                                                v-else
+                                                variant="outline"
+                                                class="border-emerald-200 bg-emerald-50 text-emerald-700"
+                                            >
+                                                Ready
+                                            </Badge>
+                                            <Button
+                                                type="button"
+                                                variant="ghost"
+                                                size="icon-sm"
+                                                :disabled="
+                                                    bulkFolderForm.processing
+                                                "
+                                                @click="
+                                                    removePageFolder(
+                                                        pageFolder.key,
+                                                    )
+                                                "
+                                            >
+                                                <Trash2 class="size-4" />
+                                                <span class="sr-only">
+                                                    Remove page folder
+                                                </span>
+                                            </Button>
+                                        </div>
+                                    </div>
+                                    <p
+                                        v-if="pageFolder.issueMessage"
+                                        class="mt-3 text-sm text-destructive"
+                                    >
+                                        {{ pageFolder.issueMessage }}
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <DialogFooter class="gap-2">
+                            <Button
+                                type="button"
+                                variant="secondary"
+                                :disabled="bulkFolderForm.processing"
+                                @click="
+                                    handleBulkFolderDialogOpenChange(false)
+                                "
+                            >
+                                Cancel
+                            </Button>
+                            <Button
+                                type="submit"
+                                class="gap-2"
+                                :disabled="!canSubmitBulkFolderMerge"
+                            >
+                                <LoaderCircle
+                                    v-if="bulkFolderForm.processing"
+                                    class="size-4 animate-spin"
+                                />
+                                <Upload v-else class="size-4" />
+                                {{
+                                    bulkFolderForm.processing
+                                        ? 'Processing folders...'
+                                        : 'Bulk merge folders'
+                                }}
+                            </Button>
+                        </DialogFooter>
+                    </form>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog
+                :open="isBulkZipDialogOpen"
+                @update:open="handleBulkZipDialogOpenChange"
+            >
+                <DialogContent class="sm:max-w-lg">
+                    <DialogHeader class="space-y-3">
+                        <DialogTitle>Bulk merge ZIP</DialogTitle>
+                        <DialogDescription>
+                            Upload one ZIP with page folders like PAGE 1 and
+                            PAGE 2 at the ZIP root, or inside one wrapper
+                            folder. PDFs with the same base name across all
+                            page folders will be merged together.
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    <form
+                        class="space-y-6"
+                        @submit.prevent="submitBulkZipMerge"
+                    >
+                        <input
+                            ref="bulkZipInput"
+                            type="file"
+                            accept=".zip,application/zip,application/x-zip-compressed"
+                            class="hidden"
+                            @change="handleBulkZipSelection"
+                        />
+
+                        <div
+                            class="rounded-2xl border bg-muted/20 p-4 text-sm text-muted-foreground"
+                        >
+                            <p class="font-medium text-foreground">
+                                ZIP rules
+                            </p>
+                            <p class="mt-2">
+                                PAGE 1, PAGE 2, PAGE 10, and the other page
+                                folders can sit directly in the ZIP, or inside
+                                one extra wrapper folder.
+                            </p>
+                            <p class="mt-2">
+                                Each page folder must contain only direct PDFs.
+                                Matching uses the PDF name without the ending
+                                page number, so
+                                <span class="font-medium text-foreground">
+                                    invoice 1.pdf
+                                </span>
+                                and
+                                <span class="font-medium text-foreground">
+                                    invoice 2.pdf
+                                </span>
+                                become one output.
+                            </p>
+                            <p class="mt-2">
+                                If a PDF ends with a page number, that number
+                                must match its page folder.
+                            </p>
+                        </div>
+
+                        <div class="space-y-2">
+                            <Label for="bulkZipOutputPrefix">
+                                Output prefix
+                                <span class="text-muted-foreground">
+                                    (optional)
+                                </span>
+                            </Label>
+                            <Input
+                                id="bulkZipOutputPrefix"
+                                v-model="bulkZipForm.outputPrefix"
+                                type="text"
+                                placeholder="ClientA_"
+                            />
+                            <p class="text-xs text-muted-foreground">
+                                Each output becomes
+                                <span class="font-medium text-foreground">
+                                    {{ bulkZipOutputPreview }}
+                                </span>
+                                .
+                            </p>
+                            <InputError
+                                :message="
+                                    bulkZipOutputPrefixError ?? undefined
+                                "
+                            />
+                        </div>
+
+                        <div
+                            class="rounded-2xl border bg-background p-4 text-sm"
+                        >
+                            <p class="font-medium text-foreground">
+                                Output preview
+                            </p>
+                            <p class="mt-2 text-muted-foreground">
+                                Each output becomes
+                                <span class="font-medium text-foreground">
+                                    {{ bulkZipOutputPreview }}
+                                </span>
+                                .
+                            </p>
+                        </div>
+
+                        <div class="space-y-3">
+                            <div class="flex flex-wrap gap-2">
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    class="gap-2"
+                                    :disabled="bulkZipForm.processing"
+                                    @click="openBulkZipPicker"
+                                >
+                                    <Upload class="size-4" />
+                                    Choose ZIP
+                                </Button>
+                                <span
+                                    v-if="bulkZipForm.zip"
+                                    class="self-center text-sm text-muted-foreground"
+                                >
+                                    <span class="font-medium text-foreground">
+                                        {{ bulkZipForm.zip.name }}
+                                    </span>
+                                    ({{
+                                        formatFileSize(
+                                            bulkZipForm.zip.size,
+                                        )
+                                    }})
+                                </span>
+                            </div>
+                            <InputError
+                                :message="bulkZipFieldError ?? undefined"
+                            />
+                            <p
+                                v-if="bulkZipForm.progress"
+                                class="text-xs text-muted-foreground"
+                            >
+                                Uploading
+                                {{ bulkZipForm.progress.percentage }}%
+                            </p>
+                        </div>
+
+                        <DialogFooter class="gap-2">
+                            <Button
+                                type="button"
+                                variant="secondary"
+                                :disabled="bulkZipForm.processing"
+                                @click="handleBulkZipDialogOpenChange(false)"
+                            >
+                                Cancel
+                            </Button>
+                            <Button
+                                type="submit"
+                                class="gap-2"
+                                :disabled="!canSubmitBulkZipMerge"
+                            >
+                                <LoaderCircle
+                                    v-if="bulkZipForm.processing"
+                                    class="size-4 animate-spin"
+                                />
+                                <Upload v-else class="size-4" />
+                                {{
+                                    bulkZipForm.processing
+                                        ? 'Processing ZIP...'
+                                        : 'Bulk merge ZIP'
+                                }}
+                            </Button>
+                        </DialogFooter>
+                    </form>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog
                 :open="isDeleteDialogOpen"
                 @update:open="handleDeleteDialogOpenChange"
             >
@@ -1659,26 +2945,33 @@ function formatDateTime(value: string | null): string {
                     <DialogHeader class="space-y-3">
                         <DialogTitle>{{ deleteDialogTitle }}</DialogTitle>
                         <DialogDescription>
-                            <template v-if="mergedPdfsForDeletion.length === 1">
-                                Delete
-                                <span class="font-medium text-foreground">
-                                    {{ mergedPdfsForDeletion[0]?.fileName }}
-                                </span>
-                                ? This removes the saved merged PDF and any
-                                attached receipt file.
-                            </template>
                             <template
-                                v-else-if="mergedPdfsForDeletion.length > 1"
+                                v-if="mergeHistoryForDeletion.length === 1"
                             >
                                 Delete
                                 <span class="font-medium text-foreground">
-                                    {{ mergedPdfsForDeletion.length }}
+                                    {{
+                                        mergeHistoryForDeletion[0]
+                                            ? mergeHistoryDeleteLabel(
+                                                  mergeHistoryForDeletion[0],
+                                              )
+                                            : ''
+                                    }}
                                 </span>
-                                selected merged PDFs? This also removes any
-                                attached receipts for those files.
+                                ? Saved PDFs also remove any attached receipt.
+                            </template>
+                            <template
+                                v-else-if="mergeHistoryForDeletion.length > 1"
+                            >
+                                Delete
+                                <span class="font-medium text-foreground">
+                                    {{ mergeHistoryForDeletion.length }}
+                                </span>
+                                selected merge results? Saved PDFs also remove
+                                any attached receipts.
                             </template>
                             <template v-else>
-                                Delete the selected merged PDFs.
+                                Delete the selected merge results.
                             </template>
                         </DialogDescription>
                     </DialogHeader>
@@ -1708,10 +3001,90 @@ function formatDateTime(value: string | null): string {
                             {{
                                 deleteForm.processing
                                     ? 'Deleting...'
-                                    : mergedPdfsForDeletion.length === 1
-                                      ? 'Delete file'
-                                      : `Delete ${mergedPdfsForDeletion.length} files`
+                                    : mergeHistoryForDeletion.length === 1
+                                      ? 'Delete result'
+                                      : `Delete ${mergeHistoryForDeletion.length} results`
                             }}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog
+                :open="isFailureDialogOpen"
+                @update:open="handleFailureDialogOpenChange"
+            >
+                <DialogContent class="sm:max-w-lg">
+                    <DialogHeader class="space-y-3">
+                        <DialogTitle>Bulk merge error</DialogTitle>
+                        <DialogDescription>
+                            Review why this output was skipped during bulk
+                            merge.
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    <div
+                        v-if="mergeFailureForDialog"
+                        class="space-y-4 text-sm"
+                    >
+                        <div class="rounded-2xl border bg-muted/30 p-4">
+                            <div class="space-y-1">
+                                <p class="font-medium text-foreground">
+                                    Output file
+                                </p>
+                                <p>
+                                    {{ mergeFailureForDialog.fileName }}
+                                </p>
+                            </div>
+                            <div class="mt-4 space-y-1">
+                                <p class="font-medium text-foreground">
+                                    Matched PDF
+                                </p>
+                                <p>
+                                    {{ mergeFailureForDialog.groupLabel }}
+                                </p>
+                            </div>
+                            <div class="mt-4 space-y-1">
+                                <p class="font-medium text-foreground">
+                                    Source type
+                                </p>
+                                <p>
+                                    {{
+                                        mergeFailureInputModeLabel(
+                                            mergeFailureForDialog.inputMode,
+                                        )
+                                    }}
+                                </p>
+                            </div>
+                            <div class="mt-4 space-y-1">
+                                <p class="font-medium text-foreground">
+                                    Source label
+                                </p>
+                                <p class="break-words">
+                                    {{
+                                        mergeFailureForDialog.inputLabel
+                                    }}
+                                </p>
+                            </div>
+                        </div>
+
+                        <div
+                            class="rounded-2xl border border-destructive/20 bg-destructive/5 p-4"
+                        >
+                            <p class="font-medium text-destructive">Error</p>
+                            <p class="mt-2 text-foreground">
+                                {{ mergeFailureForDialog.errorMessage }}
+                            </p>
+                        </div>
+                    </div>
+
+                    <DialogFooter class="gap-2">
+                        <Button
+                            type="button"
+                            variant="secondary"
+                            @click="handleFailureDialogOpenChange(false)"
+                        >
+                            Close
                         </Button>
                     </DialogFooter>
                 </DialogContent>

@@ -12,25 +12,36 @@ Route::inertia('/', 'Welcome', [
 
 Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('dashboard', DashboardController::class)->name('dashboard');
-    Route::get('doc-merge', [DocMergeController::class, 'index'])->name('doc-merge.index');
-    Route::post('doc-merge', [DocMergeController::class, 'store'])->name('doc-merge.store');
-    Route::delete('doc-merge', [DocMergeController::class, 'destroyMany'])->name('doc-merge.destroy-many');
-    Route::get('doc-merge/{mergedPdf}/preview', [DocMergeController::class, 'preview'])->name('doc-merge.preview');
-    Route::post('doc-merge/{mergedPdf}/receipt', [DocMergeController::class, 'storeReceipt'])->name('doc-merge.receipt.store');
-    Route::delete('doc-merge/{mergedPdf}/receipt', [DocMergeController::class, 'destroyReceipt'])->name('doc-merge.receipt.destroy');
-    Route::get('doc-merge/{mergedPdf}/receipt', [DocMergeController::class, 'downloadReceipt'])->name('doc-merge.receipt.download');
-    Route::post('doc-merge/{mergedPdf}/send-email', [DocMergeController::class, 'sendEmail'])->name('doc-merge.send-email');
-    Route::get('doc-merge/{mergedPdf}', [DocMergeController::class, 'download'])->name('doc-merge.download');
-    Route::get('email-sync', [EmailSyncController::class, 'index'])->name('email-sync.index');
-    Route::get('email-sync/messages', [EmailSyncController::class, 'emails'])->name('email-sync.emails');
-    Route::post('email-sync', [EmailSyncController::class, 'sync'])->name('email-sync.sync');
-    Route::post('email-sync/backfill', [EmailSyncController::class, 'backfill'])->name('email-sync.backfill');
-    Route::get('email-sync/{syncedEmail}/rendered', [EmailSyncController::class, 'renderedMessage'])
-        ->name('email-sync.rendered');
-    Route::get('email-sync/{syncedEmail}/attachments/{attachment}/inline', [EmailSyncController::class, 'inlineAttachment'])
-        ->name('email-sync.attachments.inline');
-    Route::get('email-sync/{syncedEmail}/attachments/{attachment}', [EmailSyncController::class, 'downloadAttachment'])
-        ->name('email-sync.attachments.download');
+    Route::controller(DocMergeController::class)
+        ->prefix('doc-merge')
+        ->name('doc-merge.')
+        ->group(function () {
+            Route::get('/', 'index')->name('index');
+            Route::post('/', 'store')->name('store');
+            Route::post('bulk', 'storeBulk')->name('bulk.store');
+            Route::post('bulk-folders', 'storeBulkFolders')->name('bulk-folders.store');
+            Route::delete('/', 'destroyMany')->name('destroy-many');
+            Route::get('{mergedPdf}/preview', 'preview')->name('preview');
+            Route::post('{mergedPdf}/receipt', 'storeReceipt')->name('receipt.store');
+            Route::delete('{mergedPdf}/receipt', 'destroyReceipt')->name('receipt.destroy');
+            Route::get('{mergedPdf}/receipt', 'downloadReceipt')->name('receipt.download');
+            Route::post('{mergedPdf}/send-email', 'sendEmail')->name('send-email');
+            Route::get('{mergedPdf}', 'download')->name('download');
+        });
+    Route::controller(EmailSyncController::class)
+        ->prefix('email-sync')
+        ->name('email-sync.')
+        ->group(function () {
+            Route::get('/', 'index')->name('index');
+            Route::get('messages', 'emails')->name('emails');
+            Route::post('/', 'sync')->name('sync');
+            Route::post('backfill', 'backfill')->name('backfill');
+            Route::get('{syncedEmail}/rendered', 'renderedMessage')->name('rendered');
+            Route::get('{syncedEmail}/attachments/{attachment}/inline', 'inlineAttachment')
+                ->name('attachments.inline');
+            Route::get('{syncedEmail}/attachments/{attachment}', 'downloadAttachment')
+                ->name('attachments.download');
+        });
 });
 
 require __DIR__.'/settings.php';

@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace App\Http\Controllers;
 
 use App\Mail\MergedPdfEmail;
+use App\Models\BulkMergeFailure;
 use App\Models\MergedPdf;
 use App\Models\User;
+use App\Services\BulkZipMergeService;
 use App\Services\PdfMergeService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -35,8 +37,12 @@ class DocMergeController extends Controller
                 'success' => $request->session()->get('success'),
                 'error' => $request->session()->get('error'),
             ],
-            'mergedPdfs' => $this->transformMergedPdfs(
+            'mergeHistory' => $this->transformMergeHistory(
                 MergedPdf::query()
+                    ->whereBelongsTo($request->user())
+                    ->latest()
+                    ->get(),
+                BulkMergeFailure::query()
                     ->whereBelongsTo($request->user())
                     ->latest()
                     ->get(),
@@ -56,11 +62,13 @@ class DocMergeController extends Controller
             'files' => ['nullable', 'array'],
             'files.*' => ['required', 'file', 'mimes:pdf'],
             'outputName' => ['nullable', 'string', 'max:120'],
+            'footerText' => ['nullable', 'string', 'max:160'],
             'receipt' => ['nullable', 'file', 'mimes:pdf,jpg,jpeg,png,webp', 'max:10240'],
         ], [
             'sources.required' => 'Select at least two PDF sources to merge.',
             'sources.min' => 'Select at least two PDF sources to merge.',
             'files.*.mimes' => 'Only PDF files can be merged right now.',
+            'footerText.max' => 'Footer text must be 160 characters or fewer.',
             'receipt.mimes' => 'Receipts must be a PDF or image file.',
             'receipt.max' => 'Receipts must be 10 MB or smaller.',
         ])->validate();
@@ -77,6 +85,7 @@ class DocMergeController extends Controller
                     $this->resolveUploadedFiles($request),
                 ),
                 $validated['outputName'] ?? null,
+                $this->normalizeFooterText($validated['footerText'] ?? null),
             );
 
             if ($receipt instanceof UploadedFile) {
@@ -118,51 +127,171 @@ class DocMergeController extends Controller
     }
 
     /**
+     * Merge a ZIP archive into many saved PDFs while recording per-folder failures.
+     */
+    public function storeBulk(
+        Request $request,
+        BulkZipMergeService $service,
+    ): RedirectResponse {
+        $validated = $request->validate([
+            'zip' => ['required', 'file', 'mimes:zip'],
+            'outputPrefix' => ['nullable', 'string', 'max:120'],
+            'footerText' => ['nullable', 'string', 'max:160'],
+        ], [
+            'zip.required' => 'Choose a ZIP file to bulk merge.',
+            'zip.mimes' => 'Only ZIP files are supported for bulk merge.',
+            'footerText.max' => 'Footer text must be 160 characters or fewer.',
+        ]);
+
+        /** @var UploadedFile $zip */
+        $zip = $validated['zip'];
+
+        try {
+            $result = $service->processZip(
+                $request->user(),
+                $zip,
+                $validated['outputPrefix'] ?? null,
+                $this->normalizeFooterText($validated['footerText'] ?? null),
+            );
+
+            return to_route('doc-merge.index')->with(
+                'success',
+                $this->bulkMergeSummaryMessage(
+                    $result['mergedCount'],
+                    $result['failedCount'],
+                ),
+            );
+        } catch (ValidationException $exception) {
+            throw $exception;
+        } catch (\Throwable $exception) {
+            report($exception);
+
+            return to_route('doc-merge.index')
+                ->with('error', 'The bulk ZIP merge failed. Please try again.');
+        }
+    }
+
+    /**
+     * Merge uploaded page folders into many saved PDFs.
+     */
+    public function storeBulkFolders(
+        Request $request,
+        BulkZipMergeService $service,
+    ): RedirectResponse {
+        $validated = $request->validate([
+            'outputPrefix' => ['nullable', 'string', 'max:120'],
+            'footerText' => ['nullable', 'string', 'max:160'],
+            'pageFolders' => ['required', 'array', 'min:2'],
+            'pageFolders.*.name' => ['required', 'string', 'max:120'],
+            'pageFolders.*.number' => ['required', 'integer', 'min:1'],
+            'pageFolders.*.hasNestedEntries' => ['nullable', 'boolean'],
+            'pageFolders.*.hasInvalidFiles' => ['nullable', 'boolean'],
+            'pageFolders.*.files' => ['required', 'array', 'min:1'],
+            'pageFolders.*.files.*' => ['required', 'file', 'mimes:pdf'],
+        ], [
+            'pageFolders.required' => 'Add at least two page folders like PAGE 1 and PAGE 2.',
+            'pageFolders.min' => 'Add at least two page folders like PAGE 1 and PAGE 2.',
+            'pageFolders.*.files.min' => 'Each page folder must contain at least one direct PDF file.',
+            'pageFolders.*.files.*.mimes' => 'Only PDF files can be merged right now.',
+            'footerText.max' => 'Footer text must be 160 characters or fewer.',
+        ]);
+
+        try {
+            $result = $service->processPageFolders(
+                $request->user(),
+                $validated['pageFolders'],
+                $validated['outputPrefix'] ?? null,
+                $this->normalizeFooterText($validated['footerText'] ?? null),
+            );
+
+            return to_route('doc-merge.index')->with(
+                'success',
+                $this->bulkMergeSummaryMessage(
+                    $result['mergedCount'],
+                    $result['failedCount'],
+                ),
+            );
+        } catch (ValidationException $exception) {
+            throw $exception;
+        } catch (\Throwable $exception) {
+            report($exception);
+
+            return to_route('doc-merge.index')
+                ->with('error', 'The bulk folder merge failed. Please try again.');
+        }
+    }
+
+    /**
      * Delete one or more saved merged PDFs that belong to the current user.
      */
     public function destroyMany(Request $request): RedirectResponse
     {
         $validated = $request->validate([
-            'ids' => ['required', 'array', 'min:1'],
-            'ids.*' => ['required', 'integer', 'distinct'],
+            'items' => ['required', 'array', 'min:1'],
+            'items.*.type' => ['required', 'string', Rule::in(['merged_pdf', 'merge_failure'])],
+            'items.*.id' => ['required', 'integer'],
         ], [
-            'ids.required' => 'Select at least one merged PDF to delete.',
-            'ids.min' => 'Select at least one merged PDF to delete.',
+            'items.required' => 'Select at least one merge result to delete.',
+            'items.min' => 'Select at least one merge result to delete.',
         ]);
 
-        $requestedIds = array_values(
-            array_map('intval', $validated['ids']),
-        );
+        $requestedItems = collect($validated['items'])
+            ->map(fn (array $item): array => [
+                'type' => (string) $item['type'],
+                'id' => (int) $item['id'],
+            ])
+            ->unique(fn (array $item): string => "{$item['type']}:{$item['id']}")
+            ->values();
+        $mergedPdfIds = $requestedItems
+            ->where('type', 'merged_pdf')
+            ->pluck('id')
+            ->all();
+        $failureIds = $requestedItems
+            ->where('type', 'merge_failure')
+            ->pluck('id')
+            ->all();
 
         /** @var Collection<int, MergedPdf> $mergedPdfs */
         $mergedPdfs = MergedPdf::query()
             ->whereBelongsTo($request->user())
-            ->whereKey($requestedIds)
+            ->whereKey($mergedPdfIds)
+            ->get();
+        /** @var Collection<int, BulkMergeFailure> $bulkMergeFailures */
+        $bulkMergeFailures = BulkMergeFailure::query()
+            ->whereBelongsTo($request->user())
+            ->whereKey($failureIds)
             ->get();
 
-        if ($mergedPdfs->count() !== count($requestedIds)) {
+        if (
+            $mergedPdfs->count() + $bulkMergeFailures->count()
+            !== $requestedItems->count()
+        ) {
             return to_route('doc-merge.index')
-                ->with('error', 'One or more selected merged PDFs could not be deleted.');
+                ->with('error', 'One or more selected merge results could not be deleted.');
         }
 
         try {
-            $deletedCount = $mergedPdfs->count();
-            $deletedFileName = $deletedCount === 1
-                ? $mergedPdfs->first()?->file_name
+            $deletedCount = $mergedPdfs->count() + $bulkMergeFailures->count();
+            $deletedLabel = $deletedCount === 1
+                ? $this->singleDeleteLabel(
+                    $mergedPdfs->first(),
+                    $bulkMergeFailures->first(),
+                )
                 : null;
 
             $mergedPdfs->each->delete();
+            $bulkMergeFailures->each->delete();
 
-            $message = $deletedCount === 1 && $deletedFileName !== null
-                ? "Deleted {$deletedFileName}."
-                : "Deleted {$deletedCount} merged PDFs.";
+            $message = $deletedCount === 1 && $deletedLabel !== null
+                ? "Deleted {$deletedLabel}."
+                : "Deleted {$deletedCount} merge results.";
 
             return to_route('doc-merge.index')->with('success', $message);
         } catch (\Throwable $exception) {
             report($exception);
 
             return to_route('doc-merge.index')
-                ->with('error', 'The selected merged PDFs could not be deleted right now. Please try again.');
+                ->with('error', 'The selected merge results could not be deleted right now. Please try again.');
         }
     }
 
@@ -340,19 +469,25 @@ class DocMergeController extends Controller
     }
 
     /**
-     * Convert merged PDF records into frontend payloads.
+     * Convert merged PDF and failed bulk-merge records into one frontend feed.
      *
      * @param  Collection<int, MergedPdf>  $mergedPdfs
+     * @param  Collection<int, BulkMergeFailure>  $bulkMergeFailures
      * @return array<int, array<string, mixed>>
      */
-    private function transformMergedPdfs(Collection $mergedPdfs): array
-    {
-        return $mergedPdfs->map(fn (MergedPdf $mergedPdf): array => [
+    private function transformMergeHistory(
+        Collection $mergedPdfs,
+        Collection $bulkMergeFailures,
+    ): array {
+        $mergedHistory = $mergedPdfs->map(fn (MergedPdf $mergedPdf): array => [
+            'recordType' => 'merged_pdf',
             'id' => $mergedPdf->id,
             'fileName' => $mergedPdf->file_name,
             'fileSize' => $mergedPdf->file_size,
             'sourceCount' => $mergedPdf->source_count,
             'sourceFileNames' => $mergedPdf->source_file_names,
+            'tinNumber' => $mergedPdf->tin_number,
+            'footerText' => $mergedPdf->footer_text,
             'hasReceipt' => filled($mergedPdf->receipt_storage_path),
             'receiptFileName' => $mergedPdf->receipt_file_name,
             'receiptFileSize' => $mergedPdf->receipt_file_size,
@@ -370,7 +505,56 @@ class DocMergeController extends Controller
                 ? route('doc-merge.receipt.download', ['mergedPdf' => $mergedPdf])
                 : null,
             'sendEmailUrl' => route('doc-merge.send-email', ['mergedPdf' => $mergedPdf]),
-        ])->all();
+            'inputMode' => null,
+            'inputLabel' => null,
+            'groupLabel' => null,
+            'errorMessage' => null,
+            'sortCreatedAt' => sprintf(
+                '%013d-%010d',
+                $mergedPdf->created_at?->valueOf() ?? 0,
+                $mergedPdf->id,
+            ),
+        ]);
+        $failureHistory = $bulkMergeFailures->map(fn (BulkMergeFailure $failure): array => [
+            'recordType' => 'merge_failure',
+            'id' => $failure->id,
+            'fileName' => $failure->output_file_name,
+            'fileSize' => null,
+            'sourceCount' => null,
+            'sourceFileNames' => [],
+            'tinNumber' => null,
+            'footerText' => null,
+            'hasReceipt' => false,
+            'receiptFileName' => null,
+            'receiptFileSize' => null,
+            'createdAt' => $failure->created_at?->toIso8601String(),
+            'downloadUrl' => null,
+            'previewUrl' => null,
+            'receiptUploadUrl' => null,
+            'receiptRemoveUrl' => null,
+            'receiptDownloadUrl' => null,
+            'sendEmailUrl' => null,
+            'inputMode' => $failure->input_mode,
+            'inputLabel' => $failure->input_label,
+            'groupLabel' => $failure->group_label,
+            'errorMessage' => $failure->error_message,
+            'sortCreatedAt' => sprintf(
+                '%013d-%010d',
+                $failure->created_at?->valueOf() ?? 0,
+                $failure->id,
+            ),
+        ]);
+
+        return $mergedHistory
+            ->concat($failureHistory)
+            ->sortByDesc('sortCreatedAt')
+            ->values()
+            ->map(function (array $item): array {
+                unset($item['sortCreatedAt']);
+
+                return $item;
+            })
+            ->all();
     }
 
     /**
@@ -683,8 +867,43 @@ class DocMergeController extends Controller
             'file_size' => $mergedPdf->file_size,
             'source_count' => $mergedPdf->source_count,
             'source_file_names' => $mergedPdf->source_file_names,
+            'tin_number' => $mergedPdf->tin_number,
+            'footer_text' => $mergedPdf->footer_text,
             'receipt_file_name' => $mergedPdf->receipt_file_name,
             'receipt_file_size' => $mergedPdf->receipt_file_size,
         ], JSON_THROW_ON_ERROR));
+    }
+
+    private function normalizeFooterText(mixed $value): ?string
+    {
+        return $this->normalizeOptionalText(
+            preg_replace('/\s+/u', ' ', trim((string) $value)) ?? '',
+        );
+    }
+
+    private function bulkMergeSummaryMessage(int $mergedCount, int $failedCount): string
+    {
+        return sprintf(
+            '%d %s merged, %d %s failed.',
+            $mergedCount,
+            $mergedCount === 1 ? 'PDF' : 'PDFs',
+            $failedCount,
+            $failedCount === 1 ? 'PDF' : 'PDFs',
+        );
+    }
+
+    private function singleDeleteLabel(
+        ?MergedPdf $mergedPdf,
+        ?BulkMergeFailure $bulkMergeFailure,
+    ): ?string {
+        if ($mergedPdf instanceof MergedPdf) {
+            return $mergedPdf->file_name;
+        }
+
+        if ($bulkMergeFailure instanceof BulkMergeFailure) {
+            return $bulkMergeFailure->output_file_name;
+        }
+
+        return null;
     }
 }

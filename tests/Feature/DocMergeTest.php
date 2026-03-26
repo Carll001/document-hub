@@ -7,6 +7,7 @@ namespace Tests\Feature;
 use App\Mail\MergedPdfEmail;
 use App\Models\MergedPdf;
 use App\Models\User;
+use App\Services\PdfTextExtractionService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Mail\Attachment;
@@ -40,6 +41,8 @@ class DocMergeTest extends TestCase
             'file_size' => 10240,
             'source_count' => 2,
             'source_file_names' => ['chapter-1.pdf', 'chapter-2.pdf'],
+            'tin_number' => '123-456-789-000',
+            'footer_text' => 'Prepared for filing',
         ]);
 
         MergedPdf::query()->create([
@@ -56,23 +59,26 @@ class DocMergeTest extends TestCase
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->component('DocMerge')
-                ->has('mergedPdfs', 1)
-                ->where('mergedPdfs.0.fileName', 'combined-report.pdf')
-                ->where('mergedPdfs.0.fileSize', 10240)
-                ->where('mergedPdfs.0.sourceCount', 2)
-                ->where('mergedPdfs.0.sourceFileNames', ['chapter-1.pdf', 'chapter-2.pdf'])
-                ->where('mergedPdfs.0.hasReceipt', false)
-                ->where('mergedPdfs.0.receiptFileName', null)
-                ->where('mergedPdfs.0.receiptFileSize', null)
-                ->where('mergedPdfs.0.downloadUrl', route('doc-merge.download', ['mergedPdf' => $ownedMergedPdf]))
-                ->where('mergedPdfs.0.previewUrl', route('doc-merge.preview', [
+                ->has('mergeHistory', 1)
+                ->where('mergeHistory.0.recordType', 'merged_pdf')
+                ->where('mergeHistory.0.fileName', 'combined-report.pdf')
+                ->where('mergeHistory.0.fileSize', 10240)
+                ->where('mergeHistory.0.sourceCount', 2)
+                ->where('mergeHistory.0.sourceFileNames', ['chapter-1.pdf', 'chapter-2.pdf'])
+                ->where('mergeHistory.0.tinNumber', '123-456-789-000')
+                ->where('mergeHistory.0.footerText', 'Prepared for filing')
+                ->where('mergeHistory.0.hasReceipt', false)
+                ->where('mergeHistory.0.receiptFileName', null)
+                ->where('mergeHistory.0.receiptFileSize', null)
+                ->where('mergeHistory.0.downloadUrl', route('doc-merge.download', ['mergedPdf' => $ownedMergedPdf]))
+                ->where('mergeHistory.0.previewUrl', route('doc-merge.preview', [
                     'mergedPdf' => $ownedMergedPdf,
                     'v' => $this->previewVersion($ownedMergedPdf),
                 ]))
-                ->where('mergedPdfs.0.receiptUploadUrl', route('doc-merge.receipt.store', ['mergedPdf' => $ownedMergedPdf]))
-                ->where('mergedPdfs.0.receiptRemoveUrl', null)
-                ->where('mergedPdfs.0.receiptDownloadUrl', null)
-                ->where('mergedPdfs.0.sendEmailUrl', route('doc-merge.send-email', ['mergedPdf' => $ownedMergedPdf])),
+                ->where('mergeHistory.0.receiptUploadUrl', route('doc-merge.receipt.store', ['mergedPdf' => $ownedMergedPdf]))
+                ->where('mergeHistory.0.receiptRemoveUrl', null)
+                ->where('mergeHistory.0.receiptDownloadUrl', null)
+                ->where('mergeHistory.0.sendEmailUrl', route('doc-merge.send-email', ['mergedPdf' => $ownedMergedPdf])),
             );
     }
 
@@ -103,6 +109,58 @@ class DocMergeTest extends TestCase
         $this->assertSame(2, $mergedPdf->source_count);
         $this->assertSame(['intro.pdf', 'appendix.pdf'], $mergedPdf->source_file_names);
         Storage::disk('local')->assertExists($mergedPdf->storage_path);
+    }
+
+    public function test_authenticated_users_can_extract_a_tin_number_and_apply_footer_text()
+    {
+        Storage::fake('local');
+        $this->withoutVite();
+
+        $user = User::factory()->create();
+
+        $this->actingAs($user)
+            ->post(route('doc-merge.store'), [
+                'outputName' => 'tin-footer-output',
+                'footerText' => 'Prepared for internal filing',
+                'sources' => [
+                    ['type' => 'upload'],
+                    ['type' => 'upload'],
+                ],
+                'files' => [
+                    $this->makeUploadedTextPdf('invoice.pdf', [[
+                        'Taxpayer Identification Number (TIN): 123-456-789-000',
+                        'Invoice details',
+                    ]]),
+                    $this->makeUploadedTextPdf('receipt.pdf', [[
+                        'Receipt details',
+                    ]]),
+                ],
+            ])
+            ->assertRedirect(route('doc-merge.index'))
+            ->assertSessionHas('success', 'Merged PDF saved as tin-footer-output.pdf.');
+
+        $mergedPdf = MergedPdf::query()->firstOrFail();
+
+        $this->assertSame('123-456-789-000', $mergedPdf->tin_number);
+        $this->assertSame('Prepared for internal filing', $mergedPdf->footer_text);
+
+        $pdfText = app(PdfTextExtractionService::class)->extractText(
+            Storage::disk('local')->path($mergedPdf->storage_path),
+        );
+
+        $this->assertStringContainsString('123-456-789-000', $pdfText);
+        $this->assertGreaterThanOrEqual(
+            2,
+            substr_count($pdfText, 'Prepared for internal filing'),
+        );
+
+        $this->actingAs($user)
+            ->get(route('doc-merge.index'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('DocMerge')
+                ->where('mergeHistory.0.tinNumber', '123-456-789-000'),
+            );
     }
 
     public function test_authenticated_users_can_merge_pdfs_and_attach_a_receipt_in_one_step()
@@ -449,7 +507,9 @@ class DocMergeTest extends TestCase
 
         $this->actingAs($user)
             ->delete(route('doc-merge.destroy-many'), [
-                'ids' => [$mergedPdf->id],
+                'items' => [
+                    ['type' => 'merged_pdf', 'id' => $mergedPdf->id],
+                ],
             ])
             ->assertRedirect(route('doc-merge.index'))
             ->assertSessionHas('success', 'Deleted mistake.pdf.');
@@ -495,10 +555,13 @@ class DocMergeTest extends TestCase
 
         $this->actingAs($user)
             ->delete(route('doc-merge.destroy-many'), [
-                'ids' => [$firstMergedPdf->id, $secondMergedPdf->id],
+                'items' => [
+                    ['type' => 'merged_pdf', 'id' => $firstMergedPdf->id],
+                    ['type' => 'merged_pdf', 'id' => $secondMergedPdf->id],
+                ],
             ])
             ->assertRedirect(route('doc-merge.index'))
-            ->assertSessionHas('success', 'Deleted 2 merged PDFs.');
+            ->assertSessionHas('success', 'Deleted 2 merge results.');
 
         $this->assertDatabaseMissing('merged_pdfs', [
             'id' => $firstMergedPdf->id,
@@ -543,12 +606,15 @@ class DocMergeTest extends TestCase
 
         $this->actingAs($user)
             ->delete(route('doc-merge.destroy-many'), [
-                'ids' => [$ownedMergedPdf->id, $foreignMergedPdf->id],
+                'items' => [
+                    ['type' => 'merged_pdf', 'id' => $ownedMergedPdf->id],
+                    ['type' => 'merged_pdf', 'id' => $foreignMergedPdf->id],
+                ],
             ])
             ->assertRedirect(route('doc-merge.index'))
             ->assertSessionHas(
                 'error',
-                'One or more selected merged PDFs could not be deleted.',
+                'One or more selected merge results could not be deleted.',
             );
 
         $this->assertDatabaseHas('merged_pdfs', [
@@ -635,6 +701,75 @@ class DocMergeTest extends TestCase
             $this->mergedPdfDimensions(
                 Storage::disk('local')->path($mergedPdf->storage_path),
             ),
+        );
+    }
+
+    public function test_receipt_updates_keep_the_saved_tin_number_and_reapply_the_footer()
+    {
+        Storage::fake('local');
+
+        $user = User::factory()->create();
+
+        $this->actingAs($user)
+            ->post(route('doc-merge.store'), [
+                'outputName' => 'footered-packet',
+                'footerText' => 'Prepared for internal filing',
+                'sources' => [
+                    ['type' => 'upload'],
+                    ['type' => 'upload'],
+                ],
+                'files' => [
+                    $this->makeUploadedTextPdf('quote.pdf', [[
+                        'TIN: 123-456-789-000',
+                        'Quote page',
+                    ]]),
+                    $this->makeUploadedTextPdf('invoice.pdf', [[
+                        'Invoice page',
+                    ]]),
+                ],
+            ])
+            ->assertRedirect(route('doc-merge.index'));
+
+        $mergedPdf = MergedPdf::query()->firstOrFail();
+
+        $this->assertSame('123-456-789-000', $mergedPdf->tin_number);
+
+        $this->actingAs($user)
+            ->post(route('doc-merge.receipt.store', ['mergedPdf' => $mergedPdf]), [
+                'receipt' => $this->makeUploadedTextPdf('official-receipt.pdf', [[
+                    'Receipt page',
+                ]]),
+            ])
+            ->assertRedirect(route('doc-merge.index'))
+            ->assertSessionHas('success', 'Receipt added to footered-packet.pdf.');
+
+        $mergedPdf->refresh();
+
+        $withReceiptText = app(PdfTextExtractionService::class)->extractText(
+            Storage::disk('local')->path($mergedPdf->storage_path),
+        );
+
+        $this->assertSame('123-456-789-000', $mergedPdf->tin_number);
+        $this->assertGreaterThanOrEqual(
+            3,
+            substr_count($withReceiptText, 'Prepared for internal filing'),
+        );
+
+        $this->actingAs($user)
+            ->delete(route('doc-merge.receipt.destroy', ['mergedPdf' => $mergedPdf]))
+            ->assertRedirect(route('doc-merge.index'))
+            ->assertSessionHas('success', 'Receipt removed from footered-packet.pdf.');
+
+        $mergedPdf->refresh();
+
+        $restoredText = app(PdfTextExtractionService::class)->extractText(
+            Storage::disk('local')->path($mergedPdf->storage_path),
+        );
+
+        $this->assertSame('123-456-789-000', $mergedPdf->tin_number);
+        $this->assertGreaterThanOrEqual(
+            2,
+            substr_count($restoredText, 'Prepared for internal filing'),
         );
     }
 
@@ -964,6 +1099,37 @@ class DocMergeTest extends TestCase
     }
 
     /**
+     * @param  list<list<string>>  $pages
+     */
+    private function makeUploadedTextPdf(string $fileName, array $pages): UploadedFile
+    {
+        $temporaryPath = tempnam(sys_get_temp_dir(), 'doc-merge-text-');
+        $pdfPath = $temporaryPath.'.pdf';
+        rename($temporaryPath, $pdfPath);
+
+        $pdf = new \FPDF;
+
+        foreach ($pages as $lines) {
+            $pdf->AddPage();
+            $pdf->SetFont('Helvetica', '', 12);
+
+            foreach ($lines as $line) {
+                $pdf->Cell(0, 10, $line, 0, 1);
+            }
+        }
+
+        $pdf->Output('F', $pdfPath);
+
+        return new UploadedFile(
+            $pdfPath,
+            $fileName,
+            'application/pdf',
+            null,
+            true,
+        );
+    }
+
+    /**
      * @param  list<array{0: float, 1: float}>  $pages
      */
     private function makePdfContents(array $pages = [[210.0, 297.0]]): string
@@ -1008,6 +1174,8 @@ class DocMergeTest extends TestCase
             'file_size' => $mergedPdf->file_size,
             'source_count' => $mergedPdf->source_count,
             'source_file_names' => $mergedPdf->source_file_names,
+            'tin_number' => $mergedPdf->tin_number,
+            'footer_text' => $mergedPdf->footer_text,
             'receipt_file_name' => $mergedPdf->receipt_file_name,
             'receipt_file_size' => $mergedPdf->receipt_file_size,
         ], JSON_THROW_ON_ERROR));

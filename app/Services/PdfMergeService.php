@@ -6,6 +6,7 @@ namespace App\Services;
 
 use App\Models\MergedPdf;
 use App\Models\User;
+use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -14,12 +15,24 @@ use setasign\Fpdi\Fpdi;
 
 class PdfMergeService
 {
+    private const FOOTER_REPLACEMENT_HEIGHT = 14.0;
+
+    public function __construct(
+        private readonly PdfTinExtractorService $pdfTinExtractorService,
+    ) {
+    }
+
     /**
      * Merge the uploaded PDFs in order and persist the merged file.
      *
      * @param  list<UploadedFile|array{path: string, displayName: string}>  $sources
      */
-    public function merge(User $user, array $sources, ?string $outputName = null): MergedPdf
+    public function merge(
+        User $user,
+        array $sources,
+        ?string $outputName = null,
+        ?string $footerText = null,
+    ): MergedPdf
     {
         $normalizedSources = $this->normalizeSources($sources);
 
@@ -29,23 +42,46 @@ class PdfMergeService
 
         $disk = Storage::disk('local');
         $normalizedOutputName = $this->normalizedOutputName($outputName);
-        $temporaryOutputPath = storage_path('app/tmp/doc-merge-'.Str::uuid().'.pdf');
+        $normalizedFooterText = $this->normalizeFooterText($footerText);
+        $tinNumber = $this->pdfTinExtractorService->extractTinNumber($normalizedSources);
+        $temporaryBaseOutputPath = storage_path('app/tmp/doc-merge-base-'.Str::uuid().'.pdf');
+        $temporaryVisibleOutputPath = $normalizedFooterText !== null
+            ? storage_path('app/tmp/doc-merge-visible-'.Str::uuid().'.pdf')
+            : null;
         $storagePath = sprintf(
             'doc-merge/%d/%s-%s',
             $user->id,
             Str::uuid(),
             $this->safeOutputFilename($normalizedOutputName),
         );
+        $mergedPdf = null;
 
-        if (! is_dir(dirname($temporaryOutputPath))) {
-            mkdir(dirname($temporaryOutputPath), 0777, true);
+        if (! is_dir(dirname($temporaryBaseOutputPath))) {
+            mkdir(dirname($temporaryBaseOutputPath), 0777, true);
         }
 
         try {
-            $this->writeMergedPdf($normalizedSources, $temporaryOutputPath);
+            $this->writeMergedPdf($normalizedSources, $temporaryBaseOutputPath);
 
-            if (! is_file($temporaryOutputPath)) {
+            if (! is_file($temporaryBaseOutputPath)) {
                 throw new RuntimeException('The merged PDF could not be created.');
+            }
+
+            $visibleOutputPath = $temporaryBaseOutputPath;
+
+            if ($temporaryVisibleOutputPath !== null) {
+                $this->writeMergedPdf([
+                    [
+                        'path' => $temporaryBaseOutputPath,
+                        'displayName' => $normalizedOutputName,
+                    ],
+                ], $temporaryVisibleOutputPath, $normalizedFooterText);
+
+                if (! is_file($temporaryVisibleOutputPath)) {
+                    throw new RuntimeException('The merged PDF footer could not be created.');
+                }
+
+                $visibleOutputPath = $temporaryVisibleOutputPath;
             }
 
             $sourceFileNames = array_map(
@@ -53,32 +89,36 @@ class PdfMergeService
                 $normalizedSources,
             );
 
-            $stream = fopen($temporaryOutputPath, 'rb');
+            $this->storePdfFromPath(
+                $disk,
+                $storagePath,
+                $visibleOutputPath,
+                'The merged PDF could not be stored.',
+            );
 
-            if ($stream === false) {
-                throw new RuntimeException('The merged PDF could not be stored.');
-            }
-
-            try {
-                $stored = $disk->put($storagePath, $stream);
-            } finally {
-                fclose($stream);
-            }
-
-            if ($stored !== true || ! $disk->exists($storagePath)) {
-                throw new RuntimeException('The merged PDF could not be stored.');
-            }
-
-            return MergedPdf::query()->create([
+            $mergedPdf = MergedPdf::query()->create([
                 'user_id' => $user->id,
                 'file_name' => $normalizedOutputName,
                 'storage_path' => $storagePath,
                 'file_size' => $disk->size($storagePath),
                 'source_count' => count($sourceFileNames),
                 'source_file_names' => $sourceFileNames,
+                'tin_number' => $tinNumber,
+                'footer_text' => $normalizedFooterText,
             ]);
+
+            $this->storePdfFromPath(
+                $disk,
+                $this->receiptBaseStoragePath($mergedPdf),
+                $temporaryBaseOutputPath,
+                'The merged PDF base copy could not be stored.',
+            );
+
+            return $mergedPdf;
         } catch (\Throwable $exception) {
-            if ($disk->exists($storagePath)) {
+            if ($mergedPdf instanceof MergedPdf) {
+                $mergedPdf->delete();
+            } elseif ($disk->exists($storagePath)) {
                 $disk->delete($storagePath);
             }
 
@@ -87,8 +127,12 @@ class PdfMergeService
                 previous: $exception,
             );
         } finally {
-            if (is_file($temporaryOutputPath)) {
-                @unlink($temporaryOutputPath);
+            if (is_file($temporaryBaseOutputPath)) {
+                @unlink($temporaryBaseOutputPath);
+            }
+
+            if ($temporaryVisibleOutputPath !== null && is_file($temporaryVisibleOutputPath)) {
+                @unlink($temporaryVisibleOutputPath);
             }
         }
     }
@@ -99,25 +143,21 @@ class PdfMergeService
     public function attachReceipt(MergedPdf $mergedPdf, string $receiptPath): void
     {
         $disk = Storage::disk('local');
+        $normalizedFooterText = $this->normalizeFooterText($mergedPdf->footer_text);
 
         if (! $disk->exists($mergedPdf->storage_path)) {
             throw new RuntimeException("The saved PDF {$mergedPdf->file_name} is no longer available.");
         }
 
-        $baseStoragePath = $this->receiptBaseStoragePath($mergedPdf);
-
-        if (! $disk->exists($baseStoragePath)) {
-            $disk->makeDirectory(dirname($baseStoragePath));
-
-            if (
-                ! $disk->copy($mergedPdf->storage_path, $baseStoragePath)
-                || ! $disk->exists($baseStoragePath)
-            ) {
-                throw new RuntimeException('The saved PDF could not be prepared for receipt updates.');
-            }
-        }
-
-        $temporaryOutputPath = storage_path('app/tmp/doc-merge-receipt-'.Str::uuid().'.pdf');
+        $baseStoragePath = $this->ensureReceiptBaseExists(
+            $disk,
+            $mergedPdf,
+            $normalizedFooterText,
+        );
+        $temporaryMergedOutputPath = storage_path('app/tmp/doc-merge-receipt-'.Str::uuid().'.pdf');
+        $temporaryVisibleOutputPath = $normalizedFooterText !== null
+            ? storage_path('app/tmp/doc-merge-receipt-visible-'.Str::uuid().'.pdf')
+            : null;
         $temporaryReceiptPdfPath = null;
 
         try {
@@ -132,23 +172,27 @@ class PdfMergeService
                     'path' => $temporaryReceiptPdfPath,
                     'displayName' => basename($receiptPath),
                 ],
-            ], $temporaryOutputPath);
+            ], $temporaryMergedOutputPath);
 
-            $stream = fopen($temporaryOutputPath, 'rb');
+            $visibleOutputPath = $temporaryMergedOutputPath;
 
-            if ($stream === false) {
-                throw new RuntimeException('The updated merged PDF could not be stored.');
+            if ($temporaryVisibleOutputPath !== null) {
+                $this->writeMergedPdf([
+                    [
+                        'path' => $temporaryMergedOutputPath,
+                        'displayName' => $mergedPdf->file_name,
+                    ],
+                ], $temporaryVisibleOutputPath, $normalizedFooterText);
+
+                $visibleOutputPath = $temporaryVisibleOutputPath;
             }
 
-            try {
-                $stored = $disk->put($mergedPdf->storage_path, $stream);
-            } finally {
-                fclose($stream);
-            }
-
-            if ($stored !== true || ! $disk->exists($mergedPdf->storage_path)) {
-                throw new RuntimeException('The updated merged PDF could not be stored.');
-            }
+            $this->storePdfFromPath(
+                $disk,
+                $mergedPdf->storage_path,
+                $visibleOutputPath,
+                'The updated merged PDF could not be stored.',
+            );
         } catch (\Throwable $exception) {
             throw new RuntimeException(
                 'The receipt could not be appended to the merged PDF.',
@@ -159,8 +203,12 @@ class PdfMergeService
                 @unlink($temporaryReceiptPdfPath);
             }
 
-            if (is_file($temporaryOutputPath)) {
-                @unlink($temporaryOutputPath);
+            if (is_file($temporaryMergedOutputPath)) {
+                @unlink($temporaryMergedOutputPath);
+            }
+
+            if ($temporaryVisibleOutputPath !== null && is_file($temporaryVisibleOutputPath)) {
+                @unlink($temporaryVisibleOutputPath);
             }
         }
     }
@@ -172,25 +220,43 @@ class PdfMergeService
     {
         $disk = Storage::disk('local');
         $baseStoragePath = $this->receiptBaseStoragePath($mergedPdf);
+        $normalizedFooterText = $this->normalizeFooterText($mergedPdf->footer_text);
 
         if (! $disk->exists($baseStoragePath)) {
             throw new RuntimeException('The original merged PDF could not be restored.');
         }
 
-        $stream = fopen($disk->path($baseStoragePath), 'rb');
+        if ($normalizedFooterText === null) {
+            $this->storePdfFromPath(
+                $disk,
+                $mergedPdf->storage_path,
+                $disk->path($baseStoragePath),
+                'The original merged PDF could not be restored.',
+            );
 
-        if ($stream === false) {
-            throw new RuntimeException('The original merged PDF could not be restored.');
+            return;
         }
+
+        $temporaryVisibleOutputPath = storage_path('app/tmp/doc-merge-restore-visible-'.Str::uuid().'.pdf');
 
         try {
-            $stored = $disk->put($mergedPdf->storage_path, $stream);
-        } finally {
-            fclose($stream);
-        }
+            $this->writeMergedPdf([
+                [
+                    'path' => $disk->path($baseStoragePath),
+                    'displayName' => $mergedPdf->file_name,
+                ],
+            ], $temporaryVisibleOutputPath, $normalizedFooterText);
 
-        if ($stored !== true || ! $disk->exists($mergedPdf->storage_path)) {
-            throw new RuntimeException('The original merged PDF could not be restored.');
+            $this->storePdfFromPath(
+                $disk,
+                $mergedPdf->storage_path,
+                $temporaryVisibleOutputPath,
+                'The original merged PDF could not be restored.',
+            );
+        } finally {
+            if (is_file($temporaryVisibleOutputPath)) {
+                @unlink($temporaryVisibleOutputPath);
+            }
         }
     }
 
@@ -234,13 +300,18 @@ class PdfMergeService
      *
      * @param  list<array{path: string, displayName: string}>  $normalizedSources
      */
-    private function writeMergedPdf(array $normalizedSources, string $outputPath): void
+    private function writeMergedPdf(
+        array $normalizedSources,
+        string $outputPath,
+        ?string $footerText = null,
+    ): void
     {
         if (! is_dir(dirname($outputPath))) {
             mkdir(dirname($outputPath), 0777, true);
         }
 
         $pdf = new Fpdi;
+        $normalizedFooterText = $this->normalizeFooterText($footerText);
 
         foreach ($normalizedSources as $source) {
             $pageCount = $pdf->setSourceFile($source['path']);
@@ -252,10 +323,48 @@ class PdfMergeService
 
                 $pdf->AddPage($orientation, [$size['width'], $size['height']]);
                 $pdf->useTemplate($template);
+
+                if ($normalizedFooterText !== null) {
+                    $this->drawFooter(
+                        $pdf,
+                        $normalizedFooterText,
+                        (float) $size['width'],
+                        (float) $size['height'],
+                    );
+                }
             }
         }
 
         $pdf->Output('F', $outputPath);
+    }
+
+    private function drawFooter(
+        Fpdi $pdf,
+        string $footerText,
+        float $pageWidth,
+        float $pageHeight,
+    ): void {
+        $encodedFooterText = $this->encodedPdfText($footerText);
+
+        if ($encodedFooterText === '') {
+            return;
+        }
+
+        $replacementHeight = min(self::FOOTER_REPLACEMENT_HEIGHT, max(0.0, $pageHeight));
+
+        $pdf->SetFillColor(255, 255, 255);
+        $pdf->Rect(
+            0,
+            max(0.0, $pageHeight - $replacementHeight),
+            max(0.0, $pageWidth),
+            $replacementHeight,
+            'F',
+        );
+
+        $pdf->SetFont('Helvetica', '', 8);
+        $pdf->SetTextColor(110, 110, 110);
+        $pdf->SetXY(8, max(0.0, $pageHeight - 10));
+        $pdf->Cell(max(0.0, $pageWidth - 16), 4, $encodedFooterText, 0, 0, 'C');
     }
 
     /**
@@ -388,4 +497,73 @@ class PdfMergeService
             ? "{$baseName}.{$extension}"
             : "{$baseName}.pdf";
     }
+
+    private function normalizeFooterText(?string $footerText): ?string
+    {
+        $normalized = preg_replace('/\s+/u', ' ', trim((string) $footerText)) ?? '';
+
+        return $normalized !== '' ? $normalized : null;
+    }
+
+    private function encodedPdfText(string $value): string
+    {
+        $encoded = @iconv('UTF-8', 'windows-1252//TRANSLIT//IGNORE', $value);
+
+        if ($encoded === false) {
+            return preg_replace('/[^\x20-\x7E]/', '', $value) ?? '';
+        }
+
+        return $encoded;
+    }
+
+    private function storePdfFromPath(
+        FilesystemAdapter $disk,
+        string $storagePath,
+        string $sourcePath,
+        string $errorMessage,
+    ): void {
+        $stream = fopen($sourcePath, 'rb');
+
+        if ($stream === false) {
+            throw new RuntimeException($errorMessage);
+        }
+
+        try {
+            $stored = $disk->put($storagePath, $stream);
+        } finally {
+            fclose($stream);
+        }
+
+        if ($stored !== true || ! $disk->exists($storagePath)) {
+            throw new RuntimeException($errorMessage);
+        }
+    }
+
+    private function ensureReceiptBaseExists(
+        FilesystemAdapter $disk,
+        MergedPdf $mergedPdf,
+        ?string $normalizedFooterText,
+    ): string {
+        $baseStoragePath = $this->receiptBaseStoragePath($mergedPdf);
+
+        if ($disk->exists($baseStoragePath)) {
+            return $baseStoragePath;
+        }
+
+        if ($normalizedFooterText !== null) {
+            throw new RuntimeException('The saved PDF base copy is no longer available.');
+        }
+
+        $disk->makeDirectory(dirname($baseStoragePath));
+
+        if (
+            ! $disk->copy($mergedPdf->storage_path, $baseStoragePath)
+            || ! $disk->exists($baseStoragePath)
+        ) {
+            throw new RuntimeException('The saved PDF could not be prepared for receipt updates.');
+        }
+
+        return $baseStoragePath;
+    }
+
 }
