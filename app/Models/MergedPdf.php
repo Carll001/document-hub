@@ -11,6 +11,8 @@ use Illuminate\Support\Facades\Storage;
 
 #[Fillable([
     'user_id',
+    'doc_merge_batch_id',
+    'uuid',
     'file_name',
     'storage_path',
     'file_size',
@@ -45,6 +47,12 @@ class MergedPdf extends Model
                 $disk->delete($mergedPdf->receipt_storage_path);
             }
         });
+
+        static::creating(function (self $mergedPdf): void {
+            if (! filled($mergedPdf->uuid)) {
+                $mergedPdf->uuid = (string) \Illuminate\Support\Str::uuid();
+            }
+        });
     }
 
     /**
@@ -68,5 +76,18 @@ class MergedPdf extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    /**
+     * Get the batch that produced the merged PDF, if any.
+     */
+    public function docMergeBatch(): BelongsTo
+    {
+        return $this->belongsTo(DocMergeBatch::class);
+    }
+
+    public function getRouteKeyName(): string
+    {
+        return 'uuid';
     }
 }

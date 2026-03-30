@@ -24,7 +24,7 @@ const { isMobile, state } = useSidebar();
 <template>
     <SidebarMenu>
         <SidebarMenuItem>
-            <DropdownMenu>
+            <DropdownMenu v-if="user">
                 <DropdownMenuTrigger as-child>
                     <SidebarMenuButton
                         size="lg"

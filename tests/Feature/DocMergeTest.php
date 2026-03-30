@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace Tests\Feature;
 
 use App\Mail\MergedPdfEmail;
+use App\Models\ConfirmationTemplate;
 use App\Models\MergedPdf;
 use App\Models\User;
+use App\Services\ConfirmationDocxService;
 use App\Services\PdfTextExtractionService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
@@ -14,8 +16,10 @@ use Illuminate\Mail\Attachment;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Storage;
 use Inertia\Testing\AssertableInertia as Assert;
+use Mockery\MockInterface;
 use setasign\Fpdi\Fpdi;
 use Tests\TestCase;
+use ZipArchive;
 
 class DocMergeTest extends TestCase
 {
@@ -34,7 +38,7 @@ class DocMergeTest extends TestCase
         $user = User::factory()->create();
         $otherUser = User::factory()->create();
 
-        $ownedMergedPdf = MergedPdf::query()->create([
+        MergedPdf::query()->create([
             'user_id' => $user->id,
             'file_name' => 'combined-report.pdf',
             'storage_path' => 'doc-merge/'.$user->id.'/combined-report.pdf',
@@ -59,27 +63,281 @@ class DocMergeTest extends TestCase
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->component('DocMerge')
-                ->has('mergeHistory', 1)
-                ->where('mergeHistory.0.recordType', 'merged_pdf')
-                ->where('mergeHistory.0.fileName', 'combined-report.pdf')
-                ->where('mergeHistory.0.fileSize', 10240)
-                ->where('mergeHistory.0.sourceCount', 2)
-                ->where('mergeHistory.0.sourceFileNames', ['chapter-1.pdf', 'chapter-2.pdf'])
-                ->where('mergeHistory.0.tinNumber', '123-456-789-000')
-                ->where('mergeHistory.0.footerText', 'Prepared for filing')
-                ->where('mergeHistory.0.hasReceipt', false)
-                ->where('mergeHistory.0.receiptFileName', null)
-                ->where('mergeHistory.0.receiptFileSize', null)
-                ->where('mergeHistory.0.downloadUrl', route('doc-merge.download', ['mergedPdf' => $ownedMergedPdf]))
-                ->where('mergeHistory.0.previewUrl', route('doc-merge.preview', [
-                    'mergedPdf' => $ownedMergedPdf,
-                    'v' => $this->previewVersion($ownedMergedPdf),
-                ]))
-                ->where('mergeHistory.0.receiptUploadUrl', route('doc-merge.receipt.store', ['mergedPdf' => $ownedMergedPdf]))
-                ->where('mergeHistory.0.receiptRemoveUrl', null)
-                ->where('mergeHistory.0.receiptDownloadUrl', null)
-                ->where('mergeHistory.0.sendEmailUrl', route('doc-merge.send-email', ['mergedPdf' => $ownedMergedPdf])),
+                ->where('confirmationTemplate.hasTemplate', false)
+                ->where('confirmationTemplate.fileName', null)
+                ->where('confirmationTemplate.fileSize', null)
+                ->where('confirmationTemplate.placeholders', [])
+                ->where('confirmationTemplate.downloadUrl', null)
+                ->where('batchPagination.currentPage', 1)
+                ->where('batchPagination.lastPage', 1)
+                ->missing('mergeHistory'),
             );
+    }
+
+    public function test_authenticated_users_can_upload_a_receipt_template_and_view_detected_placeholders()
+    {
+        Storage::fake('local');
+        $this->withoutVite();
+
+        $user = User::factory()->create();
+
+        $this->actingAs($user)
+            ->post(route('doc-merge.confirmation-template.store'), [
+                'template' => $this->makeUploadedDocxTemplate(
+                    'confirmation-template.docx',
+                    ['client_name', 'tin_number'],
+                ),
+            ])
+            ->assertRedirect(route('doc-merge.index'))
+            ->assertSessionHas('success', 'Shared receipt template saved.');
+
+        $sharedTemplate = ConfirmationTemplate::shared();
+
+        $this->assertInstanceOf(ConfirmationTemplate::class, $sharedTemplate);
+        $this->assertSame(
+            'confirmation-template.docx',
+            $sharedTemplate->file_name,
+        );
+        $this->assertNotNull($sharedTemplate->storage_path);
+        $this->assertNotNull($sharedTemplate->file_size);
+        $this->assertSame($user->id, $sharedTemplate->uploaded_by_user_id);
+        Storage::disk('local')->assertExists($sharedTemplate->storage_path);
+
+        $this->actingAs($user)
+            ->get(route('doc-merge.index'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('DocMerge')
+                ->where('confirmationTemplate.hasTemplate', true)
+                ->where('confirmationTemplate.fileName', 'confirmation-template.docx')
+                ->where('confirmationTemplate.placeholders', [
+                    'client_name',
+                    'tin_number',
+                ])
+                ->where(
+                    'confirmationTemplate.downloadUrl',
+                    route('doc-merge.confirmation-template.download'),
+                ),
+            );
+    }
+
+    public function test_uploaded_receipt_templates_are_shared_across_users()
+    {
+        Storage::fake('local');
+        $this->withoutVite();
+
+        $uploader = User::factory()->create();
+        $otherUser = User::factory()->create();
+        $otherMergedPdf = MergedPdf::query()->create([
+            'user_id' => $otherUser->id,
+            'file_name' => 'other-user-packet.pdf',
+            'storage_path' => 'doc-merge/'.$otherUser->id.'/other-user-packet.pdf',
+            'file_size' => 0,
+            'source_count' => 2,
+            'source_file_names' => ['quote.pdf', 'invoice.pdf'],
+        ]);
+
+        Storage::disk('local')->put(
+            $otherMergedPdf->storage_path,
+            $this->makePdfContents([[210.0, 297.0]]),
+        );
+
+        $this->actingAs($uploader)
+            ->post(route('doc-merge.confirmation-template.store'), [
+                'template' => $this->makeUploadedDocxTemplate(
+                    'shared-template.docx',
+                    ['client_name'],
+                ),
+            ])
+            ->assertRedirect(route('doc-merge.index'))
+            ->assertSessionHas('success', 'Shared receipt template saved.');
+
+        $this->actingAs($otherUser)
+            ->get(route('doc-merge.index'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('DocMerge')
+                ->where('confirmationTemplate.hasTemplate', true)
+                ->where('confirmationTemplate.fileName', 'shared-template.docx')
+                ->where('confirmationTemplate.placeholders', ['client_name'])
+                ->where(
+                    'confirmationTemplate.downloadUrl',
+                    route('doc-merge.confirmation-template.download'),
+                ),
+            );
+
+        $this->actingAs($otherUser)
+            ->get(route('doc-merge.confirmation-template.download'))
+            ->assertOk()
+            ->assertDownload('shared-template.docx');
+
+        $this->actingAs($otherUser)
+            ->post(route('doc-merge.receipt.store', ['mergedPdf' => $otherMergedPdf]), [
+                'placeholders' => [
+                    'client_name' => 'Globex',
+                ],
+            ])
+            ->assertRedirect(route('doc-merge.index'))
+            ->assertSessionHas('success', 'Receipt added to other-user-packet.pdf.');
+
+        $otherMergedPdf->refresh();
+
+        $this->assertNotNull($otherMergedPdf->receipt_storage_path);
+        Storage::disk('local')->assertExists($otherMergedPdf->receipt_storage_path);
+    }
+
+    public function test_receipt_template_detection_ignores_word_document_ids_in_settings_xml()
+    {
+        Storage::fake('local');
+        $this->withoutVite();
+
+        $user = User::factory()->create();
+
+        $this->actingAs($user)
+            ->post(route('doc-merge.confirmation-template.store'), [
+                'template' => $this->makeUploadedDocxTemplate(
+                    'confirmation-template.docx',
+                    ['file_name', 'date_received', 'time_received'],
+                    '{CFB6B461-5DA7-44A8-B26B-CAED9CB2248C}',
+                ),
+            ])
+            ->assertRedirect(route('doc-merge.index'))
+            ->assertSessionHas('success', 'Shared receipt template saved.');
+
+        $this->actingAs($user)
+            ->get(route('doc-merge.index'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('DocMerge')
+                ->where('confirmationTemplate.placeholders', [
+                    'date_received',
+                    'file_name',
+                    'time_received',
+                ]),
+            );
+    }
+
+    public function test_authenticated_users_can_generate_a_templated_receipt_pdf_and_append_it_to_a_saved_merge()
+    {
+        Storage::fake('local');
+
+        $user = User::factory()->create();
+        $mergedPdf = MergedPdf::query()->create([
+            'user_id' => $user->id,
+            'file_name' => 'expense-packet.pdf',
+            'storage_path' => 'doc-merge/'.$user->id.'/expense-packet.pdf',
+            'file_size' => 0,
+            'source_count' => 2,
+            'source_file_names' => ['quote.pdf', 'invoice.pdf'],
+            'tin_number' => '123-456-789-000',
+        ]);
+
+        Storage::disk('local')->put(
+            $mergedPdf->storage_path,
+            $this->makePdfContents([[210.0, 297.0]]),
+        );
+
+        $this->actingAs($user)
+            ->post(route('doc-merge.confirmation-template.store'), [
+                'template' => $this->makeUploadedDocxTemplate(
+                    'confirmation-template.docx',
+                    ['client_name', 'tin_number', 'saved_at'],
+                ),
+            ])
+            ->assertRedirect(route('doc-merge.index'))
+            ->assertSessionHas('success', 'Shared receipt template saved.');
+
+        $this->actingAs($user)
+            ->from(route('doc-merge.index'))
+            ->post(route('doc-merge.receipt.store', ['mergedPdf' => $mergedPdf]), [
+                'placeholders' => [
+                    'client_name' => 'Acme Corp',
+                    'tin_number' => '123-456-789-000',
+                    'saved_at' => 'March 30, 2026 9:00 AM',
+                ],
+            ])
+            ->assertRedirect(route('doc-merge.index'))
+            ->assertSessionHas('success', 'Receipt added to expense-packet.pdf.');
+
+        $mergedPdf->refresh();
+
+        $this->assertSame('expense-packet-receipt.pdf', $mergedPdf->receipt_file_name);
+        $this->assertNotNull($mergedPdf->receipt_storage_path);
+        $this->assertNotNull($mergedPdf->receipt_file_size);
+        $this->assertSame(3, $mergedPdf->source_count);
+        $this->assertSame([
+            'quote.pdf',
+            'invoice.pdf',
+            'Receipt: expense-packet-receipt.pdf',
+        ], $mergedPdf->source_file_names);
+        Storage::disk('local')->assertExists($mergedPdf->receipt_storage_path);
+        $this->assertCount(
+            2,
+            $this->mergedPdfDimensions(
+                Storage::disk('local')->path($mergedPdf->storage_path),
+            ),
+        );
+
+        $receiptText = app(PdfTextExtractionService::class)->extractText(
+            Storage::disk('local')->path($mergedPdf->receipt_storage_path),
+        );
+        $mergedText = app(PdfTextExtractionService::class)->extractText(
+            Storage::disk('local')->path($mergedPdf->storage_path),
+        );
+
+        $this->assertStringContainsString('Acme Corp', $receiptText);
+        $this->assertStringContainsString('123-456-789-000', $receiptText);
+        $this->assertStringContainsString('March 30, 2026 9:00 AM', $receiptText);
+        $this->assertStringNotContainsString('{client_name}', $receiptText);
+        $this->assertStringContainsString('Acme Corp', $mergedText);
+        $this->assertStringContainsString('123-456-789-000', $mergedText);
+
+        $this->actingAs($user)
+            ->get(route('doc-merge.receipt.download', ['mergedPdf' => $mergedPdf]))
+            ->assertOk()
+            ->assertDownload('expense-packet-receipt.pdf');
+    }
+
+    public function test_receipt_generation_requires_each_detected_placeholder_to_be_present()
+    {
+        Storage::fake('local');
+
+        $user = User::factory()->create();
+        $mergedPdf = MergedPdf::query()->create([
+            'user_id' => $user->id,
+            'file_name' => 'expense-packet.pdf',
+            'storage_path' => 'doc-merge/'.$user->id.'/expense-packet.pdf',
+            'file_size' => 0,
+            'source_count' => 2,
+            'source_file_names' => ['quote.pdf', 'invoice.pdf'],
+        ]);
+
+        Storage::disk('local')->put(
+            $mergedPdf->storage_path,
+            $this->makePdfContents([[210.0, 297.0]]),
+        );
+
+        $this->actingAs($user)
+            ->post(route('doc-merge.confirmation-template.store'), [
+                'template' => $this->makeUploadedDocxTemplate(
+                    'confirmation-template.docx',
+                    ['client_name'],
+                ),
+            ])
+            ->assertRedirect(route('doc-merge.index'));
+
+        $this->actingAs($user)
+            ->from(route('doc-merge.index'))
+            ->post(route('doc-merge.receipt.store', ['mergedPdf' => $mergedPdf]), [
+                'placeholders' => [],
+            ])
+            ->assertRedirect(route('doc-merge.index'))
+            ->assertSessionHasErrors('placeholders.client_name');
+
+        $mergedPdf->refresh();
+
+        $this->assertNull($mergedPdf->receipt_storage_path);
+        $this->assertNull($mergedPdf->receipt_file_name);
     }
 
     public function test_authenticated_users_can_merge_two_uploaded_pdfs_and_save_output()
@@ -159,57 +417,8 @@ class DocMergeTest extends TestCase
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->component('DocMerge')
-                ->where('mergeHistory.0.tinNumber', '123-456-789-000'),
+                ->missing('mergeHistory'),
             );
-    }
-
-    public function test_authenticated_users_can_merge_pdfs_and_attach_a_receipt_in_one_step()
-    {
-        Storage::fake('local');
-
-        $user = User::factory()->create();
-
-        $this->actingAs($user)
-            ->post(route('doc-merge.store'), [
-                'outputName' => 'expense-packet',
-                'sources' => [
-                    ['type' => 'upload'],
-                    ['type' => 'upload'],
-                ],
-                'files' => [
-                    $this->makeUploadedPdf('quote.pdf', [[210.0, 297.0]]),
-                    $this->makeUploadedPdf('invoice.pdf', [[210.0, 297.0]]),
-                ],
-                'receipt' => $this->makeUploadedPdf(
-                    'official-receipt.pdf',
-                    [[148.0, 210.0]],
-                ),
-            ])
-            ->assertRedirect(route('doc-merge.index'))
-            ->assertSessionHas(
-                'success',
-                'Merged PDF saved as expense-packet.pdf with receipt attached.',
-            );
-
-        $mergedPdf = MergedPdf::query()->firstOrFail();
-
-        $this->assertSame('expense-packet.pdf', $mergedPdf->file_name);
-        $this->assertSame('official-receipt.pdf', $mergedPdf->receipt_file_name);
-        $this->assertNotNull($mergedPdf->receipt_storage_path);
-        $this->assertNotNull($mergedPdf->receipt_file_size);
-        $this->assertSame(3, $mergedPdf->source_count);
-        $this->assertSame(
-            ['quote.pdf', 'invoice.pdf', 'Receipt: official-receipt.pdf'],
-            $mergedPdf->source_file_names,
-        );
-        Storage::disk('local')->assertExists($mergedPdf->storage_path);
-        Storage::disk('local')->assertExists($mergedPdf->receipt_storage_path);
-        $this->assertCount(
-            3,
-            $this->mergedPdfDimensions(
-                Storage::disk('local')->path($mergedPdf->storage_path),
-            ),
-        );
     }
 
     public function test_authenticated_users_can_merge_three_or_more_uploaded_pdfs_in_selected_order()
@@ -334,31 +543,6 @@ class DocMergeTest extends TestCase
             ])
             ->assertRedirect(route('doc-merge.index'))
             ->assertSessionHasErrors('files.0');
-    }
-
-    public function test_doc_merge_validation_requires_merge_receipts_to_be_supported_files()
-    {
-        $user = User::factory()->create();
-
-        $this->actingAs($user)
-            ->from(route('doc-merge.index'))
-            ->post(route('doc-merge.store'), [
-                'sources' => [
-                    ['type' => 'upload'],
-                    ['type' => 'upload'],
-                ],
-                'files' => [
-                    $this->makeUploadedPdf('chapter-a.pdf'),
-                    $this->makeUploadedPdf('chapter-b.pdf'),
-                ],
-                'receipt' => UploadedFile::fake()->create(
-                    'notes.txt',
-                    5,
-                    'text/plain',
-                ),
-            ])
-            ->assertRedirect(route('doc-merge.index'))
-            ->assertSessionHasErrors('receipt');
     }
 
     public function test_doc_merge_validation_requires_the_upload_queue_to_match_the_uploaded_files()
@@ -508,7 +692,7 @@ class DocMergeTest extends TestCase
         $this->actingAs($user)
             ->delete(route('doc-merge.destroy-many'), [
                 'items' => [
-                    ['type' => 'merged_pdf', 'id' => $mergedPdf->id],
+                    ['type' => 'merged_pdf', 'id' => $mergedPdf->uuid],
                 ],
             ])
             ->assertRedirect(route('doc-merge.index'))
@@ -556,8 +740,8 @@ class DocMergeTest extends TestCase
         $this->actingAs($user)
             ->delete(route('doc-merge.destroy-many'), [
                 'items' => [
-                    ['type' => 'merged_pdf', 'id' => $firstMergedPdf->id],
-                    ['type' => 'merged_pdf', 'id' => $secondMergedPdf->id],
+                    ['type' => 'merged_pdf', 'id' => $firstMergedPdf->uuid],
+                    ['type' => 'merged_pdf', 'id' => $secondMergedPdf->uuid],
                 ],
             ])
             ->assertRedirect(route('doc-merge.index'))
@@ -607,8 +791,8 @@ class DocMergeTest extends TestCase
         $this->actingAs($user)
             ->delete(route('doc-merge.destroy-many'), [
                 'items' => [
-                    ['type' => 'merged_pdf', 'id' => $ownedMergedPdf->id],
-                    ['type' => 'merged_pdf', 'id' => $foreignMergedPdf->id],
+                    ['type' => 'merged_pdf', 'id' => $ownedMergedPdf->uuid],
+                    ['type' => 'merged_pdf', 'id' => $foreignMergedPdf->uuid],
                 ],
             ])
             ->assertRedirect(route('doc-merge.index'))
@@ -644,26 +828,33 @@ class DocMergeTest extends TestCase
             $this->makePdfContents([[210.0, 297.0]]),
         );
 
-        $firstReceipt = $this->makeUploadedPdf(
-            'official-receipt.pdf',
-            [[148.0, 210.0]],
-        );
+        $this->actingAs($user)
+            ->post(route('doc-merge.confirmation-template.store'), [
+                'template' => $this->makeUploadedDocxTemplate(
+                    'confirmation-template.docx',
+                    ['client_name', 'receipt_amount'],
+                ),
+            ])
+            ->assertRedirect(route('doc-merge.index'));
 
         $this->actingAs($user)
             ->post(route('doc-merge.receipt.store', ['mergedPdf' => $mergedPdf]), [
-                'receipt' => $firstReceipt,
+                'placeholders' => [
+                    'client_name' => 'Acme Corp',
+                    'receipt_amount' => 'PHP 1,250.00',
+                ],
             ])
             ->assertRedirect(route('doc-merge.index'))
             ->assertSessionHas('success', 'Receipt added to expense-packet.pdf.');
 
         $mergedPdf->refresh();
 
-        $this->assertSame('official-receipt.pdf', $mergedPdf->receipt_file_name);
+        $this->assertSame('expense-packet-receipt.pdf', $mergedPdf->receipt_file_name);
         $this->assertNotNull($mergedPdf->receipt_storage_path);
         $this->assertNotNull($mergedPdf->receipt_file_size);
         $this->assertSame(3, $mergedPdf->source_count);
         $this->assertSame(
-            ['quote.pdf', 'invoice.pdf', 'Receipt: official-receipt.pdf'],
+            ['quote.pdf', 'invoice.pdf', 'Receipt: expense-packet-receipt.pdf'],
             $mergedPdf->source_file_names,
         );
         Storage::disk('local')->assertExists($mergedPdf->receipt_storage_path);
@@ -675,23 +866,30 @@ class DocMergeTest extends TestCase
         );
 
         $firstReceiptPath = $mergedPdf->receipt_storage_path;
-
-        $replacementReceipt = UploadedFile::fake()->image('replacement-receipt.png');
+        $this->assertStringContainsString(
+            'Acme Corp',
+            app(PdfTextExtractionService::class)->extractText(
+                Storage::disk('local')->path($mergedPdf->receipt_storage_path),
+            ),
+        );
 
         $this->actingAs($user)
             ->post(route('doc-merge.receipt.store', ['mergedPdf' => $mergedPdf]), [
-                'receipt' => $replacementReceipt,
+                'placeholders' => [
+                    'client_name' => 'Globex',
+                    'receipt_amount' => 'PHP 2,500.00',
+                ],
             ])
             ->assertRedirect(route('doc-merge.index'))
             ->assertSessionHas('success', 'Receipt updated for expense-packet.pdf.');
 
         $mergedPdf->refresh();
 
-        $this->assertSame('replacement-receipt.png', $mergedPdf->receipt_file_name);
+        $this->assertSame('expense-packet-receipt.pdf', $mergedPdf->receipt_file_name);
         $this->assertNotSame($firstReceiptPath, $mergedPdf->receipt_storage_path);
         $this->assertSame(3, $mergedPdf->source_count);
         $this->assertSame(
-            ['quote.pdf', 'invoice.pdf', 'Receipt: replacement-receipt.png'],
+            ['quote.pdf', 'invoice.pdf', 'Receipt: expense-packet-receipt.pdf'],
             $mergedPdf->source_file_names,
         );
         Storage::disk('local')->assertMissing($firstReceiptPath);
@@ -702,6 +900,13 @@ class DocMergeTest extends TestCase
                 Storage::disk('local')->path($mergedPdf->storage_path),
             ),
         );
+        $updatedReceiptText = app(PdfTextExtractionService::class)->extractText(
+            Storage::disk('local')->path($mergedPdf->receipt_storage_path),
+        );
+
+        $this->assertStringContainsString('Globex', $updatedReceiptText);
+        $this->assertStringContainsString('PHP 2,500.00', $updatedReceiptText);
+        $this->assertStringNotContainsString('Acme Corp', $updatedReceiptText);
     }
 
     public function test_receipt_updates_keep_the_saved_tin_number_and_reapply_the_footer()
@@ -735,10 +940,19 @@ class DocMergeTest extends TestCase
         $this->assertSame('123-456-789-000', $mergedPdf->tin_number);
 
         $this->actingAs($user)
+            ->post(route('doc-merge.confirmation-template.store'), [
+                'template' => $this->makeUploadedDocxTemplate(
+                    'confirmation-template.docx',
+                    ['receipt_note'],
+                ),
+            ])
+            ->assertRedirect(route('doc-merge.index'));
+
+        $this->actingAs($user)
             ->post(route('doc-merge.receipt.store', ['mergedPdf' => $mergedPdf]), [
-                'receipt' => $this->makeUploadedTextPdf('official-receipt.pdf', [[
-                    'Receipt page',
-                ]]),
+                'placeholders' => [
+                    'receipt_note' => 'Receipt page',
+                ],
             ])
             ->assertRedirect(route('doc-merge.index'))
             ->assertSessionHas('success', 'Receipt added to footered-packet.pdf.');
@@ -773,7 +987,7 @@ class DocMergeTest extends TestCase
         );
     }
 
-    public function test_doc_merge_receipt_validation_requires_supported_files()
+    public function test_receipt_generation_requires_a_saved_template()
     {
         Storage::fake('local');
 
@@ -787,13 +1001,22 @@ class DocMergeTest extends TestCase
             'source_file_names' => ['quote.pdf', 'invoice.pdf'],
         ]);
 
+        Storage::disk('local')->put(
+            $mergedPdf->storage_path,
+            $this->makePdfContents([[210.0, 297.0]]),
+        );
+
         $this->actingAs($user)
-            ->from(route('doc-merge.index'))
             ->post(route('doc-merge.receipt.store', ['mergedPdf' => $mergedPdf]), [
-                'receipt' => UploadedFile::fake()->create('notes.txt', 5, 'text/plain'),
+                'placeholders' => [
+                    'client_name' => 'Acme Corp',
+                ],
             ])
             ->assertRedirect(route('doc-merge.index'))
-            ->assertSessionHasErrors('receipt');
+            ->assertSessionHas(
+                'error',
+                'Upload the shared receipt template before generating a receipt.',
+            );
     }
 
     public function test_receipt_downloads_are_authorized_for_the_owner_only()
@@ -853,8 +1076,19 @@ class DocMergeTest extends TestCase
         );
 
         $this->actingAs($user)
+            ->post(route('doc-merge.confirmation-template.store'), [
+                'template' => $this->makeUploadedDocxTemplate(
+                    'confirmation-template.docx',
+                    ['receipt_note'],
+                ),
+            ])
+            ->assertRedirect(route('doc-merge.index'));
+
+        $this->actingAs($user)
             ->post(route('doc-merge.receipt.store', ['mergedPdf' => $mergedPdf]), [
-                'receipt' => $this->makeUploadedPdf('official-receipt.pdf', [[148.0, 210.0]]),
+                'placeholders' => [
+                    'receipt_note' => 'Official receipt',
+                ],
             ])
             ->assertRedirect(route('doc-merge.index'));
 
@@ -888,6 +1122,62 @@ class DocMergeTest extends TestCase
             ),
         );
         Storage::disk('local')->assertMissing((string) $receiptStoragePath);
+    }
+
+    public function test_receipt_generation_returns_a_friendly_error_when_pdf_conversion_fails()
+    {
+        Storage::fake('local');
+
+        $user = User::factory()->create();
+        $mergedPdf = MergedPdf::query()->create([
+            'user_id' => $user->id,
+            'file_name' => 'expense-packet.pdf',
+            'storage_path' => 'doc-merge/'.$user->id.'/expense-packet.pdf',
+            'file_size' => 0,
+            'source_count' => 2,
+            'source_file_names' => ['quote.pdf', 'invoice.pdf'],
+        ]);
+
+        Storage::disk('local')->put(
+            $mergedPdf->storage_path,
+            $this->makePdfContents([[210.0, 297.0]]),
+        );
+
+        $this->actingAs($user)
+            ->post(route('doc-merge.confirmation-template.store'), [
+                'template' => $this->makeUploadedDocxTemplate(
+                    'confirmation-template.docx',
+                    ['client_name'],
+                ),
+            ])
+            ->assertRedirect(route('doc-merge.index'));
+
+        $this->mock(ConfirmationDocxService::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('extractPlaceholders')
+                ->once()
+                ->andReturn(['client_name']);
+            $mock->shouldReceive('renderPdf')
+                ->once()
+                ->andThrow(new \RuntimeException('The receipt PDF could not be created. LibreOffice failed.'));
+        });
+
+        $this->actingAs($user)
+            ->post(route('doc-merge.receipt.store', ['mergedPdf' => $mergedPdf]), [
+                'placeholders' => [
+                    'client_name' => 'Acme Corp',
+                ],
+            ])
+            ->assertRedirect(route('doc-merge.index'))
+            ->assertSessionHas(
+                'error',
+                'The receipt PDF could not be created. LibreOffice failed.',
+            );
+
+        $mergedPdf->refresh();
+
+        $this->assertNull($mergedPdf->receipt_file_name);
+        $this->assertNull($mergedPdf->receipt_storage_path);
+        $this->assertNull($mergedPdf->receipt_file_size);
     }
 
     public function test_authenticated_users_can_email_saved_merged_pdfs_with_optional_subject_and_message()
@@ -1165,6 +1455,121 @@ class DocMergeTest extends TestCase
         }
 
         return $dimensions;
+    }
+
+    /**
+     * @param  list<string>  $placeholders
+     */
+    private function makeUploadedDocxTemplate(
+        string $fileName,
+        array $placeholders,
+        ?string $wordDocumentId = null,
+    ): UploadedFile {
+        $temporaryPath = tempnam(sys_get_temp_dir(), 'doc-merge-docx-');
+        $docxPath = $temporaryPath.'.docx';
+        rename($temporaryPath, $docxPath);
+
+        $archive = new ZipArchive;
+
+        if ($archive->open($docxPath, ZipArchive::CREATE) !== true) {
+            throw new \RuntimeException('The DOCX test archive could not be created.');
+        }
+
+        $bodyText = collect($placeholders)
+            ->map(
+                fn (string $placeholder): string => sprintf(
+                    '<w:p><w:r><w:t>{%s}</w:t></w:r></w:p>',
+                    $placeholder,
+                ),
+            )
+            ->implode('');
+
+        $archive->addFromString('[Content_Types].xml', <<<'XML'
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+    <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+    <Default Extension="xml" ContentType="application/xml"/>
+    <Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
+    <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
+    <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+    <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
+</Types>
+XML);
+        $archive->addFromString('_rels/.rels', <<<'XML'
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+    <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>
+    <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>
+    <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>
+XML);
+        $archive->addFromString('docProps/app.xml', <<<'XML'
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"
+    xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">
+    <Application>Microsoft Office Word</Application>
+</Properties>
+XML);
+        $archive->addFromString('docProps/core.xml', <<<'XML'
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties"
+    xmlns:dc="http://purl.org/dc/elements/1.1/"
+    xmlns:dcterms="http://purl.org/dc/terms/"
+    xmlns:dcmitype="http://purl.org/dc/dcmitype/"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <dc:title>Doc Merge Test Template</dc:title>
+    <dc:creator>Codex</dc:creator>
+</cp:coreProperties>
+XML);
+        $archive->addFromString('word/_rels/document.xml.rels', <<<'XML'
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+</Relationships>
+XML);
+        if ($wordDocumentId !== null) {
+            $archive->addFromString(
+                'word/settings.xml',
+                <<<XML
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml">
+    <w15:docId w15:val="{$wordDocumentId}"/>
+</w:settings>
+XML,
+            );
+        }
+        $archive->addFromString('word/styles.xml', <<<'XML'
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+    <w:style w:type="paragraph" w:default="1" w:styleId="Normal">
+        <w:name w:val="Normal"/>
+    </w:style>
+</w:styles>
+XML);
+        $archive->addFromString(
+            'word/document.xml',
+            <<<XML
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+    <w:body>
+        {$bodyText}
+        <w:sectPr>
+            <w:pgSz w:w="11906" w:h="16838"/>
+            <w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/>
+        </w:sectPr>
+    </w:body>
+</w:document>
+XML,
+        );
+        $archive->close();
+
+        return new UploadedFile(
+            $docxPath,
+            $fileName,
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            null,
+            true,
+        );
     }
 
     private function previewVersion(MergedPdf $mergedPdf): string

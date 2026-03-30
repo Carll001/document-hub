@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Enums\UserRole;
 use App\Models\MergedPdf;
 use App\Models\SyncedEmail;
 use App\Models\User;
@@ -108,5 +109,16 @@ class DashboardTest extends TestCase
                 ->where('recentMergedPdfs.0.fileName', 'combined-report.pdf')
                 ->where('recentMergedPdfs.0.downloadUrl', route('doc-merge.download', ['mergedPdf' => $mergedPdf])),
             );
+    }
+
+    public function test_superadmin_users_are_redirected_from_dashboard_to_users(): void
+    {
+        $superadmin = User::factory()->create([
+            'role' => UserRole::Superadmin,
+        ]);
+
+        $this->actingAs($superadmin)
+            ->get(route('dashboard'))
+            ->assertRedirect(route('users.index'));
     }
 }

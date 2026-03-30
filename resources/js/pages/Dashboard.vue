@@ -249,8 +249,9 @@ function emailPreview(email: RecentEmail): string {
                             <h1
                                 class="max-w-2xl text-3xl font-semibold tracking-tight"
                             >
-                                {{ auth.user.name }}, your document workspace is
-                                ready.
+                                {{
+                                    auth.user?.name ?? 'Your'
+                                }}, your document workspace is ready.
                             </h1>
                             <p
                                 class="max-w-2xl text-sm leading-7 text-muted-foreground"

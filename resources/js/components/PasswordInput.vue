@@ -8,7 +8,12 @@ import { cn } from '@/lib/utils';
 defineOptions({ inheritAttrs: false });
 
 const props = defineProps<{
+    defaultValue?: string | number;
+    modelValue?: string | number;
     class?: HTMLAttributes['class'];
+}>();
+const emits = defineEmits<{
+    (e: 'update:modelValue', payload: string | number): void;
 }>();
 
 const showPassword = ref(false);
@@ -24,9 +29,12 @@ defineExpose({
     <div class="relative">
         <Input
             ref="inputRef"
+            :model-value="props.modelValue"
+            :default-value="props.defaultValue"
             :type="showPassword ? 'text' : 'password'"
             :class="cn('pr-10', props.class)"
             v-bind="$attrs"
+            @update:model-value="emits('update:modelValue', $event)"
         />
         <button
             type="button"

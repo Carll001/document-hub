@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Models\BulkMergeFailure;
+use App\Models\DocMergeBatch;
 use App\Models\User;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\File;
@@ -30,6 +31,7 @@ class BulkZipMergeService
         UploadedFile $zipFile,
         ?string $outputPrefix = null,
         ?string $footerText = null,
+        ?DocMergeBatch $batch = null,
     ): array {
         $archivePath = $zipFile->getRealPath();
 
@@ -54,6 +56,7 @@ class BulkZipMergeService
             $inspection['inputLabel'],
             $archivePath,
             $footerText,
+            $batch,
         );
     }
 
@@ -63,7 +66,14 @@ class BulkZipMergeService
      * @param  list<array{
      *     name: string,
      *     number: int|string|null,
-     *     files: list<UploadedFile>,
+     *     files?: list<UploadedFile|array{displayName: string, entryName?: string, path?: string}>,
+     *     filesByKey?: array<string, array{
+     *         matchKey: string,
+     *         groupLabel: string,
+     *         displayName: string,
+     *         entryName?: string,
+     *         path?: string
+     *     }>,
      *     hasNestedEntries?: bool|int|string|null,
      *     hasInvalidFiles?: bool|int|string|null
      * }>  $pageFolders
@@ -74,8 +84,14 @@ class BulkZipMergeService
         array $pageFolders,
         ?string $outputPrefix = null,
         ?string $footerText = null,
+        ?DocMergeBatch $batch = null,
+        ?string $inputLabel = null,
+        string $inputMode = 'folder',
     ): array {
-        $inspection = $this->inspectPageFolders($pageFolders);
+        $inspection = $this->inspectPageFolders(
+            $pageFolders,
+            $inputLabel,
+        );
 
         return $this->processDocumentGroups(
             $user,
@@ -83,9 +99,10 @@ class BulkZipMergeService
                 $inspection['pageFolders'],
                 $outputPrefix,
             ),
-            $inspection['inputMode'],
+            $inputMode,
             $inspection['inputLabel'],
             footerText: $footerText,
+            batch: $batch,
         );
     }
 
@@ -108,7 +125,11 @@ class BulkZipMergeService
      *     }>
      * }
      */
-    public function inspectArchive(string $archivePath, string $inputLabel): array
+    public function inspectArchive(
+        string $archivePath,
+        string $inputLabel,
+        int $minPageFolderCount = 2,
+    ): array
     {
         $zip = new ZipArchive;
         $openResult = $zip->open($archivePath);
@@ -165,7 +186,9 @@ class BulkZipMergeService
 
         if ($entries === []) {
             throw ValidationException::withMessages([
-                'zip' => 'The ZIP must contain at least two page folders like PAGE 1 and PAGE 2.',
+                'zip' => $minPageFolderCount <= 1
+                    ? 'The ZIP must contain at least one page folder like PAGE 1.'
+                    : 'The ZIP must contain at least two page folders like PAGE 1 and PAGE 2.',
             ]);
         }
 
@@ -176,7 +199,11 @@ class BulkZipMergeService
         return [
             'inputMode' => 'zip',
             'inputLabel' => $inputLabel,
-            'pageFolders' => $this->validatePageFolders($pageFolders, 'zip'),
+            'pageFolders' => $this->validatePageFolders(
+                $pageFolders,
+                'zip',
+                $minPageFolderCount,
+            ),
         ];
     }
 
@@ -186,7 +213,14 @@ class BulkZipMergeService
      * @param  list<array{
      *     name: string,
      *     number: int|string|null,
-     *     files: list<UploadedFile>,
+     *     files?: list<UploadedFile|array{displayName: string, entryName?: string, path?: string}>,
+     *     filesByKey?: array<string, array{
+     *         matchKey: string,
+     *         groupLabel: string,
+     *         displayName: string,
+     *         entryName?: string,
+     *         path?: string
+     *     }>,
      *     hasNestedEntries?: bool|int|string|null,
      *     hasInvalidFiles?: bool|int|string|null
      * }>  $pageFolders
@@ -209,10 +243,12 @@ class BulkZipMergeService
     public function inspectPageFolders(
         array $pageFolders,
         ?string $inputLabel = null,
+        int $minPageFolderCount = 2,
     ): array {
         $normalizedPageFolders = $this->validatePageFolders(
             $pageFolders,
             'pageFolders',
+            $minPageFolderCount,
         );
 
         return [
@@ -341,6 +377,7 @@ class BulkZipMergeService
         string $inputLabel,
         ?string $archivePath = null,
         ?string $footerText = null,
+        ?DocMergeBatch $batch = null,
     ): array {
         $temporaryRootPath = storage_path('app/tmp/doc-merge-bulk-'.Str::uuid());
         $zip = null;
@@ -375,6 +412,7 @@ class BulkZipMergeService
                             $documentGroup['groupLabel'],
                             $documentGroup['missingFolderNames'],
                         ),
+                        $batch,
                     );
                     $failedCount++;
 
@@ -396,6 +434,7 @@ class BulkZipMergeService
                         $sources,
                         $documentGroup['outputFileName'],
                         $footerText,
+                        $batch,
                     );
 
                     $mergedCount++;
@@ -407,6 +446,7 @@ class BulkZipMergeService
                         $documentGroup['groupLabel'],
                         $documentGroup['outputFileName'],
                         $this->groupMergeFailureMessage($exception),
+                        $batch,
                     );
                     $failedCount++;
                 } finally {
@@ -610,11 +650,17 @@ class BulkZipMergeService
      *     }>
      * }>
      */
-    private function validatePageFolders(array $pageFolders, string $errorField): array
+    private function validatePageFolders(
+        array $pageFolders,
+        string $errorField,
+        int $minPageFolderCount = 2,
+    ): array
     {
-        if (count($pageFolders) < 2) {
+        if (count($pageFolders) < $minPageFolderCount) {
             throw ValidationException::withMessages([
-                $errorField => 'Select at least two page folders like PAGE 1 and PAGE 2.',
+                $errorField => $minPageFolderCount <= 1
+                    ? 'Select at least one page folder like PAGE 1.'
+                    : 'Select at least two page folders like PAGE 1 and PAGE 2.',
             ]);
         }
 
@@ -666,6 +712,18 @@ class BulkZipMergeService
                     static fn (mixed $file): bool => $file instanceof UploadedFile || is_array($file),
                 ),
             );
+
+            if (
+                $rawFiles === []
+                && is_array($pageFolder['filesByKey'] ?? null)
+            ) {
+                $rawFiles = array_values(
+                    array_filter(
+                        $pageFolder['filesByKey'],
+                        static fn (mixed $file): bool => is_array($file),
+                    ),
+                );
+            }
 
             if ($rawFiles === []) {
                 throw ValidationException::withMessages([
@@ -1052,9 +1110,11 @@ class BulkZipMergeService
         string $groupLabel,
         string $outputFileName,
         string $errorMessage,
+        ?DocMergeBatch $batch = null,
     ): BulkMergeFailure {
         return BulkMergeFailure::query()->create([
             'user_id' => $user->id,
+            'doc_merge_batch_id' => $batch?->id,
             'input_mode' => $inputMode,
             'input_label' => $inputLabel,
             'group_label' => $groupLabel,

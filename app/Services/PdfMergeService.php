@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Models\MergedPdf;
+use App\Models\DocMergeBatch;
 use App\Models\User;
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Http\UploadedFile;
@@ -32,6 +33,7 @@ class PdfMergeService
         array $sources,
         ?string $outputName = null,
         ?string $footerText = null,
+        ?DocMergeBatch $batch = null,
     ): MergedPdf
     {
         $normalizedSources = $this->normalizeSources($sources);
@@ -98,6 +100,7 @@ class PdfMergeService
 
             $mergedPdf = MergedPdf::query()->create([
                 'user_id' => $user->id,
+                'doc_merge_batch_id' => $batch?->id,
                 'file_name' => $normalizedOutputName,
                 'storage_path' => $storagePath,
                 'file_size' => $disk->size($storagePath),

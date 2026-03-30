@@ -6,10 +6,15 @@ namespace App\Http\Controllers;
 
 use App\Mail\MergedPdfEmail;
 use App\Models\BulkMergeFailure;
+use App\Models\ConfirmationTemplate;
+use App\Models\DocMergeBatch;
 use App\Models\MergedPdf;
 use App\Models\User;
 use App\Services\BulkZipMergeService;
+use App\Services\ConfirmationDocxService;
 use App\Services\PdfMergeService;
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
@@ -30,23 +35,29 @@ class DocMergeController extends Controller
     /**
      * Show the document merge page.
      */
-    public function index(Request $request): Response
-    {
+    public function index(
+        Request $request,
+        ConfirmationDocxService $confirmationDocxService,
+    ): Response {
+        $user = $request->user();
+        $validated = $request->validate([
+            'page' => ['nullable', 'integer', 'min:1'],
+        ]);
+        $requestedPage = (int) ($validated['page'] ?? 1);
+        $batchPage = $this->batchPage($user, $requestedPage);
+
+        if ($requestedPage > 1 && $requestedPage > $batchPage->lastPage()) {
+            $batchPage = $this->batchPage($user, $batchPage->lastPage());
+        }
+
         return Inertia::render('DocMerge', [
             'flash' => [
                 'success' => $request->session()->get('success'),
                 'error' => $request->session()->get('error'),
             ],
-            'mergeHistory' => $this->transformMergeHistory(
-                MergedPdf::query()
-                    ->whereBelongsTo($request->user())
-                    ->latest()
-                    ->get(),
-                BulkMergeFailure::query()
-                    ->whereBelongsTo($request->user())
-                    ->latest()
-                    ->get(),
-            ),
+            'confirmationTemplate' => $this->transformConfirmationTemplate($confirmationDocxService),
+            'batchCreateUrl' => route('doc-merge.batches.store'),
+            ...$this->batchPagePayload($batchPage),
         ]);
     }
 
@@ -63,17 +74,12 @@ class DocMergeController extends Controller
             'files.*' => ['required', 'file', 'mimes:pdf'],
             'outputName' => ['nullable', 'string', 'max:120'],
             'footerText' => ['nullable', 'string', 'max:160'],
-            'receipt' => ['nullable', 'file', 'mimes:pdf,jpg,jpeg,png,webp', 'max:10240'],
         ], [
             'sources.required' => 'Select at least two PDF sources to merge.',
             'sources.min' => 'Select at least two PDF sources to merge.',
             'files.*.mimes' => 'Only PDF files can be merged right now.',
             'footerText.max' => 'Footer text must be 160 characters or fewer.',
-            'receipt.mimes' => 'Receipts must be a PDF or image file.',
-            'receipt.max' => 'Receipts must be 10 MB or smaller.',
         ])->validate();
-
-        $receipt = $this->resolveReceiptFile($request);
         $mergedPdf = null;
 
         try {
@@ -88,17 +94,8 @@ class DocMergeController extends Controller
                 $this->normalizeFooterText($validated['footerText'] ?? null),
             );
 
-            if ($receipt instanceof UploadedFile) {
-                $this->attachUploadedReceipt($mergedPdf, $receipt, $service);
-            }
-
             return to_route('doc-merge.index')
-                ->with(
-                    'success',
-                    $receipt instanceof UploadedFile
-                        ? "Merged PDF saved as {$mergedPdf->file_name} with receipt attached."
-                        : "Merged PDF saved as {$mergedPdf->file_name}.",
-                );
+                ->with('success', "Merged PDF saved as {$mergedPdf->file_name}.");
         } catch (ValidationException $exception) {
             if ($mergedPdf instanceof MergedPdf) {
                 $mergedPdf->delete();
@@ -229,7 +226,7 @@ class DocMergeController extends Controller
         $validated = $request->validate([
             'items' => ['required', 'array', 'min:1'],
             'items.*.type' => ['required', 'string', Rule::in(['merged_pdf', 'merge_failure'])],
-            'items.*.id' => ['required', 'integer'],
+            'items.*.id' => ['required', 'string', 'max:36'],
         ], [
             'items.required' => 'Select at least one merge result to delete.',
             'items.min' => 'Select at least one merge result to delete.',
@@ -238,7 +235,7 @@ class DocMergeController extends Controller
         $requestedItems = collect($validated['items'])
             ->map(fn (array $item): array => [
                 'type' => (string) $item['type'],
-                'id' => (int) $item['id'],
+                'id' => (string) $item['id'],
             ])
             ->unique(fn (array $item): string => "{$item['type']}:{$item['id']}")
             ->values();
@@ -254,12 +251,12 @@ class DocMergeController extends Controller
         /** @var Collection<int, MergedPdf> $mergedPdfs */
         $mergedPdfs = MergedPdf::query()
             ->whereBelongsTo($request->user())
-            ->whereKey($mergedPdfIds)
+            ->whereIn('uuid', $mergedPdfIds)
             ->get();
         /** @var Collection<int, BulkMergeFailure> $bulkMergeFailures */
         $bulkMergeFailures = BulkMergeFailure::query()
             ->whereBelongsTo($request->user())
-            ->whereKey($failureIds)
+            ->whereIn('uuid', $failureIds)
             ->get();
 
         if (
@@ -286,13 +283,121 @@ class DocMergeController extends Controller
                 ? "Deleted {$deletedLabel}."
                 : "Deleted {$deletedCount} merge results.";
 
-            return to_route('doc-merge.index')->with('success', $message);
+            return $this->redirectToDeletedItemsContext($mergedPdfs, $bulkMergeFailures)
+                ->with('success', $message);
         } catch (\Throwable $exception) {
             report($exception);
 
-            return to_route('doc-merge.index')
+            return $this->redirectToDeletedItemsContext($mergedPdfs, $bulkMergeFailures)
                 ->with('error', 'The selected merge results could not be deleted right now. Please try again.');
         }
+    }
+
+    /**
+     * Store or replace the shared confirmation DOCX template.
+     */
+    public function storeConfirmationTemplate(
+        Request $request,
+        ConfirmationDocxService $confirmationDocxService,
+    ): RedirectResponse {
+        $validated = $request->validate([
+            'template' => ['required', 'file', 'mimes:docx', 'max:10240'],
+        ], [
+            'template.required' => 'Choose a DOCX file to use as the receipt template.',
+            'template.mimes' => 'Only DOCX files can be used as receipt templates.',
+            'template.max' => 'Receipt templates must be 10 MB or smaller.',
+        ]);
+
+        /** @var UploadedFile $template */
+        $template = $validated['template'];
+        $user = $request->user();
+        $disk = Storage::disk('local');
+        $sharedTemplate = ConfirmationTemplate::query()
+            ->firstOrNew(['key' => ConfirmationTemplate::SHARED_KEY]);
+        $safeFileName = $this->safeDocxFilename(
+            $template->getClientOriginalName(),
+            'receipt-template',
+        );
+        $storagePath = $this->confirmationTemplateStoragePath($safeFileName);
+        $previousStoragePath = $sharedTemplate->storage_path;
+
+        try {
+            $templateRealPath = $template->getRealPath();
+
+            if ($templateRealPath === false || ! is_file($templateRealPath)) {
+                throw new RuntimeException('The uploaded receipt template is no longer available.');
+            }
+
+            $confirmationDocxService->extractPlaceholders($templateRealPath);
+
+            $stored = $disk->putFileAs(
+                dirname($storagePath),
+                $template,
+                basename($storagePath),
+            );
+
+            if ($stored === false || ! $disk->exists($storagePath)) {
+                throw new RuntimeException('The receipt template could not be stored.');
+            }
+
+            $sharedTemplate->forceFill([
+                'file_name' => $template->getClientOriginalName(),
+                'storage_path' => $storagePath,
+                'file_size' => $disk->size($storagePath),
+                'uploaded_by_user_id' => $user->id,
+            ])->save();
+
+            if (
+                filled($previousStoragePath)
+                && $previousStoragePath !== $storagePath
+                && $disk->exists($previousStoragePath)
+            ) {
+                $disk->delete($previousStoragePath);
+            }
+
+            return to_route('doc-merge.index')
+                ->with('success', 'Shared receipt template saved.');
+        } catch (RuntimeException $exception) {
+            if ($disk->exists($storagePath)) {
+                $disk->delete($storagePath);
+            }
+
+            report($exception);
+
+            return to_route('doc-merge.index')
+                ->with('error', $exception->getMessage());
+        } catch (\Throwable $exception) {
+            if ($disk->exists($storagePath)) {
+                $disk->delete($storagePath);
+            }
+
+            report($exception);
+
+            return to_route('doc-merge.index')
+                ->with('error', 'The receipt template could not be uploaded right now. Please try again.');
+        }
+    }
+
+    /**
+     * Download the shared confirmation template.
+     */
+    public function downloadConfirmationTemplate(Request $request): StreamedResponse
+    {
+        $disk = Storage::disk('local');
+        $template = ConfirmationTemplate::shared();
+
+        abort_unless(
+            $template instanceof ConfirmationTemplate
+                && filled($template->storage_path)
+                && filled($template->file_name)
+                && $disk->exists($template->storage_path),
+            404,
+        );
+
+        return $disk->download(
+            $template->storage_path,
+            $template->file_name,
+        );
     }
 
     /**
@@ -333,32 +438,164 @@ class DocMergeController extends Controller
         Request $request,
         MergedPdf $mergedPdf,
         PdfMergeService $service,
+        ConfirmationDocxService $confirmationDocxService,
     ): RedirectResponse {
         abort_unless($mergedPdf->user->is($request->user()), 404);
 
-        $validated = $request->validate([
-            'receipt' => ['required', 'file', 'mimes:pdf,jpg,jpeg,png,webp', 'max:10240'],
-        ], $this->receiptValidationMessages([
-            'receipt.required' => 'Choose a receipt file to upload.',
-        ]));
+        $templatePath = $this->storedConfirmationTemplatePath();
 
-        /** @var UploadedFile $receipt */
-        $receipt = $validated['receipt'];
-        $hadReceipt = filled($mergedPdf->receipt_storage_path);
+        if ($templatePath === null) {
+            return $this->redirectToMergedPdfContext($mergedPdf)
+                ->with('error', 'Upload the shared receipt template before generating a receipt.');
+        }
 
         try {
-            $this->attachUploadedReceipt($mergedPdf, $receipt, $service);
+            $placeholders = $confirmationDocxService->extractPlaceholders($templatePath);
+        } catch (RuntimeException $exception) {
+            report($exception);
+
+            return $this->redirectToMergedPdfContext($mergedPdf)
+                ->with('error', $exception->getMessage());
+        }
+
+        $validator = Validator::make($request->all(), [
+            'placeholders' => ['nullable', 'array'],
+        ]);
+
+        $validator->after(function ($validator) use ($placeholders, $request): void {
+            $submittedPlaceholders = $request->input('placeholders', []);
+
+            if ($placeholders === []) {
+                return;
+            }
+
+            if (! is_array($submittedPlaceholders)) {
+                $validator->errors()->add(
+                    'placeholders',
+                    'Receipt placeholder values must be sent as a field map.',
+                );
+
+                return;
+            }
+
+            foreach ($placeholders as $placeholder) {
+                if (! array_key_exists($placeholder, $submittedPlaceholders)) {
+                    $validator->errors()->add(
+                        "placeholders.{$placeholder}",
+                        "Provide a value for {{$placeholder}}.",
+                    );
+
+                    continue;
+                }
+
+                $value = $submittedPlaceholders[$placeholder];
+
+                if (! is_scalar($value) && $value !== null) {
+                    $validator->errors()->add(
+                        "placeholders.{$placeholder}",
+                        "{{$placeholder}} must be plain text.",
+                    );
+
+                    continue;
+                }
+
+                if (mb_strlen((string) $value) > 500) {
+                    $validator->errors()->add(
+                        "placeholders.{$placeholder}",
+                        "{{$placeholder}} must be 500 characters or fewer.",
+                    );
+                }
+            }
+        });
+
+        $validated = $validator->validate();
+        $hadReceipt = filled($mergedPdf->receipt_storage_path);
+        $disk = Storage::disk('local');
+        $outputName = $this->normalizedReceiptOutputName($mergedPdf);
+        $storagePath = $this->receiptStoragePath(
+            $mergedPdf,
+            $this->safePdfFilename($outputName, 'receipt'),
+        );
+        $previousReceiptPath = $mergedPdf->receipt_storage_path;
+        $sourceFileNames = $this->sourceFileNamesWithReceipt(
+            $mergedPdf->source_file_names,
+            $mergedPdf->receipt_file_name,
+            $outputName,
+        );
+        $temporaryReceiptPdfPath = storage_path(
+            'app/tmp/doc-merge-generated-receipt-'.Str::uuid().'.pdf',
+        );
+
+        try {
+            $confirmationDocxService->renderPdf(
+                $templatePath,
+                $temporaryReceiptPdfPath,
+                $this->resolveTemplatePlaceholderValues(
+                    $validated['placeholders'] ?? [],
+                    $placeholders,
+                ),
+            );
+
+            $this->storeFileFromPath(
+                $disk,
+                $storagePath,
+                $temporaryReceiptPdfPath,
+                'The generated receipt PDF could not be stored.',
+            );
+
+            $service->attachReceipt($mergedPdf, $disk->path($storagePath));
+
+            $mergedPdf->forceFill([
+                'file_size' => $disk->size($mergedPdf->storage_path),
+                'source_count' => count($sourceFileNames),
+                'source_file_names' => $sourceFileNames,
+                'receipt_file_name' => $outputName,
+                'receipt_storage_path' => $storagePath,
+                'receipt_file_size' => $disk->size($storagePath),
+            ])->save();
+
+            if (
+                filled($previousReceiptPath)
+                && $previousReceiptPath !== $storagePath
+                && $disk->exists($previousReceiptPath)
+            ) {
+                $disk->delete($previousReceiptPath);
+            }
 
             $message = $hadReceipt
                 ? "Receipt updated for {$mergedPdf->file_name}."
                 : "Receipt added to {$mergedPdf->file_name}.";
 
-            return to_route('doc-merge.index')->with('success', $message);
-        } catch (\Throwable $exception) {
+            return $this->redirectToMergedPdfContext($mergedPdf)
+                ->with('success', $message);
+        } catch (RuntimeException $exception) {
+            if (
+                $storagePath !== $previousReceiptPath
+                && $disk->exists($storagePath)
+            ) {
+                $disk->delete($storagePath);
+            }
+
             report($exception);
 
-            return to_route('doc-merge.index')
-                ->with('error', 'The receipt could not be uploaded right now. Please try again.');
+            return $this->redirectToMergedPdfContext($mergedPdf)
+                ->with('error', $exception->getMessage());
+        } catch (\Throwable $exception) {
+            if (
+                $storagePath !== $previousReceiptPath
+                && $disk->exists($storagePath)
+            ) {
+                $disk->delete($storagePath);
+            }
+
+            report($exception);
+
+            return $this->redirectToMergedPdfContext($mergedPdf)
+                ->with('error', 'The receipt could not be generated right now. Please try again.');
+        } finally {
+            if (is_file($temporaryReceiptPdfPath)) {
+                @unlink($temporaryReceiptPdfPath);
+            }
         }
     }
 
@@ -392,7 +629,7 @@ class DocMergeController extends Controller
         abort_unless($mergedPdf->user->is($request->user()), 404);
 
         if (! filled($mergedPdf->receipt_storage_path) || ! filled($mergedPdf->receipt_file_name)) {
-            return to_route('doc-merge.index')
+            return $this->redirectToMergedPdfContext($mergedPdf)
                 ->with('error', "There is no receipt attached to {$mergedPdf->file_name}.");
         }
 
@@ -420,12 +657,12 @@ class DocMergeController extends Controller
                 $disk->delete($previousReceiptPath);
             }
 
-            return to_route('doc-merge.index')
+            return $this->redirectToMergedPdfContext($mergedPdf)
                 ->with('success', "Receipt removed from {$mergedPdf->file_name}.");
         } catch (\Throwable $exception) {
             report($exception);
 
-            return to_route('doc-merge.index')
+            return $this->redirectToMergedPdfContext($mergedPdf)
                 ->with('error', 'The receipt could not be removed right now. Please try again.');
         }
     }
@@ -449,7 +686,7 @@ class DocMergeController extends Controller
         $disk = Storage::disk('local');
 
         if (! $disk->exists($mergedPdf->storage_path)) {
-            return to_route('doc-merge.index')
+            return $this->redirectToMergedPdfContext($mergedPdf)
                 ->with('error', "The saved PDF {$mergedPdf->file_name} is no longer available.");
         }
 
@@ -458,12 +695,12 @@ class DocMergeController extends Controller
                 new MergedPdfEmail($mergedPdf, $subject, $message),
             );
 
-            return to_route('doc-merge.index')
+            return $this->redirectToMergedPdfContext($mergedPdf)
                 ->with('success', "Email sent to {$recipientEmail}.");
         } catch (\Throwable $exception) {
             report($exception);
 
-            return to_route('doc-merge.index')
+            return $this->redirectToMergedPdfContext($mergedPdf)
                 ->with('error', 'The email could not be sent right now. Please verify your mail settings and try again.');
         }
     }
@@ -481,7 +718,7 @@ class DocMergeController extends Controller
     ): array {
         $mergedHistory = $mergedPdfs->map(fn (MergedPdf $mergedPdf): array => [
             'recordType' => 'merged_pdf',
-            'id' => $mergedPdf->id,
+            'id' => $mergedPdf->uuid,
             'fileName' => $mergedPdf->file_name,
             'fileSize' => $mergedPdf->file_size,
             'sourceCount' => $mergedPdf->source_count,
@@ -497,7 +734,7 @@ class DocMergeController extends Controller
                 'mergedPdf' => $mergedPdf,
                 'v' => $this->previewVersion($mergedPdf),
             ]),
-            'receiptUploadUrl' => route('doc-merge.receipt.store', ['mergedPdf' => $mergedPdf]),
+            'receiptStoreUrl' => route('doc-merge.receipt.store', ['mergedPdf' => $mergedPdf]),
             'receiptRemoveUrl' => filled($mergedPdf->receipt_storage_path)
                 ? route('doc-merge.receipt.destroy', ['mergedPdf' => $mergedPdf])
                 : null,
@@ -505,6 +742,10 @@ class DocMergeController extends Controller
                 ? route('doc-merge.receipt.download', ['mergedPdf' => $mergedPdf])
                 : null,
             'sendEmailUrl' => route('doc-merge.send-email', ['mergedPdf' => $mergedPdf]),
+            'batchName' => $mergedPdf->docMergeBatch?->name,
+            'batchShowUrl' => $mergedPdf->docMergeBatch instanceof DocMergeBatch
+                ? route('doc-merge.batches.show', ['docMergeBatch' => $mergedPdf->docMergeBatch])
+                : null,
             'inputMode' => null,
             'inputLabel' => null,
             'groupLabel' => null,
@@ -512,12 +753,12 @@ class DocMergeController extends Controller
             'sortCreatedAt' => sprintf(
                 '%013d-%010d',
                 $mergedPdf->created_at?->valueOf() ?? 0,
-                $mergedPdf->id,
+                $mergedPdf->getKey(),
             ),
         ]);
         $failureHistory = $bulkMergeFailures->map(fn (BulkMergeFailure $failure): array => [
             'recordType' => 'merge_failure',
-            'id' => $failure->id,
+            'id' => $failure->uuid,
             'fileName' => $failure->output_file_name,
             'fileSize' => null,
             'sourceCount' => null,
@@ -530,10 +771,14 @@ class DocMergeController extends Controller
             'createdAt' => $failure->created_at?->toIso8601String(),
             'downloadUrl' => null,
             'previewUrl' => null,
-            'receiptUploadUrl' => null,
+            'receiptStoreUrl' => null,
             'receiptRemoveUrl' => null,
             'receiptDownloadUrl' => null,
             'sendEmailUrl' => null,
+            'batchName' => $failure->docMergeBatch?->name,
+            'batchShowUrl' => $failure->docMergeBatch instanceof DocMergeBatch
+                ? route('doc-merge.batches.show', ['docMergeBatch' => $failure->docMergeBatch])
+                : null,
             'inputMode' => $failure->input_mode,
             'inputLabel' => $failure->input_label,
             'groupLabel' => $failure->group_label,
@@ -541,7 +786,7 @@ class DocMergeController extends Controller
             'sortCreatedAt' => sprintf(
                 '%013d-%010d',
                 $failure->created_at?->valueOf() ?? 0,
-                $failure->id,
+                $failure->getKey(),
             ),
         ]);
 
@@ -555,6 +800,83 @@ class DocMergeController extends Controller
                 return $item;
             })
             ->all();
+    }
+
+    /**
+     * Convert saved batches into one frontend summary list.
+     *
+     * @return array{
+     *     batches: array<int, array<string, mixed>>,
+     *     batchPagination: array{
+     *         currentPage: int,
+     *         lastPage: int
+     *     }
+     * }
+     */
+    private function batchPagePayload(LengthAwarePaginator $batchPage): array
+    {
+        return [
+            'batches' => collect($batchPage->items())
+                ->map(fn (DocMergeBatch $batch): array => [
+                    'id' => $batch->uuid,
+                    'name' => $batch->name,
+                    'mergedCount' => (int) ($batch->merged_pdfs_count ?? 0),
+                    'failedCount' => (int) ($batch->bulk_merge_failures_count ?? 0),
+                    'lastProcessedAt' => $batch->last_processed_at?->toIso8601String(),
+                    'showUrl' => route('doc-merge.batches.show', ['docMergeBatch' => $batch]),
+                    'downloadUrl' => route('doc-merge.batches.download', ['docMergeBatch' => $batch]),
+                ])
+                ->all(),
+            'batchPagination' => [
+                'currentPage' => $batchPage->currentPage(),
+                'lastPage' => $batchPage->lastPage(),
+            ],
+        ];
+    }
+
+    /**
+     * Build frontend metadata for the shared confirmation template.
+     *
+     * @return array{
+     *     hasTemplate: bool,
+     *     fileName: ?string,
+     *     fileSize: ?int,
+     *     placeholders: list<string>,
+     *     downloadUrl: ?string
+     * }
+     */
+    private function transformConfirmationTemplate(ConfirmationDocxService $confirmationDocxService): array
+    {
+        $template = ConfirmationTemplate::shared();
+        $storagePath = $template?->storage_path;
+        $disk = Storage::disk('local');
+
+        if (! filled($storagePath) || ! $disk->exists($storagePath)) {
+            return [
+                'hasTemplate' => false,
+                'fileName' => null,
+                'fileSize' => null,
+                'placeholders' => [],
+                'downloadUrl' => null,
+            ];
+        }
+
+        try {
+            $placeholders = $confirmationDocxService->extractPlaceholders(
+                $disk->path($storagePath),
+            );
+        } catch (\Throwable $exception) {
+            report($exception);
+            $placeholders = [];
+        }
+
+        return [
+            'hasTemplate' => true,
+            'fileName' => $template?->file_name,
+            'fileSize' => $template?->file_size,
+            'placeholders' => $placeholders,
+            'downloadUrl' => route('doc-merge.confirmation-template.download'),
+        ];
     }
 
     /**
@@ -665,16 +987,6 @@ class DocMergeController extends Controller
     }
 
     /**
-     * Return the uploaded receipt file from the request.
-     */
-    private function resolveReceiptFile(Request $request): ?UploadedFile
-    {
-        $receipt = $request->file('receipt');
-
-        return $receipt instanceof UploadedFile ? $receipt : null;
-    }
-
-    /**
      * Normalize optional text input while treating blank strings as null.
      */
     private function normalizeOptionalText(mixed $value): ?string
@@ -685,9 +997,9 @@ class DocMergeController extends Controller
     }
 
     /**
-     * Build a storage-safe filename for uploaded receipts.
+     * Build a storage-safe PDF filename.
      */
-    private function safeReceiptFilename(string $fileName): string
+    private function safePdfFilename(string $fileName, string $fallbackBaseName): string
     {
         $extension = Str::of(pathinfo($fileName, PATHINFO_EXTENSION))
             ->ascii()
@@ -702,88 +1014,137 @@ class DocMergeController extends Controller
             ->value();
 
         if ($baseName === '') {
-            $baseName = 'receipt';
+            $baseName = $fallbackBaseName;
         }
 
-        return $extension !== ''
-            ? "{$baseName}.{$extension}"
-            : $baseName;
+        if ($extension !== 'pdf') {
+            $extension = 'pdf';
+        }
+
+        return "{$baseName}.{$extension}";
     }
 
     /**
-     * Store a receipt file and append it to the saved merged PDF.
+     * Build a storage-safe DOCX filename.
      */
-    private function attachUploadedReceipt(
-        MergedPdf $mergedPdf,
-        UploadedFile $receipt,
-        PdfMergeService $service,
-    ): void {
-        $disk = Storage::disk('local');
-        $safeFileName = $this->safeReceiptFilename($receipt->getClientOriginalName());
-        $storagePath = sprintf(
+    private function safeDocxFilename(string $fileName, string $fallbackBaseName): string
+    {
+        $extension = Str::of(pathinfo($fileName, PATHINFO_EXTENSION))
+            ->ascii()
+            ->lower()
+            ->replaceMatches('/[^a-z0-9]+/', '')
+            ->value();
+
+        $baseName = Str::of(pathinfo($fileName, PATHINFO_FILENAME))
+            ->ascii()
+            ->replaceMatches('/[^A-Za-z0-9._-]+/', '-')
+            ->trim('-._')
+            ->value();
+
+        if ($baseName === '') {
+            $baseName = $fallbackBaseName;
+        }
+
+        if ($extension !== 'docx') {
+            $extension = 'docx';
+        }
+
+        return "{$baseName}.{$extension}";
+    }
+
+    /**
+     * Build the stored shared confirmation template path.
+     */
+    private function confirmationTemplateStoragePath(string $safeFileName): string
+    {
+        return sprintf(
+            'doc-merge/shared/confirmation-template/%s-%s',
+            Str::uuid(),
+            $safeFileName,
+        );
+    }
+
+    /**
+     * Build the stored generated receipt PDF path for a merged PDF.
+     */
+    private function receiptStoragePath(MergedPdf $mergedPdf, string $safeFileName): string
+    {
+        return sprintf(
             'doc-merge/%d/receipts/%d/%s-%s',
             $mergedPdf->user_id,
             $mergedPdf->id,
             Str::uuid(),
             $safeFileName,
         );
-        $previousReceiptPath = $mergedPdf->receipt_storage_path;
-        $sourceFileNames = $this->sourceFileNamesWithReceipt(
-            $mergedPdf->source_file_names,
-            $mergedPdf->receipt_file_name,
-            $receipt->getClientOriginalName(),
-        );
-
-        try {
-            $stored = $disk->putFileAs(
-                dirname($storagePath),
-                $receipt,
-                basename($storagePath),
-            );
-
-            if ($stored === false || ! $disk->exists($storagePath)) {
-                throw new RuntimeException('The receipt could not be stored.');
-            }
-
-            $service->attachReceipt($mergedPdf, $disk->path($storagePath));
-
-            $mergedPdf->forceFill([
-                'file_size' => $disk->size($mergedPdf->storage_path),
-                'source_count' => count($sourceFileNames),
-                'source_file_names' => $sourceFileNames,
-                'receipt_file_name' => $receipt->getClientOriginalName(),
-                'receipt_storage_path' => $storagePath,
-                'receipt_file_size' => $disk->size($storagePath),
-            ])->save();
-
-            if (
-                filled($previousReceiptPath)
-                && $previousReceiptPath !== $storagePath
-                && $disk->exists($previousReceiptPath)
-            ) {
-                $disk->delete($previousReceiptPath);
-            }
-        } catch (\Throwable $exception) {
-            if ($disk->exists($storagePath)) {
-                $disk->delete($storagePath);
-            }
-
-            throw $exception;
-        }
     }
 
     /**
-     * Shared receipt validation messages.
+     * Return the on-disk path for the shared confirmation template.
+     */
+    private function storedConfirmationTemplatePath(): ?string
+    {
+        $storagePath = ConfirmationTemplate::shared()?->storage_path;
+        $disk = Storage::disk('local');
+
+        if (! filled($storagePath) || ! $disk->exists($storagePath)) {
+            return null;
+        }
+
+        return $disk->path($storagePath);
+    }
+
+    /**
+     * Build the generated receipt filename shown in merge history.
+     */
+    private function normalizedReceiptOutputName(MergedPdf $mergedPdf): string
+    {
+        return Str::of($mergedPdf->file_name)
+            ->beforeLast('.')
+            ->append('-receipt.pdf')
+            ->value();
+    }
+
+    /**
+     * Resolve template placeholder values in template order.
      *
-     * @param  array<string, string>  $overrides
+     * @param  list<string>  $placeholders
      * @return array<string, string>
      */
-    private function receiptValidationMessages(array $overrides = []): array
-    {
-        return array_merge([
-            'receipt.mimes' => 'Receipts must be a PDF or image file.',
-            'receipt.max' => 'Receipts must be 10 MB or smaller.',
-        ], $overrides);
+    private function resolveTemplatePlaceholderValues(
+        mixed $submittedValues,
+        array $placeholders,
+    ): array {
+        $submittedValues = is_array($submittedValues) ? $submittedValues : [];
+        $resolvedValues = [];
+
+        foreach ($placeholders as $placeholder) {
+            $resolvedValues[$placeholder] = (string) ($submittedValues[$placeholder] ?? '');
+        }
+
+        return $resolvedValues;
+    }
+
+    private function storeFileFromPath(
+        FilesystemAdapter $disk,
+        string $storagePath,
+        string $sourcePath,
+        string $errorMessage,
+    ): void {
+        $stream = fopen($sourcePath, 'rb');
+
+        if ($stream === false) {
+            throw new RuntimeException($errorMessage);
+        }
+
+        try {
+            $stored = $disk->put($storagePath, $stream);
+        } finally {
+            fclose($stream);
+        }
+
+        if ($stored !== true || ! $disk->exists($storagePath)) {
+            throw new RuntimeException($errorMessage);
+        }
     }
 
     /**
@@ -872,6 +1233,52 @@ class DocMergeController extends Controller
             'receipt_file_name' => $mergedPdf->receipt_file_name,
             'receipt_file_size' => $mergedPdf->receipt_file_size,
         ], JSON_THROW_ON_ERROR));
+    }
+
+    private function batchPage(User $user, int $page): LengthAwarePaginator
+    {
+        return DocMergeBatch::query()
+            ->whereBelongsTo($user)
+            ->withCount(['mergedPdfs', 'bulkMergeFailures'])
+            ->latest()
+            ->paginate(9, ['*'], 'page', $page);
+    }
+
+    private function redirectToMergedPdfContext(MergedPdf $mergedPdf): RedirectResponse
+    {
+        $batch = $mergedPdf->docMergeBatch;
+
+        if ($batch instanceof DocMergeBatch) {
+            return to_route('doc-merge.batches.show', ['docMergeBatch' => $batch]);
+        }
+
+        return to_route('doc-merge.index');
+    }
+
+    /**
+     * @param  Collection<int, MergedPdf>  $mergedPdfs
+     * @param  Collection<int, BulkMergeFailure>  $bulkMergeFailures
+     */
+    private function redirectToDeletedItemsContext(
+        Collection $mergedPdfs,
+        Collection $bulkMergeFailures,
+    ): RedirectResponse {
+        $batchIds = $mergedPdfs
+            ->pluck('doc_merge_batch_id')
+            ->concat($bulkMergeFailures->pluck('doc_merge_batch_id'))
+            ->filter(fn ($id): bool => $id !== null)
+            ->unique()
+            ->values();
+
+        if ($batchIds->count() === 1) {
+            $batch = DocMergeBatch::query()->find($batchIds->first());
+
+            if ($batch instanceof DocMergeBatch) {
+                return to_route('doc-merge.batches.show', ['docMergeBatch' => $batch]);
+            }
+        }
+
+        return to_route('doc-merge.index');
     }
 
     private function normalizeFooterText(mixed $value): ?string

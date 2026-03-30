@@ -7,6 +7,7 @@ namespace App\Http\Controllers;
 use App\Models\MergedPdf;
 use App\Models\SyncedEmail;
 use App\Models\User;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Collection;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -16,10 +17,14 @@ class DashboardController extends Controller
     /**
      * Show the application dashboard.
      */
-    public function __invoke(): Response
+    public function __invoke(): Response|RedirectResponse
     {
         /** @var User $user */
         $user = request()->user();
+
+        if ($user->canAccessUserManagement()) {
+            return to_route('users.index');
+        }
 
         $syncedEmailQuery = SyncedEmail::query()
             ->whereBelongsTo($user);

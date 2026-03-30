@@ -72,7 +72,7 @@ class BulkDocMergeTest extends TestCase
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->component('DocMerge')
-                ->has('mergeHistory', 2),
+                ->missing('mergeHistory'),
             );
     }
 
@@ -435,8 +435,8 @@ class BulkDocMergeTest extends TestCase
         $this->actingAs($user)
             ->delete(route('doc-merge.destroy-many'), [
                 'items' => [
-                    ['type' => 'merged_pdf', 'id' => $mergedPdf->id],
-                    ['type' => 'merge_failure', 'id' => $failure->id],
+                    ['type' => 'merged_pdf', 'id' => $mergedPdf->uuid],
+                    ['type' => 'merge_failure', 'id' => $failure->uuid],
                 ],
             ])
             ->assertRedirect(route('doc-merge.index'))

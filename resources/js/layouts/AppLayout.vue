@@ -22,6 +22,6 @@ const slots = useSlots();
             <slot name="subheader" />
         </template>
         <slot />
-        <Toaster />
+        <Toaster richColors/>
     </AppLayout>
 </template>
