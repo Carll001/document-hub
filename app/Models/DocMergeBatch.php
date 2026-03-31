@@ -15,9 +15,17 @@ use Illuminate\Support\Facades\Storage;
     'uuid',
     'name',
     'last_processed_at',
+    'processing_status',
+    'processing_error',
 ])]
 class DocMergeBatch extends Model
 {
+    public const PROCESSING_STATUS_QUEUED = 'queued';
+
+    public const PROCESSING_STATUS_PROCESSING = 'processing';
+
+    public const PROCESSING_STATUS_FAILED = 'failed';
+
     /**
      * Delete stored batch source files and linked results when the batch is removed.
      */
@@ -87,5 +95,13 @@ class DocMergeBatch extends Model
     public function getRouteKeyName(): string
     {
         return 'uuid';
+    }
+
+    public function isBusy(): bool
+    {
+        return in_array($this->processing_status, [
+            self::PROCESSING_STATUS_QUEUED,
+            self::PROCESSING_STATUS_PROCESSING,
+        ], true);
     }
 }

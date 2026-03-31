@@ -14,7 +14,10 @@ import type {
     BatchPaginationState,
     BatchSummary,
 } from '@/components/doc-merge-components/types';
-import { formatDateTime } from '@/components/doc-merge-components/utils';
+import {
+    batchProcessingStatusLabel,
+    formatDateTime,
+} from '@/components/doc-merge-components/utils';
 import docMerge from '@/routes/doc-merge';
 
 const props = defineProps<{
@@ -133,7 +136,31 @@ function visitPage(page: number): void {
                 <div class="mt-4 flex flex-wrap gap-2">
                     <Badge variant="outline">{{ batch.mergedCount }} merged</Badge>
                     <Badge variant="outline">{{ batch.failedCount }} failed</Badge>
+                    <Badge
+                        v-if="batch.processingStatus"
+                        :variant="
+                            batch.processingStatus === 'failed'
+                                ? 'destructive'
+                                : 'outline'
+                        "
+                        :class="
+                            batch.processingStatus === 'queued'
+                                ? 'border-amber-200 bg-amber-50 text-amber-700'
+                                : batch.processingStatus === 'processing'
+                                  ? 'border-sky-200 bg-sky-50 text-sky-700'
+                                  : undefined
+                        "
+                    >
+                        {{ batchProcessingStatusLabel(batch.processingStatus) }}
+                    </Badge>
                 </div>
+
+                <p
+                    v-if="batch.processingStatus === 'failed' && batch.processingError"
+                    class="mt-3 text-sm text-destructive"
+                >
+                    {{ batch.processingError }}
+                </p>
 
                 <div class="mt-5 flex flex-wrap gap-2">
                     <Button as-child size="sm" class="gap-2">

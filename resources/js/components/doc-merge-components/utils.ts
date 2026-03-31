@@ -1,4 +1,5 @@
 import type {
+    BatchProcessingStatus,
     BulkInputMode,
     MergeHistoryRecord,
     MergeSourceType,
@@ -126,6 +127,22 @@ export function mergeSourceTypeVariant(
     }
 
     return 'default';
+}
+
+export function batchProcessingStatusLabel(status: BatchProcessingStatus): string {
+    if (status === 'queued') {
+        return 'Queued';
+    }
+
+    if (status === 'processing') {
+        return 'Processing';
+    }
+
+    if (status === 'failed') {
+        return 'Failed';
+    }
+
+    return 'Ready';
 }
 
 export function defaultOutputName(): string {

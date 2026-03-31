@@ -23,9 +23,17 @@ use Illuminate\Support\Facades\Storage;
     'receipt_file_name',
     'receipt_storage_path',
     'receipt_file_size',
+    'receipt_job_status',
+    'receipt_job_error',
 ])]
 class MergedPdf extends Model
 {
+    public const RECEIPT_JOB_STATUS_QUEUED = 'queued';
+
+    public const RECEIPT_JOB_STATUS_PROCESSING = 'processing';
+
+    public const RECEIPT_JOB_STATUS_FAILED = 'failed';
+
     /**
      * Delete the stored merged PDF file when the record is removed.
      */
@@ -89,5 +97,13 @@ class MergedPdf extends Model
     public function getRouteKeyName(): string
     {
         return 'uuid';
+    }
+
+    public function receiptJobIsBusy(): bool
+    {
+        return in_array($this->receipt_job_status, [
+            self::RECEIPT_JOB_STATUS_QUEUED,
+            self::RECEIPT_JOB_STATUS_PROCESSING,
+        ], true);
     }
 }

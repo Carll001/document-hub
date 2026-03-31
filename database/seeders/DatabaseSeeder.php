@@ -22,5 +22,11 @@ class DatabaseSeeder extends Seeder
             'role' => UserRole::Superadmin,
             'password' => Hash::make('password'),
         ]);
+        User::updateOrCreate([
+            'name' => 'user',
+            'email' => 'user@gmail.com',
+            'role' => UserRole::Staff,
+            'password' => Hash::make('password'),
+        ]);
     }
 }

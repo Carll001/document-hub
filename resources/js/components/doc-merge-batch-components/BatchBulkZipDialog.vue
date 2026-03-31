@@ -56,7 +56,8 @@ function handleBulkZipSelection(event: Event): void {
                 <DialogDescription>
                     Upload one ZIP with page folders like PAGE 1 and PAGE 2 at
                     the ZIP root, or inside one wrapper folder. Matching PDFs
-                    will merge into this batch immediately.
+                    will be queued for this batch and the table will refresh
+                    automatically when processing finishes.
                 </DialogDescription>
             </DialogHeader>
 
@@ -165,7 +166,7 @@ function handleBulkZipSelection(event: Event): void {
                             class="size-4 animate-spin"
                         />
                         <Upload v-else class="size-4" />
-                        {{ props.processing ? 'Processing ZIP...' : 'Bulk merge ZIP' }}
+                        {{ props.processing ? 'Queueing batch run...' : 'Queue batch run' }}
                     </Button>
                 </DialogFooter>
             </form>

@@ -3,6 +3,9 @@ export type FlashState = {
     error?: string | null;
 };
 
+export type BatchProcessingStatus = 'queued' | 'processing' | 'failed' | null;
+export type ReceiptJobStatus = 'queued' | 'processing' | 'failed' | null;
+
 export type ConfirmationTemplateState = {
     hasTemplate: boolean;
     fileName: string | null;
@@ -47,6 +50,8 @@ export type BatchMergedOutput = {
     hasReceipt: boolean;
     receiptFileName: string | null;
     receiptFileSize: number | null;
+    receiptJobStatus: ReceiptJobStatus;
+    receiptJobError: string | null;
     createdAt: string | null;
     downloadUrl: string;
     previewUrl: string;
@@ -92,6 +97,8 @@ export type BatchDetail = {
     mergedCount: number;
     failedCount: number;
     lastProcessedAt: string | null;
+    processingStatus: BatchProcessingStatus;
+    processingError: string | null;
     showUrl: string;
     downloadUrl: string;
     deleteUrl: string;

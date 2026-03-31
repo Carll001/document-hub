@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { Head, useForm } from '@inertiajs/vue3';
-import { computed, ref, toRef, watch } from 'vue';
+import { Head, router, useForm } from '@inertiajs/vue3';
+import { computed, onBeforeUnmount, ref, toRef, watch } from 'vue';
 import { toast } from 'vue-sonner';
 import BatchBulkFolderDialog from '@/components/doc-merge-batch-components/BatchBulkFolderDialog.vue';
 import BatchBulkZipDialog from '@/components/doc-merge-batch-components/BatchBulkZipDialog.vue';
@@ -25,6 +25,7 @@ import type {
 import { useBatchPageFolders } from '@/components/doc-merge-batch-components/useBatchPageFolders';
 import { useBatchResultSelection } from '@/components/doc-merge-batch-components/useBatchResultSelection';
 import {
+    batchProcessingIsActive,
     bulkOutputPreview,
     defaultConfirmationPlaceholderValue,
     defaultEmailMessage,
@@ -32,6 +33,7 @@ import {
     isFailureRecord,
     isMergedRecord,
     mergeHistoryRecordKey,
+    receiptJobIsActive,
 } from '@/components/doc-merge-batch-components/utils';
 import { Card } from '@/components/ui/card';
 import {
@@ -135,12 +137,35 @@ const {
     toggleAllVisibleMergeHistory,
     toggleMergeHistorySelection,
 } = useBatchResultSelection(computed(() => props.batch.results));
+const batchPollTimeoutId = ref<number | null>(null);
+const busyBatchErrorMessage =
+    'This batch is already queued or processing. Wait for it to finish before making more changes.';
+
+const isBatchBusy = computed(() =>
+    batchProcessingIsActive(props.batch.processingStatus),
+);
+const hasActiveReceiptJobs = computed(() =>
+    props.batch.results.some(
+        (record) =>
+            isMergedRecord(record) &&
+            receiptJobIsActive(record.receiptJobStatus),
+    ),
+);
+const shouldPollBatch = computed(
+    () => isBatchBusy.value || hasActiveReceiptJobs.value,
+);
 
 const canBulkDeleteMergeHistory = computed(
-    () => selectedMergeHistoryKeys.value.length > 0 && !deleteForm.processing,
+    () =>
+        selectedMergeHistoryKeys.value.length > 0 &&
+        !deleteForm.processing &&
+        !isBatchBusy.value,
 );
 const canConfirmDelete = computed(
-    () => mergeHistoryForDeletion.value.length > 0 && !deleteForm.processing,
+    () =>
+        mergeHistoryForDeletion.value.length > 0 &&
+        !deleteForm.processing &&
+        !isBatchBusy.value,
 );
 const deleteDialogTitle = computed(() =>
     mergeHistoryForDeletion.value.length === 1
@@ -153,13 +178,17 @@ const deleteDialogDescription = computed(() =>
         : `Delete ${mergeHistoryForDeletion.value.length} selected merge results? Saved PDFs also remove any attached receipt.`,
 );
 const canSubmitBulkZipMerge = computed(
-    () => bulkZipForm.zip instanceof File && !bulkZipForm.processing,
+    () =>
+        bulkZipForm.zip instanceof File &&
+        !bulkZipForm.processing &&
+        !isBatchBusy.value,
 );
 const canSubmitBulkFolderMerge = computed(
     () =>
         bulkFolderClientError.value === null &&
         validSelectedPageFolderCount.value >= 2 &&
-        !bulkFolderForm.processing,
+        !bulkFolderForm.processing &&
+        !isBatchBusy.value,
 );
 const bulkZipOutputPreview = computed(() =>
     bulkOutputPreview(bulkZipForm.outputPrefix),
@@ -198,7 +227,9 @@ const canSubmitReceipt = computed(() => {
     if (
         mergedPdfForReceipt.value === null ||
         receiptForm.processing ||
-        !props.confirmationTemplate.hasTemplate
+        !props.confirmationTemplate.hasTemplate ||
+        isBatchBusy.value ||
+        receiptJobIsActive(mergedPdfForReceipt.value.receiptJobStatus)
     ) {
         return false;
     }
@@ -235,7 +266,10 @@ const receiptPlaceholderErrors = computed<Record<string, string | undefined>>(
         ),
 );
 const canSendEmail = computed(
-    () => mergedPdfForEmail.value !== null && !sendEmailForm.processing,
+    () =>
+        mergedPdfForEmail.value !== null &&
+        !sendEmailForm.processing &&
+        !isBatchBusy.value,
 );
 
 watch(
@@ -262,6 +296,66 @@ watch(
     },
     { immediate: true },
 );
+
+watch(
+    shouldPollBatch,
+    (active) => {
+        if (!active) {
+            stopBatchPolling();
+
+            return;
+        }
+
+        scheduleBatchPoll();
+    },
+    { immediate: true },
+);
+
+onBeforeUnmount(() => {
+    stopBatchPolling();
+});
+
+function stopBatchPolling(): void {
+    if (batchPollTimeoutId.value === null || typeof window === 'undefined') {
+        return;
+    }
+
+    window.clearTimeout(batchPollTimeoutId.value);
+    batchPollTimeoutId.value = null;
+}
+
+function scheduleBatchPoll(): void {
+    stopBatchPolling();
+
+    if (!shouldPollBatch.value || typeof window === 'undefined') {
+        return;
+    }
+
+    batchPollTimeoutId.value = window.setTimeout(() => {
+        router.visit(
+            `${window.location.pathname}${window.location.search}`,
+            {
+                only: ['batch'],
+                preserveScroll: true,
+                preserveState: true,
+                replace: true,
+                onFinish: () => {
+                    if (shouldPollBatch.value) {
+                        scheduleBatchPoll();
+                    }
+                },
+            },
+        );
+    }, 3000);
+}
+
+function showBusyBatchToast(): void {
+    toast.error(busyBatchErrorMessage);
+}
+
+function receiptJobBusyMessage(fileName: string): string {
+    return `A receipt update is already queued for ${fileName}.`;
+}
 
 function handleBulkZipDialogOpenChange(open: boolean): void {
     if (bulkZipForm.processing) {
@@ -360,13 +454,35 @@ function handleDeleteBatchDialogOpenChange(open: boolean): void {
 }
 
 function openBulkZipDialog(): void {
+    if (isBatchBusy.value) {
+        showBusyBatchToast();
+
+        return;
+    }
+
     resetBulkZipForm();
     isBulkZipDialogOpen.value = true;
 }
 
 function openBulkFolderDialog(): void {
+    if (isBatchBusy.value) {
+        showBusyBatchToast();
+
+        return;
+    }
+
     resetBulkFolderForm();
     isBulkFolderDialogOpen.value = true;
+}
+
+function openDeleteBatchDialog(): void {
+    if (isBatchBusy.value) {
+        showBusyBatchToast();
+
+        return;
+    }
+
+    isDeleteBatchDialogOpen.value = true;
 }
 
 function resetBulkZipForm(): void {
@@ -428,12 +544,24 @@ function openFailureDialog(record: BatchMergeHistoryRecord): void {
 }
 
 function openDeleteDialogForRecord(record: BatchMergeHistoryRecord): void {
+    if (isBatchBusy.value) {
+        showBusyBatchToast();
+
+        return;
+    }
+
     mergeHistoryForDeletion.value = [record];
     deleteForm.clearErrors();
     isDeleteResultsDialogOpen.value = true;
 }
 
 function openDeleteDialogForSelection(): void {
+    if (isBatchBusy.value) {
+        showBusyBatchToast();
+
+        return;
+    }
+
     const selectedMergeHistory = filteredMergeHistory.value.filter((record) =>
         selectedMergeHistorySet.value.has(mergeHistoryRecordKey(record)),
     );
@@ -452,6 +580,18 @@ function openRemoveReceiptDialog(record: BatchMergeHistoryRecord): void {
         return;
     }
 
+    if (isBatchBusy.value) {
+        showBusyBatchToast();
+
+        return;
+    }
+
+    if (receiptJobIsActive(record.receiptJobStatus)) {
+        toast.error(receiptJobBusyMessage(record.fileName));
+
+        return;
+    }
+
     mergedPdfForReceiptRemoval.value = record;
     removeReceiptForm.clearErrors();
     isRemoveReceiptDialogOpen.value = true;
@@ -459,6 +599,18 @@ function openRemoveReceiptDialog(record: BatchMergeHistoryRecord): void {
 
 function openReceiptDialog(record: BatchMergeHistoryRecord): void {
     if (!isMergedRecord(record)) {
+        return;
+    }
+
+    if (isBatchBusy.value) {
+        showBusyBatchToast();
+
+        return;
+    }
+
+    if (receiptJobIsActive(record.receiptJobStatus)) {
+        toast.error(receiptJobBusyMessage(record.fileName));
+
         return;
     }
 
@@ -496,6 +648,12 @@ function openSendEmailDialog(record: BatchMergeHistoryRecord): void {
         return;
     }
 
+    if (isBatchBusy.value) {
+        showBusyBatchToast();
+
+        return;
+    }
+
     mergedPdfForEmail.value = record;
     sendEmailForm.recipientEmail = '';
     sendEmailForm.subject = defaultEmailSubject(record);
@@ -505,6 +663,12 @@ function openSendEmailDialog(record: BatchMergeHistoryRecord): void {
 }
 
 function submitBulkZipMerge(): void {
+    if (isBatchBusy.value) {
+        showBusyBatchToast();
+
+        return;
+    }
+
     if (!(bulkZipForm.zip instanceof File)) {
         return;
     }
@@ -516,6 +680,12 @@ function submitBulkZipMerge(): void {
 }
 
 function submitBulkFolderMerge(): void {
+    if (isBatchBusy.value) {
+        showBusyBatchToast();
+
+        return;
+    }
+
     if (!canSubmitBulkFolderMerge.value) {
         return;
     }
@@ -537,7 +707,19 @@ function submitBulkFolderMerge(): void {
 function submitReceipt(): void {
     const mergedPdf = mergedPdfForReceipt.value;
 
+    if (isBatchBusy.value) {
+        showBusyBatchToast();
+
+        return;
+    }
+
     if (!mergedPdf) {
+        return;
+    }
+
+    if (receiptJobIsActive(mergedPdf.receiptJobStatus)) {
+        toast.error(receiptJobBusyMessage(mergedPdf.fileName));
+
         return;
     }
 
@@ -562,6 +744,21 @@ function submitReceipt(): void {
 function removeReceipt(): void {
     const mergedPdf = mergedPdfForReceiptRemoval.value;
 
+    if (isBatchBusy.value) {
+        showBusyBatchToast();
+
+        return;
+    }
+
+    if (
+        mergedPdf &&
+        receiptJobIsActive(mergedPdf.receiptJobStatus)
+    ) {
+        toast.error(receiptJobBusyMessage(mergedPdf.fileName));
+
+        return;
+    }
+
     if (!mergedPdf?.receiptRemoveUrl) {
         return;
     }
@@ -581,6 +778,12 @@ function removeReceipt(): void {
 }
 
 function submitDelete(): void {
+    if (isBatchBusy.value) {
+        showBusyBatchToast();
+
+        return;
+    }
+
     const items = mergeHistoryForDeletion.value.map((record) => ({
         type: record.recordType,
         id: record.id,
@@ -606,6 +809,12 @@ function submitDelete(): void {
 
 function submitSendEmail(): void {
     const mergedPdf = mergedPdfForEmail.value;
+
+    if (isBatchBusy.value) {
+        showBusyBatchToast();
+
+        return;
+    }
 
     if (!mergedPdf) {
         return;
@@ -666,6 +875,12 @@ async function pasteReceiptDetailsFromClipboard(): Promise<void> {
 }
 
 function deleteBatch(): void {
+    if (isBatchBusy.value) {
+        showBusyBatchToast();
+
+        return;
+    }
+
     deleteBatchForm.delete(props.batch.deleteUrl);
 }
 </script>
@@ -681,7 +896,7 @@ function deleteBatch(): void {
                 :delete-batch-processing="deleteBatchForm.processing"
                 @open-bulk-folder="openBulkFolderDialog"
                 @open-bulk-zip="openBulkZipDialog"
-                @open-delete-batch="isDeleteBatchDialogOpen = true"
+                @open-delete-batch="openDeleteBatchDialog"
             />
         </template>
 
@@ -695,6 +910,7 @@ function deleteBatch(): void {
             <Card class="rounded-3xl">
                 <BatchResultsTable
                     :can-bulk-delete="canBulkDeleteMergeHistory"
+                    :is-batch-busy="isBatchBusy"
                     :is-record-selected="isMergeHistorySelected"
                     :page-url="props.batch.showUrl"
                     :pagination="props.batch.resultsPagination"

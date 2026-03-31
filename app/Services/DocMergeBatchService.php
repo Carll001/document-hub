@@ -91,7 +91,7 @@ class DocMergeBatchService
      *
      * @return array{mergedCount: int, failedCount: int}
      */
-    public function processBatch(DocMergeBatch $batch): array
+    public function processBatch(DocMergeBatch $batch, ?string $outputPrefix = null): array
     {
         $pageFolders = $this->storedPageFolders($batch);
 
@@ -109,6 +109,7 @@ class DocMergeBatchService
         $result = $this->bulkZipMergeService->processPageFolders(
             $batch->user,
             $pageFolders,
+            $outputPrefix,
             batch: $batch,
             inputLabel: $batch->name,
             inputMode: 'batch',

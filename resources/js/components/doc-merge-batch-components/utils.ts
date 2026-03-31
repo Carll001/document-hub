@@ -1,8 +1,10 @@
 import type {
+    BatchProcessingStatus,
     BatchFailure,
     BatchInputMode,
     BatchMergeHistoryRecord,
     BatchMergedOutput,
+    ReceiptJobStatus,
 } from '@/components/doc-merge-batch-components/types';
 
 export function isMergedRecord(
@@ -83,6 +85,7 @@ export function mergeHistorySearchText(record: BatchMergeHistoryRecord): string 
         formatTinDigitsOnly(record.tinNumber),
         record.footerText ?? '',
         record.receiptFileName ?? '',
+        record.recordType === 'merged_pdf' ? record.receiptJobError ?? '' : '',
         record.recordType === 'merge_failure' ? record.groupLabel : '',
         record.recordType === 'merge_failure' ? record.errorMessage : '',
         formatDateTime(record.createdAt),
@@ -158,10 +161,50 @@ export function bulkOutputPreview(prefix: string): string {
     return `${prefix}PDF_NAME`;
 }
 
+export function batchProcessingIsActive(status: BatchProcessingStatus): boolean {
+    return status === 'queued' || status === 'processing';
+}
+
+export function batchProcessingStatusLabel(status: BatchProcessingStatus): string {
+    if (status === 'queued') {
+        return 'Queued';
+    }
+
+    if (status === 'processing') {
+        return 'Processing';
+    }
+
+    if (status === 'failed') {
+        return 'Failed';
+    }
+
+    return 'Ready';
+}
+
 export function defaultEmailSubject(mergedPdf: BatchMergedOutput): string {
     return `Merged PDF: ${mergedPdf.fileName}`;
 }
 
 export function defaultEmailMessage(mergedPdf: BatchMergedOutput): string {
     return `Hi,\n\nAttached is ${mergedPdf.fileName}.\n\nThanks.`;
+}
+
+export function receiptJobIsActive(status: ReceiptJobStatus): boolean {
+    return status === 'queued' || status === 'processing';
+}
+
+export function receiptJobStatusLabel(status: ReceiptJobStatus): string {
+    if (status === 'queued') {
+        return 'Queued';
+    }
+
+    if (status === 'processing') {
+        return 'Processing';
+    }
+
+    if (status === 'failed') {
+        return 'Failed';
+    }
+
+    return 'Ready';
 }

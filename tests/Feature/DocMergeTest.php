@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace Tests\Feature;
 
+use App\Jobs\GenerateMergedPdfReceipt;
 use App\Mail\MergedPdfEmail;
 use App\Models\ConfirmationTemplate;
+use App\Models\DocMergeBatch;
 use App\Models\MergedPdf;
 use App\Models\User;
 use App\Services\ConfirmationDocxService;
@@ -14,9 +16,11 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Mail\Attachment;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Inertia\Testing\AssertableInertia as Assert;
 use Mockery\MockInterface;
+use RuntimeException;
 use setasign\Fpdi\Fpdi;
 use Tests\TestCase;
 use ZipArchive;
@@ -124,6 +128,7 @@ class DocMergeTest extends TestCase
     public function test_uploaded_receipt_templates_are_shared_across_users()
     {
         Storage::fake('local');
+        Queue::fake();
         $this->withoutVite();
 
         $uploader = User::factory()->create();
@@ -178,12 +183,16 @@ class DocMergeTest extends TestCase
                 ],
             ])
             ->assertRedirect(route('doc-merge.index'))
-            ->assertSessionHas('success', 'Receipt added to other-user-packet.pdf.');
+            ->assertSessionHas('success', 'Receipt queued for other-user-packet.pdf.');
 
         $otherMergedPdf->refresh();
 
-        $this->assertNotNull($otherMergedPdf->receipt_storage_path);
-        Storage::disk('local')->assertExists($otherMergedPdf->receipt_storage_path);
+        $this->assertSame(MergedPdf::RECEIPT_JOB_STATUS_QUEUED, $otherMergedPdf->receipt_job_status);
+        $this->assertNull($otherMergedPdf->receipt_job_error);
+        $this->assertNull($otherMergedPdf->receipt_storage_path);
+        Queue::assertPushed(GenerateMergedPdfReceipt::class, function (GenerateMergedPdfReceipt $job) use ($otherMergedPdf): bool {
+            return $job->mergedPdfId === $otherMergedPdf->id;
+        });
     }
 
     public function test_receipt_template_detection_ignores_word_document_ids_in_settings_xml()
@@ -220,6 +229,7 @@ class DocMergeTest extends TestCase
     public function test_authenticated_users_can_generate_a_templated_receipt_pdf_and_append_it_to_a_saved_merge()
     {
         Storage::fake('local');
+        Queue::fake();
 
         $user = User::factory()->create();
         $mergedPdf = MergedPdf::query()->create([
@@ -257,13 +267,25 @@ class DocMergeTest extends TestCase
                 ],
             ])
             ->assertRedirect(route('doc-merge.index'))
-            ->assertSessionHas('success', 'Receipt added to expense-packet.pdf.');
+            ->assertSessionHas('success', 'Receipt queued for expense-packet.pdf.');
+
+        $mergedPdf->refresh();
+
+        $this->assertSame(MergedPdf::RECEIPT_JOB_STATUS_QUEUED, $mergedPdf->receipt_job_status);
+        $this->assertNull($mergedPdf->receipt_job_error);
+        $this->assertNull($mergedPdf->receipt_storage_path);
+
+        $queuedJob = $this->assertReceiptJobQueuedFor($mergedPdf);
+
+        $queuedJob->handle(app(\App\Services\MergedPdfReceiptService::class));
 
         $mergedPdf->refresh();
 
         $this->assertSame('expense-packet-receipt.pdf', $mergedPdf->receipt_file_name);
         $this->assertNotNull($mergedPdf->receipt_storage_path);
         $this->assertNotNull($mergedPdf->receipt_file_size);
+        $this->assertNull($mergedPdf->receipt_job_status);
+        $this->assertNull($mergedPdf->receipt_job_error);
         $this->assertSame(3, $mergedPdf->source_count);
         $this->assertSame([
             'quote.pdf',
@@ -301,6 +323,7 @@ class DocMergeTest extends TestCase
     public function test_receipt_generation_requires_each_detected_placeholder_to_be_present()
     {
         Storage::fake('local');
+        Queue::fake();
 
         $user = User::factory()->create();
         $mergedPdf = MergedPdf::query()->create([
@@ -338,6 +361,8 @@ class DocMergeTest extends TestCase
 
         $this->assertNull($mergedPdf->receipt_storage_path);
         $this->assertNull($mergedPdf->receipt_file_name);
+        $this->assertNull($mergedPdf->receipt_job_status);
+        Queue::assertNothingPushed();
     }
 
     public function test_authenticated_users_can_merge_two_uploaded_pdfs_and_save_output()
@@ -812,6 +837,7 @@ class DocMergeTest extends TestCase
     public function test_authenticated_users_can_add_and_replace_receipts_for_saved_merged_pdfs()
     {
         Storage::fake('local');
+        Queue::fake();
 
         $user = User::factory()->create();
         $mergedPdf = MergedPdf::query()->create([
@@ -845,7 +871,10 @@ class DocMergeTest extends TestCase
                 ],
             ])
             ->assertRedirect(route('doc-merge.index'))
-            ->assertSessionHas('success', 'Receipt added to expense-packet.pdf.');
+            ->assertSessionHas('success', 'Receipt queued for expense-packet.pdf.');
+
+        $this->assertReceiptJobQueuedFor($mergedPdf)
+            ->handle(app(\App\Services\MergedPdfReceiptService::class));
 
         $mergedPdf->refresh();
 
@@ -881,12 +910,20 @@ class DocMergeTest extends TestCase
                 ],
             ])
             ->assertRedirect(route('doc-merge.index'))
-            ->assertSessionHas('success', 'Receipt updated for expense-packet.pdf.');
+            ->assertSessionHas('success', 'Receipt queued for expense-packet.pdf.');
+
+        $mergedPdf->refresh();
+        $this->assertSame(MergedPdf::RECEIPT_JOB_STATUS_QUEUED, $mergedPdf->receipt_job_status);
+
+        $this->assertReceiptJobQueuedFor($mergedPdf)
+            ->handle(app(\App\Services\MergedPdfReceiptService::class));
 
         $mergedPdf->refresh();
 
         $this->assertSame('expense-packet-receipt.pdf', $mergedPdf->receipt_file_name);
         $this->assertNotSame($firstReceiptPath, $mergedPdf->receipt_storage_path);
+        $this->assertNull($mergedPdf->receipt_job_status);
+        $this->assertNull($mergedPdf->receipt_job_error);
         $this->assertSame(3, $mergedPdf->source_count);
         $this->assertSame(
             ['quote.pdf', 'invoice.pdf', 'Receipt: expense-packet-receipt.pdf'],
@@ -912,6 +949,7 @@ class DocMergeTest extends TestCase
     public function test_receipt_updates_keep_the_saved_tin_number_and_reapply_the_footer()
     {
         Storage::fake('local');
+        Queue::fake();
 
         $user = User::factory()->create();
 
@@ -955,7 +993,10 @@ class DocMergeTest extends TestCase
                 ],
             ])
             ->assertRedirect(route('doc-merge.index'))
-            ->assertSessionHas('success', 'Receipt added to footered-packet.pdf.');
+            ->assertSessionHas('success', 'Receipt queued for footered-packet.pdf.');
+
+        $this->assertReceiptJobQueuedFor($mergedPdf)
+            ->handle(app(\App\Services\MergedPdfReceiptService::class));
 
         $mergedPdf->refresh();
 
@@ -1059,6 +1100,7 @@ class DocMergeTest extends TestCase
     public function test_authenticated_users_can_remove_receipts_and_restore_the_original_merged_pdf()
     {
         Storage::fake('local');
+        Queue::fake();
 
         $user = User::factory()->create();
         $mergedPdf = MergedPdf::query()->create([
@@ -1091,6 +1133,9 @@ class DocMergeTest extends TestCase
                 ],
             ])
             ->assertRedirect(route('doc-merge.index'));
+
+        $this->assertReceiptJobQueuedFor($mergedPdf)
+            ->handle(app(\App\Services\MergedPdfReceiptService::class));
 
         $mergedPdf->refresh();
         $receiptStoragePath = $mergedPdf->receipt_storage_path;
@@ -1127,6 +1172,7 @@ class DocMergeTest extends TestCase
     public function test_receipt_generation_returns_a_friendly_error_when_pdf_conversion_fails()
     {
         Storage::fake('local');
+        Queue::fake();
 
         $user = User::factory()->create();
         $mergedPdf = MergedPdf::query()->create([
@@ -1168,16 +1214,30 @@ class DocMergeTest extends TestCase
                 ],
             ])
             ->assertRedirect(route('doc-merge.index'))
-            ->assertSessionHas(
-                'error',
+            ->assertSessionHas('success', 'Receipt queued for expense-packet.pdf.');
+
+        $queuedJob = $this->assertReceiptJobQueuedFor($mergedPdf);
+
+        try {
+            $queuedJob->handle(app(\App\Services\MergedPdfReceiptService::class));
+            $this->fail('Expected the queued receipt job to fail.');
+        } catch (RuntimeException $exception) {
+            $this->assertSame(
                 'The receipt PDF could not be created. LibreOffice failed.',
+                $exception->getMessage(),
             );
+        }
 
         $mergedPdf->refresh();
 
         $this->assertNull($mergedPdf->receipt_file_name);
         $this->assertNull($mergedPdf->receipt_storage_path);
         $this->assertNull($mergedPdf->receipt_file_size);
+        $this->assertSame(MergedPdf::RECEIPT_JOB_STATUS_FAILED, $mergedPdf->receipt_job_status);
+        $this->assertSame(
+            'The receipt PDF could not be created. LibreOffice failed.',
+            $mergedPdf->receipt_job_error,
+        );
     }
 
     public function test_authenticated_users_can_email_saved_merged_pdfs_with_optional_subject_and_message()
@@ -1251,13 +1311,13 @@ class DocMergeTest extends TestCase
                     'message' => $case['message'],
                 ])
                 ->assertRedirect(route('doc-merge.index'))
-                ->assertSessionHas('success', "Email sent to {$case['recipient']}.");
+                ->assertSessionHas('success', "Email queued to {$case['recipient']}.");
         }
 
-        Mail::assertSent(MergedPdfEmail::class, count($cases));
+        Mail::assertQueued(MergedPdfEmail::class, count($cases));
 
         foreach ($cases as $case) {
-            Mail::assertSent(MergedPdfEmail::class, function (MergedPdfEmail $mail) use ($case, $mergedPdf): bool {
+            Mail::assertQueued(MergedPdfEmail::class, function (MergedPdfEmail $mail) use ($case, $mergedPdf): bool {
                 if (! $mail->hasTo($case['recipient'])) {
                     return false;
                 }
@@ -1308,7 +1368,7 @@ class DocMergeTest extends TestCase
             ->assertRedirect(route('doc-merge.index'))
             ->assertSessionHasErrors('recipientEmail');
 
-        Mail::assertNothingSent();
+        Mail::assertNothingQueued();
     }
 
     public function test_doc_merge_send_email_rejects_non_owned_saved_pdfs()
@@ -1332,7 +1392,7 @@ class DocMergeTest extends TestCase
             ])
             ->assertNotFound();
 
-        Mail::assertNothingSent();
+        Mail::assertNothingQueued();
     }
 
     public function test_doc_merge_send_email_returns_a_friendly_error_when_the_saved_pdf_is_missing()
@@ -1357,7 +1417,84 @@ class DocMergeTest extends TestCase
             ->assertRedirect(route('doc-merge.index'))
             ->assertSessionHas('error', 'The saved PDF missing.pdf is no longer available.');
 
-        Mail::assertNothingSent();
+        Mail::assertNothingQueued();
+    }
+
+    public function test_busy_batches_block_receipt_queueing_and_email_queueing(): void
+    {
+        Storage::fake('local');
+        Queue::fake();
+        Mail::fake();
+
+        $user = User::factory()->create();
+        $batch = DocMergeBatch::query()->create([
+            'user_id' => $user->id,
+            'name' => 'Busy Batch',
+            'processing_status' => DocMergeBatch::PROCESSING_STATUS_QUEUED,
+        ]);
+        $mergedPdf = MergedPdf::query()->create([
+            'user_id' => $user->id,
+            'doc_merge_batch_id' => $batch->id,
+            'file_name' => 'busy-batch.pdf',
+            'storage_path' => 'doc-merge/'.$user->id.'/busy-batch.pdf',
+            'file_size' => 0,
+            'source_count' => 2,
+            'source_file_names' => ['page-1.pdf', 'page-2.pdf'],
+        ]);
+
+        Storage::disk('local')->put(
+            $mergedPdf->storage_path,
+            $this->makePdfContents(),
+        );
+
+        $this->actingAs($user)
+            ->post(route('doc-merge.confirmation-template.store'), [
+                'template' => $this->makeUploadedDocxTemplate(
+                    'confirmation-template.docx',
+                    ['client_name'],
+                ),
+            ])
+            ->assertRedirect(route('doc-merge.index'));
+
+        $busyMessage = 'This batch is already queued or processing. Wait for it to finish before making more changes.';
+
+        $this->actingAs($user)
+            ->post(route('doc-merge.receipt.store', ['mergedPdf' => $mergedPdf]), [
+                'placeholders' => [
+                    'client_name' => 'Acme Corp',
+                ],
+            ])
+            ->assertRedirect(route('doc-merge.batches.show', ['docMergeBatch' => $batch]))
+            ->assertSessionHas('error', $busyMessage);
+
+        $this->actingAs($user)
+            ->post(route('doc-merge.send-email', ['mergedPdf' => $mergedPdf]), [
+                'recipientEmail' => 'recipient@example.com',
+            ])
+            ->assertRedirect(route('doc-merge.batches.show', ['docMergeBatch' => $batch]))
+            ->assertSessionHas('error', $busyMessage);
+
+        Queue::assertNothingPushed();
+        Mail::assertNothingQueued();
+    }
+
+    private function assertReceiptJobQueuedFor(MergedPdf $mergedPdf): GenerateMergedPdfReceipt
+    {
+        $queuedJob = null;
+
+        Queue::assertPushed(GenerateMergedPdfReceipt::class, function (GenerateMergedPdfReceipt $job) use ($mergedPdf, &$queuedJob): bool {
+            if ($job->mergedPdfId !== $mergedPdf->id) {
+                return false;
+            }
+
+            $queuedJob = $job;
+
+            return true;
+        });
+
+        $this->assertInstanceOf(GenerateMergedPdfReceipt::class, $queuedJob);
+
+        return $queuedJob;
     }
 
     /**

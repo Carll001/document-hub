@@ -38,6 +38,8 @@ import type {
     BatchResultsPaginationState,
 } from '@/components/doc-merge-batch-components/types';
 import {
+    receiptJobIsActive,
+    receiptJobStatusLabel,
     formatDateTime,
     formatFileSize,
     formatTinDigitsOnly,
@@ -47,6 +49,7 @@ import {
 
 const props = defineProps<{
     canBulkDelete: boolean;
+    isBatchBusy: boolean;
     isRecordSelected: (record: BatchMergeHistoryRecord) => boolean;
     pageUrl: string;
     pagination: BatchResultsPaginationState;
@@ -131,6 +134,10 @@ function visitPage(page: number): void {
             },
         },
     );
+}
+
+function receiptMutationDisabled(record: BatchMergeHistoryRecord): boolean {
+    return props.isBatchBusy || (isMergedRecord(record) && receiptJobIsActive(record.receiptJobStatus));
 }
 </script>
 
@@ -259,29 +266,67 @@ function visitPage(page: number): void {
                                 }}
                             </TableCell>
                             <TableCell class="text-sm text-muted-foreground">
-                                {{
-                                    isMergedRecord(record)
-                                        ? record.sourceFileNames.length === 0
-                                            ? `${record.sourceCount} source${
-                                                  record.sourceCount === 1 ? '' : 's'
-                                              }`
-                                            : record.sourceFileNames.slice(0, 2).join(', ') +
-                                              (record.sourceFileNames.length > 2
-                                                  ? ` +${
-                                                        record.sourceFileNames.length - 2
-                                                    } more`
-                                                  : '')
-                                        : '-'
-                                }}
+                                <template v-if="isMergedRecord(record)">
+                                    <Badge
+                                        v-if="record.sourceFileNames.length > 0"
+                                        variant="outline"
+                                        class="max-w-[14rem] truncate align-middle"
+                                        :title="record.sourceFileNames[0]"
+                                    >
+                                        {{ record.sourceFileNames[0] }}
+                                    </Badge>
+                                    <span v-else>
+                                        {{ `${record.sourceCount} source${record.sourceCount === 1 ? '' : 's'}` }}
+                                    </span>
+                                </template>
+                                <span v-else>-</span>
                             </TableCell>
                             <TableCell>
-                                <Badge
-                                    v-if="isMergedRecord(record) && record.hasReceipt"
-                                    variant="outline"
-                                    class="border-sky-200 bg-sky-50 text-sky-700"
+                                <div
+                                    v-if="isMergedRecord(record)"
+                                    class="space-y-1"
                                 >
-                                    Attached
-                                </Badge>
+                                    <Badge
+                                        v-if="record.receiptJobStatus"
+                                        :variant="
+                                            record.receiptJobStatus === 'failed'
+                                                ? 'destructive'
+                                                : 'outline'
+                                        "
+                                        :class="
+                                            record.receiptJobStatus === 'queued'
+                                                ? 'border-amber-200 bg-amber-50 text-amber-700'
+                                                : record.receiptJobStatus === 'processing'
+                                                  ? 'border-sky-200 bg-sky-50 text-sky-700'
+                                                  : undefined
+                                        "
+                                    >
+                                        {{
+                                            receiptJobStatusLabel(
+                                                record.receiptJobStatus,
+                                            )
+                                        }}
+                                    </Badge>
+                                    <Badge
+                                        v-else-if="record.hasReceipt"
+                                        variant="outline"
+                                        class="border-sky-200 bg-sky-50 text-sky-700"
+                                    >
+                                        Attached
+                                    </Badge>
+                                    <span v-else class="text-sm text-muted-foreground">
+                                        -
+                                    </span>
+                                    <p
+                                        v-if="
+                                            record.receiptJobStatus === 'failed' &&
+                                            record.receiptJobError
+                                        "
+                                        class="max-w-[16rem] text-xs text-destructive"
+                                    >
+                                        {{ record.receiptJobError }}
+                                    </p>
+                                </div>
                                 <span v-else class="text-sm text-muted-foreground">
                                     -
                                 </span>
@@ -321,6 +366,7 @@ function visitPage(page: number): void {
                                                     Preview
                                                 </DropdownMenuItem>
                                                 <DropdownMenuItem
+                                                    :disabled="receiptMutationDisabled(record)"
                                                     @select="emit('openReceipt', record)"
                                                 >
                                                     <FileText class="size-4" />
@@ -331,6 +377,7 @@ function visitPage(page: number): void {
                                                     }}
                                                 </DropdownMenuItem>
                                                 <DropdownMenuItem
+                                                    :disabled="props.isBatchBusy"
                                                     @select="emit('openSendEmail', record)"
                                                 >
                                                     <Mail class="size-4" />
@@ -341,6 +388,7 @@ function visitPage(page: number): void {
                                                         record.hasReceipt &&
                                                         record.receiptRemoveUrl
                                                     "
+                                                    :disabled="receiptMutationDisabled(record)"
                                                     variant="destructive"
                                                     @select="emit('openRemoveReceipt', record)"
                                                 >
@@ -358,6 +406,7 @@ function visitPage(page: number): void {
                                                     </a>
                                                 </DropdownMenuItem>
                                                 <DropdownMenuItem
+                                                    :disabled="props.isBatchBusy"
                                                     variant="destructive"
                                                     @select="emit('deleteRecord', record)"
                                                 >
@@ -373,6 +422,7 @@ function visitPage(page: number): void {
                                                     View error
                                                 </DropdownMenuItem>
                                                 <DropdownMenuItem
+                                                    :disabled="props.isBatchBusy"
                                                     variant="destructive"
                                                     @select="emit('deleteRecord', record)"
                                                 >

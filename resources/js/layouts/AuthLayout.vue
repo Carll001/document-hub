@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import AuthLayout from '@/layouts/auth/AuthSimpleLayout.vue';
+import AuthLayout from '@/layouts/auth/AuthSplitLayout.vue';
 
 defineProps<{
     title?: string;
@@ -9,6 +9,9 @@ defineProps<{
 
 <template>
     <AuthLayout :title="title" :description="description">
+        <template v-if="$slots.panel" #panel>
+            <slot name="panel" />
+        </template>
         <slot />
     </AuthLayout>
 </template>

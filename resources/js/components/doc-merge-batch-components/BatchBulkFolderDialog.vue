@@ -75,7 +75,8 @@ function handlePageFolderContainerSelection(event: Event): void {
                 <DialogDescription>
                     Add one or more page folders like PAGE 1 and PAGE 2, or
                     import one container folder with page folders inside it.
-                    Matching PDFs will merge into this batch immediately.
+                    Matching PDFs will be queued for this batch and the table
+                    will refresh automatically when processing finishes.
                 </DialogDescription>
             </DialogHeader>
 
@@ -290,8 +291,8 @@ function handlePageFolderContainerSelection(event: Event): void {
                         <Upload v-else class="size-4" />
                         {{
                             props.processing
-                                ? 'Processing folders...'
-                                : 'Bulk merge folders'
+                                ? 'Queueing batch run...'
+                                : 'Queue batch run'
                         }}
                     </Button>
                 </DialogFooter>

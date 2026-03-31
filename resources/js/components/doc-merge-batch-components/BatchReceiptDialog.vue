@@ -47,7 +47,11 @@ const emit = defineEmits<{
         <DialogContent class="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
             <DialogHeader class="space-y-3">
                 <DialogTitle>
-                    {{ props.mergedPdf?.hasReceipt ? 'Replace receipt' : 'Add receipt' }}
+                    {{
+                        props.mergedPdf?.hasReceipt
+                            ? 'Queue receipt update'
+                            : 'Queue receipt'
+                    }}
                 </DialogTitle>
                 <DialogDescription>
                     <template v-if="props.mergedPdf">
@@ -55,12 +59,12 @@ const emit = defineEmits<{
                         <span class="font-medium text-foreground">
                             {{ props.mergedPdf.fileName }}
                         </span>
-                        and append the generated PDF as the final pages of the
-                        saved merged PDF.
+                        and queue the generated PDF to append as the final pages
+                        of the saved merged PDF.
                     </template>
                     <template v-else>
-                        Generate a receipt PDF from the shared template and
-                        append it to the selected merged PDF.
+                        Queue a receipt PDF from the shared template to append
+                        to the selected merged PDF.
                     </template>
                 </DialogDescription>
             </DialogHeader>
@@ -184,10 +188,10 @@ const emit = defineEmits<{
                         <FileText v-else class="size-4" />
                         {{
                             props.processing
-                                ? 'Generating receipt...'
+                                ? 'Queueing receipt...'
                                 : props.mergedPdf?.hasReceipt
-                                  ? 'Replace receipt'
-                                  : 'Add receipt'
+                                  ? 'Queue receipt update'
+                                  : 'Queue receipt'
                         }}
                     </Button>
                 </DialogFooter>

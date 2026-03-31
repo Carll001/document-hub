@@ -4,13 +4,13 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
+use App\Jobs\ProcessDocMergeBatch;
 use App\Models\BulkMergeFailure;
 use App\Models\ConfirmationTemplate;
 use App\Models\DocMergeBatch;
 use App\Models\DocMergeBatchSourceFile;
 use App\Models\MergedPdf;
 use App\Models\User;
-use App\Services\BulkZipMergeService;
 use App\Services\ConfirmationDocxService;
 use App\Services\DocMergeBatchService;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
@@ -134,9 +134,14 @@ class DocMergeBatchController extends Controller
     public function storePageFolders(
         Request $request,
         DocMergeBatch $docMergeBatch,
-        BulkZipMergeService $bulkZipMergeService,
+        DocMergeBatchService $docMergeBatchService,
     ): RedirectResponse {
         abort_unless($docMergeBatch->user->is($request->user()), 404);
+
+        if ($docMergeBatch->isBusy()) {
+            return to_route('doc-merge.batches.show', ['docMergeBatch' => $docMergeBatch])
+                ->with('error', $this->busyBatchErrorMessage());
+        }
 
         $validated = $request->validate([
             'outputPrefix' => ['nullable', 'string', 'max:120'],
@@ -155,24 +160,17 @@ class DocMergeBatchController extends Controller
         ]);
 
         try {
-            $result = $bulkZipMergeService->processPageFolders(
-                $request->user(),
+            $docMergeBatchService->storePageFolders(
+                $docMergeBatch,
                 $validated['pageFolders'],
-                $validated['outputPrefix'] ?? null,
-                batch: $docMergeBatch,
             );
-            $docMergeBatch->forceFill([
-                'last_processed_at' => now(),
-            ])->save();
+            $this->queueBatchProcessing(
+                $docMergeBatch,
+                $validated['outputPrefix'] ?? null,
+            );
 
             return to_route('doc-merge.batches.show', ['docMergeBatch' => $docMergeBatch])
-                ->with(
-                    'success',
-                    $this->bulkMergeSummaryMessage(
-                        $result['mergedCount'],
-                        $result['failedCount'],
-                    ),
-                );
+                ->with('success', 'Batch processing queued. Results will refresh automatically.');
         } catch (ValidationException $exception) {
             throw $exception;
         } catch (\Throwable $exception) {
@@ -189,9 +187,14 @@ class DocMergeBatchController extends Controller
     public function storeZip(
         Request $request,
         DocMergeBatch $docMergeBatch,
-        BulkZipMergeService $bulkZipMergeService,
+        DocMergeBatchService $docMergeBatchService,
     ): RedirectResponse {
         abort_unless($docMergeBatch->user->is($request->user()), 404);
+
+        if ($docMergeBatch->isBusy()) {
+            return to_route('doc-merge.batches.show', ['docMergeBatch' => $docMergeBatch])
+                ->with('error', $this->busyBatchErrorMessage());
+        }
 
         $validated = $request->validate([
             'outputPrefix' => ['nullable', 'string', 'max:120'],
@@ -205,24 +208,17 @@ class DocMergeBatchController extends Controller
         $zip = $validated['zip'];
 
         try {
-            $result = $bulkZipMergeService->processZip(
-                $request->user(),
+            $docMergeBatchService->storeZip(
+                $docMergeBatch,
                 $zip,
-                $validated['outputPrefix'] ?? null,
-                batch: $docMergeBatch,
             );
-            $docMergeBatch->forceFill([
-                'last_processed_at' => now(),
-            ])->save();
+            $this->queueBatchProcessing(
+                $docMergeBatch,
+                $validated['outputPrefix'] ?? null,
+            );
 
             return to_route('doc-merge.batches.show', ['docMergeBatch' => $docMergeBatch])
-                ->with(
-                    'success',
-                    $this->bulkMergeSummaryMessage(
-                        $result['mergedCount'],
-                        $result['failedCount'],
-                    ),
-                );
+                ->with('success', 'Batch processing queued. Results will refresh automatically.');
         } catch (ValidationException $exception) {
             throw $exception;
         } catch (\Throwable $exception) {
@@ -245,6 +241,11 @@ class DocMergeBatchController extends Controller
         abort_unless($docMergeBatch->user->is($request->user()), 404);
         abort_unless($sourceFile->doc_merge_batch_id === $docMergeBatch->id, 404);
 
+        if ($docMergeBatch->isBusy()) {
+            return to_route('doc-merge.batches.show', ['docMergeBatch' => $docMergeBatch])
+                ->with('error', $this->busyBatchErrorMessage());
+        }
+
         $displayName = $sourceFile->display_name;
 
         $docMergeBatchService->removeSourceFile($sourceFile);
@@ -264,6 +265,11 @@ class DocMergeBatchController extends Controller
     ): RedirectResponse {
         abort_unless($docMergeBatch->user->is($request->user()), 404);
 
+        if ($docMergeBatch->isBusy()) {
+            return to_route('doc-merge.batches.show', ['docMergeBatch' => $docMergeBatch])
+                ->with('error', $this->busyBatchErrorMessage());
+        }
+
         $pageFolderName = $docMergeBatch->sourceFiles()
             ->where('page_folder_number', $pageFolderNumber)
             ->value('page_folder_name');
@@ -282,36 +288,19 @@ class DocMergeBatchController extends Controller
     public function process(
         Request $request,
         DocMergeBatch $docMergeBatch,
-        DocMergeBatchService $docMergeBatchService,
     ): RedirectResponse {
         abort_unless($docMergeBatch->user->is($request->user()), 404);
 
+        if ($docMergeBatch->isBusy()) {
+            return to_route('doc-merge.batches.show', ['docMergeBatch' => $docMergeBatch])
+                ->with('error', $this->busyBatchErrorMessage());
+        }
+
         try {
-            $result = $docMergeBatchService->processBatch($docMergeBatch);
+            $this->queueBatchProcessing($docMergeBatch, null);
 
             return to_route('doc-merge.batches.show', ['docMergeBatch' => $docMergeBatch])
-                ->with(
-                    'success',
-                    sprintf(
-                        '%d %s merged, %d %s failed.',
-                        $result['mergedCount'],
-                        $result['mergedCount'] === 1 ? 'PDF' : 'PDFs',
-                        $result['failedCount'],
-                        $result['failedCount'] === 1 ? 'PDF' : 'PDFs',
-                    ),
-                );
-        } catch (ValidationException $exception) {
-            $message = collect($exception->errors())
-                ->flatten()
-                ->first();
-
-            return to_route('doc-merge.batches.show', ['docMergeBatch' => $docMergeBatch])
-                ->with(
-                    'error',
-                    is_string($message) && $message !== ''
-                        ? $message
-                        : 'The batch could not be processed right now.',
-                );
+                ->with('success', 'Batch processing queued. Results will refresh automatically.');
         } catch (\Throwable $exception) {
             report($exception);
 
@@ -339,6 +328,11 @@ class DocMergeBatchController extends Controller
     public function destroy(Request $request, DocMergeBatch $docMergeBatch): RedirectResponse
     {
         abort_unless($docMergeBatch->user->is($request->user()), 404);
+
+        if ($docMergeBatch->isBusy()) {
+            return to_route('doc-merge.batches.show', ['docMergeBatch' => $docMergeBatch])
+                ->with('error', $this->busyBatchErrorMessage());
+        }
 
         $batchName = $docMergeBatch->name;
         $docMergeBatch->delete();
@@ -465,6 +459,8 @@ class DocMergeBatchController extends Controller
             'mergedCount' => (int) ($batch->merged_pdfs_count ?? $batch->mergedPdfs()->count()),
             'failedCount' => (int) ($batch->bulk_merge_failures_count ?? $batch->bulkMergeFailures()->count()),
             'lastProcessedAt' => $batch->last_processed_at?->toIso8601String(),
+            'processingStatus' => $batch->processing_status,
+            'processingError' => $batch->processing_error,
             'showUrl' => route('doc-merge.batches.show', ['docMergeBatch' => $batch]),
             'downloadUrl' => route('doc-merge.batches.download', ['docMergeBatch' => $batch]),
             'deleteUrl' => route('doc-merge.batches.destroy', ['docMergeBatch' => $batch]),
@@ -490,6 +486,8 @@ class DocMergeBatchController extends Controller
             'hasReceipt' => filled($mergedPdf->receipt_storage_path),
             'receiptFileName' => $mergedPdf->receipt_file_name,
             'receiptFileSize' => $mergedPdf->receipt_file_size,
+            'receiptJobStatus' => $mergedPdf->receipt_job_status,
+            'receiptJobError' => $mergedPdf->receipt_job_error,
             'createdAt' => $mergedPdf->created_at?->toIso8601String(),
             'downloadUrl' => route('doc-merge.download', ['mergedPdf' => $mergedPdf]),
             'previewUrl' => route('doc-merge.preview', [
@@ -610,5 +608,34 @@ class DocMergeBatchController extends Controller
             $failedCount,
             $failedCount === 1 ? 'PDF' : 'PDFs',
         );
+    }
+
+    private function queueBatchProcessing(
+        DocMergeBatch $docMergeBatch,
+        ?string $outputPrefix,
+    ): void {
+        $docMergeBatch->forceFill([
+            'processing_status' => DocMergeBatch::PROCESSING_STATUS_QUEUED,
+            'processing_error' => null,
+        ])->save();
+
+        try {
+            ProcessDocMergeBatch::dispatch(
+                $docMergeBatch->getKey(),
+                $outputPrefix,
+            )->afterCommit();
+        } catch (\Throwable $exception) {
+            $docMergeBatch->forceFill([
+                'processing_status' => null,
+                'processing_error' => null,
+            ])->save();
+
+            throw $exception;
+        }
+    }
+
+    private function busyBatchErrorMessage(): string
+    {
+        return 'This batch is already queued or processing. Wait for it to finish before making more changes.';
     }
 }

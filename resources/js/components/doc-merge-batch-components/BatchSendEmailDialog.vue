@@ -43,7 +43,7 @@ const emit = defineEmits<{
             <DialogHeader class="space-y-3">
                 <DialogTitle>Send to email</DialogTitle>
                 <DialogDescription>
-                    Send {{ props.fileName }} as an attachment.
+                    Queue {{ props.fileName }} to send as an attachment.
                 </DialogDescription>
             </DialogHeader>
 
@@ -112,7 +112,7 @@ const emit = defineEmits<{
                             class="size-4 animate-spin"
                         />
                         <Mail v-else class="size-4" />
-                        {{ props.processing ? 'Sending email...' : 'Send email' }}
+                        {{ props.processing ? 'Queueing email...' : 'Queue email' }}
                     </Button>
                 </DialogFooter>
             </form>

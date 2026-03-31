@@ -17,7 +17,11 @@ import {
     CardTitle,
 } from '@/components/ui/card';
 import type { BatchDetail } from '@/components/doc-merge-batch-components/types';
-import { formatDateTime } from '@/components/doc-merge-batch-components/utils';
+import {
+    batchProcessingIsActive,
+    batchProcessingStatusLabel,
+    formatDateTime,
+} from '@/components/doc-merge-batch-components/utils';
 import docMerge from '@/routes/doc-merge';
 
 const props = defineProps<{
@@ -49,6 +53,7 @@ const emit = defineEmits<{
             variant="outline"
             size="sm"
             class="gap-2 text-xs"
+            :disabled="batchProcessingIsActive(props.batch.processingStatus)"
             @click="emit('openBulkFolder')"
         >
             <Upload class="size-4" />
@@ -59,6 +64,7 @@ const emit = defineEmits<{
             variant="outline"
             size="sm"
             class="gap-2 text-xs"
+            :disabled="batchProcessingIsActive(props.batch.processingStatus)"
             @click="emit('openBulkZip')"
         >
             <Upload class="size-4" />
@@ -75,7 +81,10 @@ const emit = defineEmits<{
             variant="destructive"
             size="sm"
             class="gap-2 text-xs"
-            :disabled="props.deleteBatchProcessing"
+            :disabled="
+                props.deleteBatchProcessing ||
+                batchProcessingIsActive(props.batch.processingStatus)
+            "
             @click="emit('openDeleteBatch')"
         >
             <Trash2 class="size-4" />
@@ -114,17 +123,59 @@ const emit = defineEmits<{
                     <Badge variant="outline">
                         {{ props.batch.failedCount }} failed
                     </Badge>
+                    <Badge
+                        v-if="props.batch.processingStatus"
+                        :variant="
+                            props.batch.processingStatus === 'failed'
+                                ? 'destructive'
+                                : 'outline'
+                        "
+                        :class="
+                            props.batch.processingStatus === 'queued'
+                                ? 'border-amber-200 bg-amber-50 text-amber-700'
+                                : props.batch.processingStatus === 'processing'
+                                  ? 'border-sky-200 bg-sky-50 text-sky-700'
+                                  : undefined
+                        "
+                    >
+                        {{
+                            batchProcessingStatusLabel(
+                                props.batch.processingStatus,
+                            )
+                        }}
+                    </Badge>
                 </div>
             </div>
         </CardHeader>
 
-        <CardContent>
+        <CardContent class="space-y-2">
             <p class="text-sm text-muted-foreground">
                 Last processed:
                 {{
                     props.batch.lastProcessedAt
                         ? formatDateTime(props.batch.lastProcessedAt)
                         : 'Not processed yet'
+                }}
+            </p>
+            <p
+                v-if="props.batch.processingStatus === 'queued'"
+                class="text-sm text-muted-foreground"
+            >
+                This batch is queued and will refresh automatically.
+            </p>
+            <p
+                v-else-if="props.batch.processingStatus === 'processing'"
+                class="text-sm text-muted-foreground"
+            >
+                This batch is processing and results will refresh automatically.
+            </p>
+            <p
+                v-else-if="props.batch.processingStatus === 'failed'"
+                class="text-sm text-destructive"
+            >
+                {{
+                    props.batch.processingError ??
+                    'The latest batch run failed. Please try again.'
                 }}
             </p>
         </CardContent>

@@ -1,5 +1,16 @@
 <?php
 
+// Symfony's SMTP transport expects "smtp" or "smtps", while older Laravel
+// env files often use legacy "tls" / "ssl" values.
+$mailPort = env('MAIL_PORT', 2525);
+$mailScheme = strtolower(trim((string) env('MAIL_SCHEME', env('MAIL_ENCRYPTION', ''))));
+$mailScheme = match ($mailScheme) {
+    '' => null,
+    'ssl' => (int) $mailPort === 465 ? 'smtps' : 'smtp',
+    'tls', 'starttls' => 'smtp',
+    default => $mailScheme,
+};
+
 return [
 
     /*
@@ -39,10 +50,10 @@ return [
 
         'smtp' => [
             'transport' => 'smtp',
-            'scheme' => env('MAIL_SCHEME'),
+            'scheme' => $mailScheme,
             'url' => env('MAIL_URL'),
             'host' => env('MAIL_HOST', '127.0.0.1'),
-            'port' => env('MAIL_PORT', 2525),
+            'port' => $mailPort,
             'username' => env('MAIL_USERNAME'),
             'password' => env('MAIL_PASSWORD'),
             'timeout' => null,
