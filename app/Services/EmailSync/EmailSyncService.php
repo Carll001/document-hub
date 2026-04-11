@@ -4,6 +4,7 @@ namespace App\Services\EmailSync;
 
 use App\Models\SyncedEmail;
 use App\Models\User;
+use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -13,12 +14,10 @@ class EmailSyncService
 {
     public const INITIAL_SYNC_LIMIT = 25;
 
-    /**
-     * @var list<int>
-     */
-    public const BACKFILL_PRESET_LIMITS = [10, 20, 30];
-
-    public const BACKFILL_CUSTOM_MAX = 500;
+    public function __construct(
+        private readonly BirReceiptAutoMatchService $birReceiptAutoMatchService,
+    ) {
+    }
 
     /**
      * Incrementally sync newer Gmail inbox messages into the local database.
@@ -52,23 +51,17 @@ class EmailSyncService
      *
      * @return array{fetched: int, created: int, updated: int, mailbox: string}
      */
-    public function backfill(User $user, ?int $limit): array
+    public function backfill(User $user, CarbonImmutable $startDate): array
     {
         $config = $this->configuration();
         $mailbox = $config['mailbox'];
-        $oldestSyncedUid = $this->oldestSyncedUid($user, $mailbox);
-
-        if ($oldestSyncedUid === null) {
-            throw new RuntimeException('Sync inbox now first before importing older mail.');
-        }
-
         $client = $this->makeClient($config);
 
         try {
             $client->connect();
             $client->selectMailbox($mailbox);
 
-            $uids = $client->olderUidsBefore($oldestSyncedUid, $limit ?? 0);
+            $uids = $client->uidsReceivedSince($startDate->startOfDay());
 
             return $this->syncUids($user, $mailbox, $client, $uids);
         } finally {
@@ -144,6 +137,7 @@ class EmailSyncService
             }
 
             $this->syncAttachments($email, $message['attachments']);
+            $this->birReceiptAutoMatchService->syncEmail($email);
         }
 
         return [
@@ -161,18 +155,6 @@ class EmailSyncService
     {
         $imapUid = $this->mailboxQuery($user, $mailbox)
             ->orderByRaw('CAST(imap_uid AS BIGINT) DESC')
-            ->value('imap_uid');
-
-        return $imapUid !== null ? (int) $imapUid : null;
-    }
-
-    /**
-     * Get the oldest synced IMAP UID for the user and mailbox.
-     */
-    private function oldestSyncedUid(User $user, string $mailbox): ?int
-    {
-        $imapUid = $this->mailboxQuery($user, $mailbox)
-            ->orderByRaw('CAST(imap_uid AS BIGINT)')
             ->value('imap_uid');
 
         return $imapUid !== null ? (int) $imapUid : null;

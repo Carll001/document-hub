@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Models\Form1702ExBatchRow;
 use App\Models\MergedPdf;
 use App\Models\DocMergeBatch;
 use App\Models\User;
@@ -217,6 +218,58 @@ class PdfMergeService
     }
 
     /**
+     * Append or replace the receipt pages on an existing 1702-EX row PDF.
+     */
+    public function attachForm1702ExReceipt(Form1702ExBatchRow $row, string $receiptPath): void
+    {
+        $disk = Storage::disk('local');
+        $generatedPdfPath = (string) ($row->generated_pdf_storage_path ?? '');
+
+        if ($generatedPdfPath === '' || ! $disk->exists($generatedPdfPath)) {
+            throw new RuntimeException('The saved 1702-EX PDF is no longer available.');
+        }
+
+        $baseStoragePath = $this->ensureForm1702ExReceiptBaseExists($disk, $row);
+        $temporaryMergedOutputPath = storage_path('app/tmp/form-1702-ex-receipt-'.Str::uuid().'.pdf');
+        $temporaryReceiptPdfPath = null;
+
+        try {
+            $temporaryReceiptPdfPath = $this->normalizeReceiptSource($receiptPath);
+
+            $this->writeMergedPdf([
+                [
+                    'path' => $disk->path($baseStoragePath),
+                    'displayName' => (string) ($row->generated_pdf_file_name ?? '1702-ex.pdf'),
+                ],
+                [
+                    'path' => $temporaryReceiptPdfPath,
+                    'displayName' => basename($receiptPath),
+                ],
+            ], $temporaryMergedOutputPath);
+
+            $this->storePdfFromPath(
+                $disk,
+                $generatedPdfPath,
+                $temporaryMergedOutputPath,
+                'The updated 1702-EX PDF could not be stored.',
+            );
+        } catch (\Throwable $exception) {
+            throw new RuntimeException(
+                'The receipt could not be appended to the 1702-EX PDF.',
+                previous: $exception,
+            );
+        } finally {
+            if ($temporaryReceiptPdfPath !== null && $temporaryReceiptPdfPath !== $receiptPath && is_file($temporaryReceiptPdfPath)) {
+                @unlink($temporaryReceiptPdfPath);
+            }
+
+            if (is_file($temporaryMergedOutputPath)) {
+                @unlink($temporaryMergedOutputPath);
+            }
+        }
+    }
+
+    /**
      * Remove the receipt pages from an existing merged PDF and restore its base copy.
      */
     public function removeReceipt(MergedPdf $mergedPdf): void
@@ -261,6 +314,31 @@ class PdfMergeService
                 @unlink($temporaryVisibleOutputPath);
             }
         }
+    }
+
+    /**
+     * Remove the receipt pages from an existing 1702-EX row PDF and restore its base copy.
+     */
+    public function removeForm1702ExReceipt(Form1702ExBatchRow $row): void
+    {
+        $disk = Storage::disk('local');
+        $generatedPdfPath = (string) ($row->generated_pdf_storage_path ?? '');
+        $baseStoragePath = $row->receiptBaseStoragePath();
+
+        if ($generatedPdfPath === '' || ! $disk->exists($generatedPdfPath)) {
+            throw new RuntimeException('The saved 1702-EX PDF is no longer available.');
+        }
+
+        if (! $disk->exists($baseStoragePath)) {
+            throw new RuntimeException('The original 1702-EX PDF could not be restored.');
+        }
+
+        $this->storePdfFromPath(
+            $disk,
+            $generatedPdfPath,
+            $disk->path($baseStoragePath),
+            'The original 1702-EX PDF could not be restored.',
+        );
     }
 
     /**
@@ -564,6 +642,33 @@ class PdfMergeService
             || ! $disk->exists($baseStoragePath)
         ) {
             throw new RuntimeException('The saved PDF could not be prepared for receipt updates.');
+        }
+
+        return $baseStoragePath;
+    }
+
+    private function ensureForm1702ExReceiptBaseExists(
+        FilesystemAdapter $disk,
+        Form1702ExBatchRow $row,
+    ): string {
+        $generatedPdfPath = (string) ($row->generated_pdf_storage_path ?? '');
+        $baseStoragePath = $row->receiptBaseStoragePath();
+
+        if ($generatedPdfPath === '' || ! $disk->exists($generatedPdfPath)) {
+            throw new RuntimeException('The saved 1702-EX PDF is no longer available.');
+        }
+
+        if ($disk->exists($baseStoragePath)) {
+            return $baseStoragePath;
+        }
+
+        $disk->makeDirectory(dirname($baseStoragePath));
+
+        if (
+            ! $disk->copy($generatedPdfPath, $baseStoragePath)
+            || ! $disk->exists($baseStoragePath)
+        ) {
+            throw new RuntimeException('The 1702-EX PDF could not be prepared for receipt updates.');
         }
 
         return $baseStoragePath;

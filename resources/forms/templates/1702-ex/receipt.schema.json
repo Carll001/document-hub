@@ -1,0 +1,50 @@
+{
+  "page": {
+    "width": 595.32,
+    "height": 841.92
+  },
+  "fields": [
+    {
+      "section": "Receipt Details",
+      "key": "file_name",
+      "label": "File name",
+      "type": "text",
+      "x": 0.2100,
+      "y": 0.2420,
+      "width": 0.5600,
+      "height": 0.0130,
+      "fontFamily": "Arial",
+      "fontSize": 11,
+      "align": "left",
+      "formatter": null
+    },
+    {
+      "section": "Receipt Details",
+      "key": "date_received_by_bir",
+      "label": "Date received by BIR",
+      "type": "text",
+      "x": 0.3030,
+      "y": 0.2580,
+      "width": 0.3600,
+      "height": 0.0130,
+      "fontFamily": "Arial",
+      "fontSize": 10,
+      "align": "left",
+      "formatter": null
+    },
+    {
+      "section": "Receipt Details",
+      "key": "time_received_by_bir",
+      "label": "Time received by BIR",
+      "type": "text",
+      "x": 0.3040,
+      "y": 0.2745,
+      "width": 0.2400,
+      "height": 0.0130,
+      "fontFamily": "Arial",
+      "fontSize": 10,
+      "align": "left",
+      "formatter": null
+    }
+  ]
+}

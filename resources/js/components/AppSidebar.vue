@@ -4,6 +4,7 @@ import {
     BookOpen,
     Files,
     FolderGit2,
+    FileSpreadsheet,
     LayoutGrid,
     Mail,
     Users,
@@ -25,6 +26,7 @@ import {
 import { dashboard } from '@/routes';
 import docMerge from '@/routes/doc-merge';
 import emailSync from '@/routes/email-sync';
+import forms from '@/routes/forms';
 import type { Auth, NavItem } from '@/types';
 
 const page = usePage<{ auth: Auth }>();
@@ -53,6 +55,11 @@ const mainNavItems = computed<NavItem[]>(() => {
             title: 'Email Sync',
             href: emailSync.index(),
             icon: Mail,
+        },
+        {
+            title: '1702-EX',
+            href: forms['1702Ex'].index(),
+            icon: FileSpreadsheet,
         },
         {
             title: 'Doc Merge',

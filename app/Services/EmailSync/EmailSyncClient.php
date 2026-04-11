@@ -38,6 +38,13 @@ interface EmailSyncClient
     public function olderUidsBefore(int $uid, int $limit = 0): array;
 
     /**
+     * Return UIDs with received dates on or after the given date.
+     *
+     * @return list<int>
+     */
+    public function uidsReceivedSince(CarbonImmutable $date): array;
+
+    /**
      * Fetch message metadata and content for the given IMAP UID.
      *
      * @return array{

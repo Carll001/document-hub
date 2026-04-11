@@ -10,7 +10,6 @@ use App\Services\EmailSync\EmailSyncService;
 use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Storage;
-use RuntimeException;
 use Tests\TestCase;
 
 class EmailSyncServiceTest extends TestCase
@@ -105,26 +104,12 @@ class EmailSyncServiceTest extends TestCase
         ]);
     }
 
-    public function test_backfill_imports_older_emails_before_the_oldest_saved_uid()
+    public function test_backfill_imports_emails_received_on_or_after_the_selected_date()
     {
         $user = User::factory()->create();
 
-        SyncedEmail::query()->create([
-            'user_id' => $user->id,
-            'mailbox' => 'INBOX',
-            'imap_uid' => '200',
-            'message_id' => '<message-200@example.com>',
-            'from_name' => 'Support Team',
-            'from_email' => 'support@example.com',
-            'subject' => 'Existing oldest message',
-            'body_preview' => 'Existing preview',
-            'body_text' => 'Existing body',
-            'received_at' => now()->subMinutes(30),
-            'synced_at' => now(),
-        ]);
-
         $client = new FakeEmailSyncClient(
-            olderUids: [150, 151],
+            receivedSinceUids: [150, 151],
             messages: [
                 150 => $this->messagePayload(150),
                 151 => $this->messagePayload(151),
@@ -132,27 +117,35 @@ class EmailSyncServiceTest extends TestCase
         );
 
         $service = $this->makeServiceWithClient($client);
+        $startDate = CarbonImmutable::parse('2026-01-01');
 
-        $result = $service->backfill($user, 10);
+        $result = $service->backfill($user, $startDate);
 
-        $this->assertTrue($client->wasCalled('olderUidsBefore', [200, 10]));
+        $this->assertTrue($client->wasCalled('uidsReceivedSince', [$startDate->startOfDay()]));
         $this->assertSame(2, $result['created']);
-        $this->assertDatabaseCount('synced_emails', 3);
+        $this->assertDatabaseCount('synced_emails', 2);
         $this->assertDatabaseHas('synced_emails', [
             'user_id' => $user->id,
             'imap_uid' => '150',
         ]);
     }
 
-    public function test_backfill_requires_an_existing_sync_anchor()
+    public function test_backfill_allows_a_date_import_even_without_a_previous_sync_anchor()
     {
         $user = User::factory()->create();
-        $service = $this->makeServiceWithClient(new FakeEmailSyncClient);
+        $startDate = CarbonImmutable::parse('2026-01-01');
+        $client = new FakeEmailSyncClient(receivedSinceUids: []);
+        $service = $this->makeServiceWithClient($client);
 
-        $this->expectException(RuntimeException::class);
-        $this->expectExceptionMessage('Sync inbox now first before importing older mail.');
+        $result = $service->backfill($user, $startDate);
 
-        $service->backfill($user, null);
+        $this->assertSame([
+            'fetched' => 0,
+            'created' => 0,
+            'updated' => 0,
+            'mailbox' => 'INBOX',
+        ], $result);
+        $this->assertTrue($client->wasCalled('uidsReceivedSince', [$startDate->startOfDay()]));
     }
 
     /**
@@ -238,6 +231,7 @@ class FakeEmailSyncClient implements EmailSyncClient
      * @param  list<int>  $latestUids
      * @param  list<int>  $newerUids
      * @param  list<int>  $olderUids
+     * @param  list<int>  $receivedSinceUids
      * @param  array<int, array{
      *     imap_uid: string,
      *     message_id: string,
@@ -261,6 +255,7 @@ class FakeEmailSyncClient implements EmailSyncClient
         private readonly array $latestUids = [],
         private readonly array $newerUids = [],
         private readonly array $olderUids = [],
+        private readonly array $receivedSinceUids = [],
         private readonly array $messages = [],
     ) {}
 
@@ -293,6 +288,13 @@ class FakeEmailSyncClient implements EmailSyncClient
         $this->calls[] = ['olderUidsBefore', $uid, $limit];
 
         return $this->olderUids;
+    }
+
+    public function uidsReceivedSince(CarbonImmutable $date): array
+    {
+        $this->calls[] = ['uidsReceivedSince', $date];
+
+        return $this->receivedSinceUids;
     }
 
     public function fetchMessage(int $uid): array

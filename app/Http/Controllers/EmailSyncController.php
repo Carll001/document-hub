@@ -4,8 +4,10 @@ namespace App\Http\Controllers;
 
 use App\Models\SyncedEmail;
 use App\Models\SyncedEmailAttachment;
+use App\Services\EmailSync\BirReceiptAutoMatchService;
 use App\Services\EmailSync\EmailHtmlRenderer;
 use App\Services\EmailSync\EmailSyncService;
+use Carbon\CarbonImmutable;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -13,7 +15,6 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Response as HttpResponse;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Storage;
-use Illuminate\Validation\Rule;
 use Inertia\Inertia;
 use Inertia\Response;
 use RuntimeException;
@@ -28,8 +29,23 @@ class EmailSyncController extends Controller
      */
     public function index(Request $request): Response
     {
+        $validated = $request->validate([
+            'page' => ['nullable', 'integer', 'min:1'],
+            'appliedPage' => ['nullable', 'integer', 'min:1'],
+            'search' => ['nullable', 'string', 'max:120'],
+        ]);
+
         $user = $request->user();
-        $emailPage = $this->emailPage($user, 1);
+        $search = isset($validated['search']) ? trim((string) $validated['search']) : '';
+        $emailPage = $this->birReceiptPage(
+            $user,
+            (int) ($validated['page'] ?? 1),
+            $search,
+        );
+        $appliedPage = $this->appliedBirReceiptPage(
+            $user,
+            (int) ($validated['appliedPage'] ?? 1),
+        );
         $latestSyncedEmail = SyncedEmail::query()
             ->whereBelongsTo($user)
             ->latest('synced_at')
@@ -54,19 +70,27 @@ class EmailSyncController extends Controller
                 'syncResult' => $request->session()->get('syncResult'),
             ],
             'stats' => [
-                'totalStored' => $emailPage->total(),
+                'totalStored' => SyncedEmail::query()
+                    ->whereBelongsTo($user)
+                    ->count(),
                 'latestSyncedAt' => $latestSyncedEmail?->synced_at?->toIso8601String(),
             ],
-            'backfill' => [
-                'presets' => EmailSyncService::BACKFILL_PRESET_LIMITS,
-                'customMax' => EmailSyncService::BACKFILL_CUSTOM_MAX,
+            'emails' => $this->transformEmails(collect($emailPage->items())),
+            'pagination' => $this->paginationPayload($emailPage),
+            'appliedEmails' => $this->transformEmails(collect($appliedPage->items())),
+            'appliedPagination' => $this->paginationPayload($appliedPage),
+            'receiptCounts' => [
+                'unmatched' => $this->birReceiptQuery($user, false, $search)->count(),
+                'applied' => $this->birReceiptQuery($user, true)->count(),
             ],
-            ...$this->emailPagePayload($emailPage),
+            'filters' => [
+                'search' => $search,
+            ],
         ]);
     }
 
     /**
-     * Return the next page of stored emails for the inbox view.
+     * Return the next page of stored emails for the legacy inbox endpoint.
      */
     public function emails(Request $request): JsonResponse
     {
@@ -77,7 +101,7 @@ class EmailSyncController extends Controller
         $page = (int) ($validated['cursor'] ?? 1);
 
         return response()->json(
-            $this->emailPagePayload(
+            $this->legacyEmailPagePayload(
                 $this->emailPage($request->user(), $page),
             ),
         );
@@ -182,28 +206,14 @@ class EmailSyncController extends Controller
     public function backfill(Request $request, EmailSyncService $service): RedirectResponse
     {
         $validated = $request->validate([
-            'mode' => ['required', Rule::in([
-                'all',
-                ...array_map(static fn (int $limit): string => (string) $limit, EmailSyncService::BACKFILL_PRESET_LIMITS),
-                'custom',
-            ])],
-            'customLimit' => [
-                Rule::requiredIf($request->input('mode') === 'custom'),
-                'nullable',
-                'integer',
-                'min:1',
-                'max:'.EmailSyncService::BACKFILL_CUSTOM_MAX,
-            ],
+            'startDate' => ['required', 'date_format:Y-m-d'],
         ]);
 
-        $limit = match ($validated['mode']) {
-            'all' => null,
-            'custom' => (int) $validated['customLimit'],
-            default => (int) $validated['mode'],
-        };
-
         try {
-            $result = $service->backfill($request->user(), $limit);
+            $result = $service->backfill(
+                $request->user(),
+                CarbonImmutable::createFromFormat('Y-m-d', $validated['startDate'])->startOfDay(),
+            );
 
             return to_route('email-sync.index')
                 ->with('success', 'Older email import completed successfully.')
@@ -222,7 +232,7 @@ class EmailSyncController extends Controller
     }
 
     /**
-     * Build the paginated stored-email query for the inbox view.
+     * Build the paginated stored-email query for the legacy inbox view.
      */
     private function emailPage($user, int $page): LengthAwarePaginator
     {
@@ -236,9 +246,61 @@ class EmailSyncController extends Controller
             ->paginate(self::EMAILS_PER_PAGE, ['*'], 'page', $page);
     }
 
+    private function birReceiptPage($user, int $page, string $search): LengthAwarePaginator
+    {
+        return $this->birReceiptQuery($user, false, $search)
+            ->orderByRaw(
+                'CASE WHEN received_at IS NULL OR received_at > synced_at THEN synced_at ELSE received_at END DESC',
+            )
+            ->orderByDesc('id')
+            ->paginate(self::EMAILS_PER_PAGE, ['*'], 'page', $page)
+            ->withQueryString();
+    }
+
+    private function appliedBirReceiptPage($user, int $page): LengthAwarePaginator
+    {
+        return $this->birReceiptQuery($user, true)
+            ->orderByDesc('bir_receipt_applied_at')
+            ->orderByDesc('id')
+            ->paginate(self::EMAILS_PER_PAGE, ['*'], 'appliedPage', $page)
+            ->withQueryString();
+    }
+
+    private function birReceiptQuery($user, bool $applied, string $search = '')
+    {
+        $query = SyncedEmail::query()
+            ->whereBelongsTo($user)
+            ->with('attachments');
+
+        if ($applied) {
+            $query->where('bir_receipt_match_status', BirReceiptAutoMatchService::MATCH_STATUS_APPLIED);
+        } else {
+            $query
+                ->whereNotNull('bir_receipt_match_status')
+                ->where('bir_receipt_match_status', '!=', BirReceiptAutoMatchService::MATCH_STATUS_APPLIED)
+                ->where('bir_receipt_match_status', '!=', BirReceiptAutoMatchService::MATCH_STATUS_NO_DETAILS);
+        }
+
+        $search = trim($search);
+
+        if ($search !== '') {
+            $like = '%'.$search.'%';
+
+            $query->where(function ($searchQuery) use ($like): void {
+                $searchQuery
+                    ->where('bir_receipt_tin', 'like', $like)
+                    ->orWhere('bir_receipt_file_name', 'like', $like)
+                    ->orWhere('bir_receipt_date_received_by_bir', 'like', $like)
+                    ->orWhere('bir_receipt_time_received_by_bir', 'like', $like)
+                    ->orWhere('bir_receipt_match_status', 'like', $like)
+                    ->orWhere('bir_receipt_match_error', 'like', $like);
+            });
+        }
+
+        return $query;
+    }
+
     /**
-     * Convert the paginated email page into an Inertia/JSON payload.
-     *
      * @param  LengthAwarePaginator<int, SyncedEmail>  $emailPage
      * @return array{
      *     emails: array<int, array<string, mixed>>,
@@ -246,7 +308,7 @@ class EmailSyncController extends Controller
      *     nextCursor: string|null
      * }
      */
-    private function emailPagePayload(LengthAwarePaginator $emailPage): array
+    private function legacyEmailPagePayload(LengthAwarePaginator $emailPage): array
     {
         return [
             'emails' => $this->transformEmails(collect($emailPage->items())),
@@ -258,8 +320,6 @@ class EmailSyncController extends Controller
     }
 
     /**
-     * Convert synced email models into frontend payloads.
-     *
      * @param  Collection<int, SyncedEmail>  $emails
      * @return array<int, array<string, mixed>>
      */
@@ -293,8 +353,39 @@ class EmailSyncController extends Controller
                 ])->all(),
                 'receivedAt' => $email->received_at?->toIso8601String(),
                 'syncedAt' => $email->synced_at?->toIso8601String(),
+                'matchedTin' => $email->bir_receipt_tin,
+                'matchStatus' => $email->bir_receipt_match_status,
+                'matchError' => $email->bir_receipt_match_error,
+                'parsedBirReceiptDetails' => [
+                    'fileName' => $email->bir_receipt_file_name,
+                    'dateReceived' => $email->bir_receipt_date_received_by_bir,
+                    'timeReceived' => $email->bir_receipt_time_received_by_bir,
+                ],
             ];
         })->all();
+    }
+
+    /**
+     * @param  LengthAwarePaginator<int, SyncedEmail>  $page
+     * @return array{
+     *     currentPage: int,
+     *     lastPage: int,
+     *     perPage: int,
+     *     total: int,
+     *     from: int|null,
+     *     to: int|null
+     * }
+     */
+    private function paginationPayload(LengthAwarePaginator $page): array
+    {
+        return [
+            'currentPage' => $page->currentPage(),
+            'lastPage' => $page->lastPage(),
+            'perPage' => $page->perPage(),
+            'total' => $page->total(),
+            'from' => $page->firstItem(),
+            'to' => $page->lastItem(),
+        ];
     }
 
     /**

@@ -305,3 +305,24 @@ export function emptyBodyMessage(email: EmailRecord): string {
 
     return 'No message body was extracted for this email yet.';
 }
+
+export function emailMatchStatusLabel(status: EmailRecord['matchStatus']): string {
+    switch (status) {
+        case 'no_details':
+            return 'No receipt details';
+        case 'no_tin':
+            return 'No TIN found';
+        case 'unmatched':
+            return 'Unmatched';
+        case 'pending_pdf':
+            return 'Waiting for PDF';
+        case 'queued':
+            return 'Queued';
+        case 'applied':
+            return 'Applied';
+        case 'failed':
+            return 'Failed';
+        default:
+            return 'Unknown';
+    }
+}

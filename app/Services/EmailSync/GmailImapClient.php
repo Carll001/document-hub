@@ -3,6 +3,7 @@
 namespace App\Services\EmailSync;
 
 use Carbon\CarbonImmutable;
+use Carbon\CarbonInterface;
 use RuntimeException;
 
 class GmailImapClient implements EmailSyncClient
@@ -137,6 +138,19 @@ class GmailImapClient implements EmailSyncClient
         }
 
         return array_slice($uids, $limit * -1);
+    }
+
+    /**
+     * Return UIDs with received dates on or after the given date.
+     *
+     * @return list<int>
+     */
+    public function uidsReceivedSince(CarbonImmutable $date): array
+    {
+        return $this->searchUids(sprintf(
+            'SINCE %s',
+            $this->imapDate($date),
+        ));
     }
 
     /**
@@ -361,6 +375,11 @@ class GmailImapClient implements EmailSyncClient
         $start = $matches[0][1] + strlen($matches[0][0]);
 
         return substr($response, $start, $literalLength);
+    }
+
+    private function imapDate(CarbonInterface $date): string
+    {
+        return $date->utc()->format('d-M-Y');
     }
 
     /**

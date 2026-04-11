@@ -20,6 +20,22 @@ export type EmailRecord = {
     attachments: EmailAttachment[];
     receivedAt: string | null;
     syncedAt: string | null;
+    matchedTin: string | null;
+    matchStatus:
+        | 'no_details'
+        | 'no_tin'
+        | 'unmatched'
+        | 'pending_pdf'
+        | 'queued'
+        | 'applied'
+        | 'failed'
+        | null;
+    matchError: string | null;
+    parsedBirReceiptDetails: {
+        fileName: string | null;
+        dateReceived: string | null;
+        timeReceived: string | null;
+    };
 };
 
 export type SyncResult = {
@@ -42,11 +58,6 @@ export type ConnectionState = {
     smtpScheme: string | null;
 };
 
-export type BackfillState = {
-    presets: number[];
-    customMax: number;
-};
-
 export type StatsState = {
     totalStored: number;
     latestSyncedAt: string | null;
@@ -62,10 +73,31 @@ export type EmailSyncPageProps = {
     connection: ConnectionState;
     flash: FlashState;
     stats: StatsState;
-    backfill: BackfillState;
     emails: EmailRecord[];
-    hasMoreEmails: boolean;
-    nextCursor: string | null;
+    pagination: {
+        currentPage: number;
+        lastPage: number;
+        perPage: number;
+        total: number;
+        from: number | null;
+        to: number | null;
+    };
+    appliedEmails: EmailRecord[];
+    appliedPagination: {
+        currentPage: number;
+        lastPage: number;
+        perPage: number;
+        total: number;
+        from: number | null;
+        to: number | null;
+    };
+    receiptCounts: {
+        unmatched: number;
+        applied: number;
+    };
+    filters: {
+        search: string;
+    };
 };
 
 export type JsonEmailPayload = {

@@ -4,6 +4,11 @@ use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\DocMergeBatchController;
 use App\Http\Controllers\DocMergeController;
 use App\Http\Controllers\EmailSyncController;
+use App\Http\Controllers\Form1702ExController;
+use App\Http\Controllers\Form1702ExPage1TemplateController;
+use App\Http\Controllers\Form1702ExPage2TemplateController;
+use App\Http\Controllers\Form1702ExPage3TemplateController;
+use App\Http\Controllers\Form1702ExReceiptTemplateController;
 use App\Http\Controllers\UserManagementController;
 use Illuminate\Support\Facades\Route;
 use Laravel\Fortify\Features;
@@ -68,6 +73,86 @@ Route::middleware(['auth', 'verified'])->group(function () {
                     ->name('attachments.inline');
                 Route::get('{syncedEmail}/attachments/{attachment}', 'downloadAttachment')
                     ->name('attachments.download');
+            });
+        Route::prefix('forms')
+            ->name('forms.')
+            ->group(function () {
+                Route::controller(Form1702ExController::class)
+                    ->prefix('1702-ex')
+                    ->name('1702-ex.')
+                    ->group(function () {
+                        Route::get('/', 'index')->name('index');
+                        Route::get('alignment', 'alignment')->name('alignment');
+                        Route::post('settings', 'updateSettings')->name('settings.update');
+                        Route::post('import', 'storeImportDirect')->name('import.store');
+                        Route::delete('rows', 'destroyRowsDirect')->name('rows.destroy');
+                        Route::get('rows/{form1702ExBatchRow}/preview', 'previewRowDirect')->name('rows.preview');
+                        Route::get('rows/{form1702ExBatchRow}/download', 'downloadRowDirect')->name('rows.download');
+                        Route::post('rows/{form1702ExBatchRow}/receipt', 'storeReceiptDirect')->name('rows.receipt.store');
+                        Route::delete('rows/{form1702ExBatchRow}/receipt', 'destroyReceiptDirect')->name('rows.receipt.destroy');
+                        Route::get('rows/{form1702ExBatchRow}/receipt', 'downloadReceiptDirect')->name('rows.receipt.download');
+                        Route::post('rows/{form1702ExBatchRow}/regenerate', 'regenerateRowDirect')->name('rows.regenerate');
+                        Route::get('completed', 'completed')->name('completed.index');
+                        Route::post('completed/send', 'sendCompletedEmailsBulk')->name('completed.send.bulk');
+                        Route::post('completed/{form1702ExBatchRow}/send', 'sendCompletedEmail')->name('completed.send');
+                        Route::post('batches', 'storeBatch')->name('batches.store');
+
+                        Route::prefix('batches/{form1702ExBatch}')
+                            ->name('batches.')
+                            ->group(function () {
+                                Route::get('/', 'show')->name('show');
+                                Route::post('import', 'storeImport')->name('import.store');
+                                Route::post('prefix', 'updatePrefix')->name('prefix.update');
+                                Route::post('footer', 'updateFooter')->name('footer.update');
+                                Route::delete('rows', 'destroyRows')->name('rows.destroy');
+                                Route::get('rows/{form1702ExBatchRow}/preview', 'previewRow')->name('rows.preview');
+                                Route::get('rows/{form1702ExBatchRow}/download', 'downloadRow')->name('rows.download');
+                                Route::post('rows/{form1702ExBatchRow}/receipt', 'storeReceipt')->name('rows.receipt.store');
+                                Route::delete('rows/{form1702ExBatchRow}/receipt', 'destroyReceipt')->name('rows.receipt.destroy');
+                                Route::get('rows/{form1702ExBatchRow}/receipt', 'downloadReceipt')->name('rows.receipt.download');
+                                Route::post('rows/{form1702ExBatchRow}/regenerate', 'regenerateRow')->name('rows.regenerate');
+                            });
+                    });
+
+                Route::controller(Form1702ExReceiptTemplateController::class)
+                    ->prefix('1702-ex/receipt-template')
+                    ->name('1702-ex.receipt-template.')
+                    ->group(function () {
+                        Route::get('/', 'show')->name('show');
+                        Route::post('/', 'generate')->name('generate');
+                        Route::get('preview', 'preview')->name('preview');
+                        Route::get('download', 'download')->name('download');
+                    });
+
+                Route::controller(Form1702ExPage1TemplateController::class)
+                    ->prefix('1702-ex/page-1-template')
+                    ->name('1702-ex.page-1-template.')
+                    ->group(function () {
+                        Route::get('/', 'show')->name('show');
+                        Route::post('/', 'generate')->name('generate');
+                        Route::get('preview', 'preview')->name('preview');
+                        Route::get('download', 'download')->name('download');
+                    });
+
+                Route::controller(Form1702ExPage2TemplateController::class)
+                    ->prefix('1702-ex/page-2-template')
+                    ->name('1702-ex.page-2-template.')
+                    ->group(function () {
+                        Route::get('/', 'show')->name('show');
+                        Route::post('/', 'generate')->name('generate');
+                        Route::get('preview', 'preview')->name('preview');
+                        Route::get('download', 'download')->name('download');
+                    });
+
+                Route::controller(Form1702ExPage3TemplateController::class)
+                    ->prefix('1702-ex/page-3-template')
+                    ->name('1702-ex.page-3-template.')
+                    ->group(function () {
+                        Route::get('/', 'show')->name('show');
+                        Route::post('/', 'generate')->name('generate');
+                        Route::get('preview', 'preview')->name('preview');
+                        Route::get('download', 'download')->name('download');
+                    });
             });
     });
     Route::middleware('superadmin')

@@ -46,6 +46,11 @@ class EmailSyncTest extends TestCase
             'body_preview' => 'Your quarterly account update is ready to review.',
             'body_text' => "Hello there,\n\nYour quarterly account update is ready to review.",
             'body_html' => '<p>Hello there,</p><p>Your quarterly account update is ready to review.</p>',
+            'bir_receipt_file_name' => '1234567890000_RPT.pdf',
+            'bir_receipt_date_received_by_bir' => 'Apr 10, 2026',
+            'bir_receipt_time_received_by_bir' => '9:30 AM',
+            'bir_receipt_tin' => '1234567890000',
+            'bir_receipt_match_status' => 'unmatched',
             'received_at' => now()->subHour(),
             'synced_at' => now(),
         ]);
@@ -65,19 +70,18 @@ class EmailSyncTest extends TestCase
                 ->where('connection.imapConfigured', false)
                 ->where('connection.smtpConfigured', false)
                 ->where('stats.totalStored', 1)
-                ->where('hasMoreEmails', false)
-                ->where('nextCursor', null)
-                ->where('backfill.presets', EmailSyncService::BACKFILL_PRESET_LIMITS)
-                ->where('backfill.customMax', EmailSyncService::BACKFILL_CUSTOM_MAX)
+                ->where('pagination.currentPage', 1)
+                ->where('pagination.lastPage', 1)
+                ->where('pagination.total', 1)
+                ->where('receiptCounts.unmatched', 1)
+                ->where('receiptCounts.applied', 0)
                 ->has('emails', 1)
-                ->where('emails.0.subject', 'Quarterly update')
-                ->where('emails.0.fromEmail', 'support@example.com')
-                ->where('emails.0.bodyPreview', 'Your quarterly account update is ready to review.')
-                ->where('emails.0.bodyText', "Hello there,\n\nYour quarterly account update is ready to review.")
-                ->where('emails.0.hasHtmlBody', true)
-                ->where('emails.0.htmlUrl', route('email-sync.rendered', ['syncedEmail' => $email]))
-                ->where('emails.0.attachments.0.fileName', 'quarterly-update.pdf')
-                ->where('emails.0.attachments.0.fileSize', 4096),
+                ->where('emails.0.matchedTin', '1234567890000')
+                ->where('emails.0.matchStatus', 'unmatched')
+                ->where('emails.0.parsedBirReceiptDetails.fileName', '1234567890000_RPT.pdf')
+                ->where('emails.0.parsedBirReceiptDetails.dateReceived', 'Apr 10, 2026')
+                ->where('emails.0.parsedBirReceiptDetails.timeReceived', '9:30 AM')
+                ->has('appliedEmails', 0),
             );
     }
 
@@ -98,6 +102,11 @@ class EmailSyncTest extends TestCase
                 'subject' => "Message {$offset}",
                 'body_preview' => "Preview {$offset}",
                 'body_text' => "Body {$offset}",
+                'bir_receipt_file_name' => "123456789{$offset}_RPT.pdf",
+                'bir_receipt_date_received_by_bir' => 'Apr 10, 2026',
+                'bir_receipt_time_received_by_bir' => '9:30 AM',
+                'bir_receipt_tin' => '1234567890000',
+                'bir_receipt_match_status' => 'unmatched',
                 'received_at' => now()->subMinutes($offset),
                 'synced_at' => now(),
             ]);
@@ -109,8 +118,9 @@ class EmailSyncTest extends TestCase
             ->assertInertia(fn (Assert $page) => $page
                 ->component('EmailSync')
                 ->has('emails', 25)
-                ->where('hasMoreEmails', true)
-                ->where('nextCursor', '2')
+                ->where('pagination.currentPage', 1)
+                ->where('pagination.lastPage', 2)
+                ->where('pagination.total', 26)
                 ->where('stats.totalStored', 26)
                 ->where('emails.0.subject', 'Message 1')
                 ->where('emails.24.subject', 'Message 25'),
@@ -133,6 +143,11 @@ class EmailSyncTest extends TestCase
             'subject' => 'Stored with future time',
             'body_preview' => 'Older sync with a bad future timestamp.',
             'body_text' => 'Older sync with a bad future timestamp.',
+            'bir_receipt_file_name' => '1234567890000_RPT.pdf',
+            'bir_receipt_date_received_by_bir' => 'Apr 10, 2026',
+            'bir_receipt_time_received_by_bir' => '9:30 AM',
+            'bir_receipt_tin' => '1234567890000',
+            'bir_receipt_match_status' => 'unmatched',
             'received_at' => now()->addHours(6),
             'synced_at' => now()->subHour(),
         ]);
@@ -147,6 +162,11 @@ class EmailSyncTest extends TestCase
             'subject' => 'Actual latest email',
             'body_preview' => 'Newest synced email should stay on top.',
             'body_text' => 'Newest synced email should stay on top.',
+            'bir_receipt_file_name' => '1234567890001_RPT.pdf',
+            'bir_receipt_date_received_by_bir' => 'Apr 11, 2026',
+            'bir_receipt_time_received_by_bir' => '10:15 AM',
+            'bir_receipt_tin' => '1234567890001',
+            'bir_receipt_match_status' => 'unmatched',
             'received_at' => now()->subMinutes(2),
             'synced_at' => now(),
         ]);
@@ -237,7 +257,7 @@ class EmailSyncTest extends TestCase
             ->assertSessionHas('error', 'Email sync is not configured yet. Set your Gmail address in MAIL_USERNAME first.');
     }
 
-    public function test_authenticated_users_can_import_older_mail_with_a_preset_limit()
+    public function test_authenticated_users_can_import_older_mail_from_a_selected_start_date()
     {
         $user = User::factory()->create();
 
@@ -246,7 +266,7 @@ class EmailSyncTest extends TestCase
                 ->once()
                 ->with(
                     \Mockery::on(fn (User $candidate): bool => $candidate->is($user)),
-                    20,
+                    \Mockery::on(fn ($candidate): bool => $candidate instanceof \Carbon\CarbonImmutable && $candidate->format('Y-m-d') === '2026-01-01'),
                 )
                 ->andReturn([
                     'fetched' => 20,
@@ -258,7 +278,7 @@ class EmailSyncTest extends TestCase
 
         $this->actingAs($user)
             ->post(route('email-sync.backfill'), [
-                'mode' => '20',
+                'startDate' => '2026-01-01',
             ])
             ->assertRedirect(route('email-sync.index'))
             ->assertSessionHas('success', 'Older email import completed successfully.')
@@ -270,45 +290,30 @@ class EmailSyncTest extends TestCase
             ]);
     }
 
-    public function test_all_backfill_mode_passes_a_null_limit_to_the_service()
-    {
-        $user = User::factory()->create();
-
-        $this->mock(EmailSyncService::class, function ($mock) use ($user): void {
-            $mock->shouldReceive('backfill')
-                ->once()
-                ->with(
-                    \Mockery::on(fn (User $candidate): bool => $candidate->is($user)),
-                    null,
-                )
-                ->andReturn([
-                    'fetched' => 120,
-                    'created' => 120,
-                    'updated' => 0,
-                    'mailbox' => 'INBOX',
-                ]);
-        });
-
-        $this->actingAs($user)
-            ->post(route('email-sync.backfill'), [
-                'mode' => 'all',
-            ])
-            ->assertRedirect(route('email-sync.index'))
-            ->assertSessionHas('success', 'Older email import completed successfully.');
-    }
-
-    public function test_custom_backfill_requires_a_valid_limit()
+    public function test_start_date_is_required_for_backfill()
     {
         $user = User::factory()->create();
 
         $this->actingAs($user)
             ->from(route('email-sync.index'))
             ->post(route('email-sync.backfill'), [
-                'mode' => 'custom',
-                'customLimit' => 0,
+                'startDate' => '',
             ])
             ->assertRedirect(route('email-sync.index'))
-            ->assertSessionHasErrors('customLimit');
+            ->assertSessionHasErrors('startDate');
+    }
+
+    public function test_backfill_requires_a_valid_start_date_format()
+    {
+        $user = User::factory()->create();
+
+        $this->actingAs($user)
+            ->from(route('email-sync.index'))
+            ->post(route('email-sync.backfill'), [
+                'startDate' => '01/01/2026',
+            ])
+            ->assertRedirect(route('email-sync.index'))
+            ->assertSessionHasErrors('startDate');
     }
 
     public function test_authenticated_users_can_download_synced_email_attachments()
@@ -415,6 +420,11 @@ class EmailSyncTest extends TestCase
             'body_preview' => null,
             'body_text' => null,
             'body_html' => '<div dir="ltr"><br></div>',
+            'bir_receipt_file_name' => '1234567890000_RPT.pdf',
+            'bir_receipt_date_received_by_bir' => 'Apr 10, 2026',
+            'bir_receipt_time_received_by_bir' => '9:30 AM',
+            'bir_receipt_tin' => '1234567890000',
+            'bir_receipt_match_status' => 'unmatched',
             'received_at' => now()->subMinutes(5),
             'synced_at' => now(),
         ]);
@@ -433,10 +443,8 @@ class EmailSyncTest extends TestCase
             ->assertInertia(fn (Assert $page) => $page
                 ->component('EmailSync')
                 ->where('emails.0.subject', null)
-                ->where('emails.0.bodyPreview', null)
-                ->where('emails.0.bodyText', null)
                 ->where('emails.0.hasHtmlBody', false)
-                ->where('emails.0.htmlUrl', null)
+                ->where('emails.0.parsedBirReceiptDetails.fileName', '1234567890000_RPT.pdf')
                 ->where('emails.0.attachments.0.fileName', 'Payment_Confirmation_Receipt_Mockup.pdf'),
             );
     }
