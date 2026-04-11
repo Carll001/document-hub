@@ -4,7 +4,6 @@ namespace Tests\Unit;
 
 use App\Models\SyncedEmail;
 use App\Models\SyncedEmailAttachment;
-use App\Models\User;
 use App\Services\EmailSync\EmailSyncClient;
 use App\Services\EmailSync\EmailSyncService;
 use Carbon\CarbonImmutable;
@@ -20,7 +19,6 @@ class EmailSyncServiceTest extends TestCase
     {
         Storage::fake('local');
 
-        $user = User::factory()->create();
         $client = new FakeEmailSyncClient(
             latestUids: [9001, 9002],
             messages: [
@@ -38,7 +36,7 @@ class EmailSyncServiceTest extends TestCase
 
         $service = $this->makeServiceWithClient($client);
 
-        $result = $service->sync($user);
+        $result = $service->sync();
 
         $this->assertSame([['connect'], ['selectMailbox', 'INBOX'], ['latestUids', 25], ['fetchMessage', 9001], ['fetchMessage', 9002], ['disconnect']], $client->calls);
         $this->assertSame([
@@ -49,7 +47,7 @@ class EmailSyncServiceTest extends TestCase
         ], $result);
         $this->assertDatabaseCount('synced_emails', 2);
         $this->assertDatabaseHas('synced_emails', [
-            'user_id' => $user->id,
+            'user_id' => null,
             'imap_uid' => '9001',
             'subject' => 'Message 9001',
             'body_html' => '<p>Body 9001</p>',
@@ -66,10 +64,8 @@ class EmailSyncServiceTest extends TestCase
 
     public function test_incremental_sync_only_fetches_uids_newer_than_the_latest_saved_email()
     {
-        $user = User::factory()->create();
-
         SyncedEmail::query()->create([
-            'user_id' => $user->id,
+            'user_id' => null,
             'mailbox' => 'INBOX',
             'imap_uid' => '200',
             'message_id' => '<message-200@example.com>',
@@ -92,22 +88,20 @@ class EmailSyncServiceTest extends TestCase
 
         $service = $this->makeServiceWithClient($client);
 
-        $result = $service->sync($user);
+        $result = $service->sync();
 
         $this->assertTrue($client->wasCalled('uidsNewerThan', [200]));
         $this->assertFalse($client->wasCalled('latestUids'));
         $this->assertSame(2, $result['created']);
         $this->assertDatabaseCount('synced_emails', 3);
         $this->assertDatabaseHas('synced_emails', [
-            'user_id' => $user->id,
+            'user_id' => null,
             'imap_uid' => '202',
         ]);
     }
 
     public function test_backfill_imports_emails_received_on_or_after_the_selected_date()
     {
-        $user = User::factory()->create();
-
         $client = new FakeEmailSyncClient(
             receivedSinceUids: [150, 151],
             messages: [
@@ -119,25 +113,24 @@ class EmailSyncServiceTest extends TestCase
         $service = $this->makeServiceWithClient($client);
         $startDate = CarbonImmutable::parse('2026-01-01');
 
-        $result = $service->backfill($user, $startDate);
+        $result = $service->backfill($startDate);
 
         $this->assertTrue($client->wasCalled('uidsReceivedSince', [$startDate->startOfDay()]));
         $this->assertSame(2, $result['created']);
         $this->assertDatabaseCount('synced_emails', 2);
         $this->assertDatabaseHas('synced_emails', [
-            'user_id' => $user->id,
+            'user_id' => null,
             'imap_uid' => '150',
         ]);
     }
 
     public function test_backfill_allows_a_date_import_even_without_a_previous_sync_anchor()
     {
-        $user = User::factory()->create();
         $startDate = CarbonImmutable::parse('2026-01-01');
         $client = new FakeEmailSyncClient(receivedSinceUids: []);
         $service = $this->makeServiceWithClient($client);
 
-        $result = $service->backfill($user, $startDate);
+        $result = $service->backfill($startDate);
 
         $this->assertSame([
             'fetched' => 0,

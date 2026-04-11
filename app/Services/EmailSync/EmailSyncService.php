@@ -3,9 +3,7 @@
 namespace App\Services\EmailSync;
 
 use App\Models\SyncedEmail;
-use App\Models\User;
 use Carbon\CarbonImmutable;
-use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use RuntimeException;
@@ -24,11 +22,11 @@ class EmailSyncService
      *
      * @return array{fetched: int, created: int, updated: int, mailbox: string}
      */
-    public function sync(User $user): array
+    public function sync(): array
     {
         $config = $this->configuration();
         $mailbox = $config['mailbox'];
-        $newestSyncedUid = $this->newestSyncedUid($user, $mailbox);
+        $newestSyncedUid = $this->newestSyncedUid($mailbox);
 
         $client = $this->makeClient($config);
 
@@ -40,7 +38,7 @@ class EmailSyncService
                 ? $client->latestUids(self::INITIAL_SYNC_LIMIT)
                 : $client->uidsNewerThan($newestSyncedUid);
 
-            return $this->syncUids($user, $mailbox, $client, $uids);
+            return $this->syncUids($mailbox, $client, $uids);
         } finally {
             $client->disconnect();
         }
@@ -51,7 +49,7 @@ class EmailSyncService
      *
      * @return array{fetched: int, created: int, updated: int, mailbox: string}
      */
-    public function backfill(User $user, CarbonImmutable $startDate): array
+    public function backfill(CarbonImmutable $startDate): array
     {
         $config = $this->configuration();
         $mailbox = $config['mailbox'];
@@ -63,7 +61,7 @@ class EmailSyncService
 
             $uids = $client->uidsReceivedSince($startDate->startOfDay());
 
-            return $this->syncUids($user, $mailbox, $client, $uids);
+            return $this->syncUids($mailbox, $client, $uids);
         } finally {
             $client->disconnect();
         }
@@ -100,7 +98,7 @@ class EmailSyncService
      * @param  list<int>  $uids
      * @return array{fetched: int, created: int, updated: int, mailbox: string}
      */
-    private function syncUids(User $user, string $mailbox, EmailSyncClient $client, array $uids): array
+    private function syncUids(string $mailbox, EmailSyncClient $client, array $uids): array
     {
         $created = 0;
         $updated = 0;
@@ -113,11 +111,11 @@ class EmailSyncService
 
             $email = SyncedEmail::query()->updateOrCreate(
                 [
-                    'user_id' => $user->id,
                     'mailbox' => $mailbox,
                     'imap_uid' => $message['imap_uid'],
                 ],
                 [
+                    'user_id' => null,
                     'message_id' => $message['message_id'],
                     'from_name' => $message['from_name'],
                     'from_email' => $message['from_email'],
@@ -151,9 +149,9 @@ class EmailSyncService
     /**
      * Get the newest synced IMAP UID for the user and mailbox.
      */
-    private function newestSyncedUid(User $user, string $mailbox): ?int
+    private function newestSyncedUid(string $mailbox): ?int
     {
-        $imapUid = $this->mailboxQuery($user, $mailbox)
+        $imapUid = $this->mailboxQuery($mailbox)
             ->orderByRaw('CAST(imap_uid AS BIGINT) DESC')
             ->value('imap_uid');
 
@@ -163,10 +161,9 @@ class EmailSyncService
     /**
      * Build the base query used for synced email mailbox lookups.
      */
-    private function mailboxQuery(User $user, string $mailbox): Builder
+    private function mailboxQuery(string $mailbox)
     {
         return SyncedEmail::query()
-            ->whereBelongsTo($user)
             ->where('mailbox', $mailbox);
     }
 
@@ -192,7 +189,7 @@ class EmailSyncService
     private function syncAttachments(SyncedEmail $email, array $attachments): void
     {
         $disk = Storage::disk('local');
-        $directory = "email-sync/{$email->user_id}/{$email->id}";
+        $directory = "email-sync/shared/{$email->id}";
 
         $disk->deleteDirectory($directory);
         $email->attachments()->delete();

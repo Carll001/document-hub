@@ -135,10 +135,7 @@ class Form1702ExBatchService
                 }
             }
 
-            $this->birReceiptAutoMatchService->syncStoredEmailsForTins(
-                (int) $batch->user_id,
-                $tinsToSync,
-            );
+            $this->birReceiptAutoMatchService->syncStoredEmailsForTins($tinsToSync);
 
             return $createdRows;
         });

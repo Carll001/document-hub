@@ -666,17 +666,6 @@ function submitDeleteRows(): void {
                     size="sm"
                     class="gap-2 text-xs"
                     :disabled="props.batch.isProcessing"
-                    @click="openFooterDialog"
-                >
-                    Footer
-                </Button>
-
-                <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    class="gap-2 text-xs"
-                    :disabled="props.batch.isProcessing"
                     @click="isUploadDialogOpen = true"
                 >
                     <Upload class="size-4" />
@@ -743,79 +732,6 @@ function submitDeleteRows(): void {
                                 class="mr-2 size-4 animate-spin"
                             />
                             Save Prefix
-                        </Button>
-                    </DialogFooter>
-                </form>
-            </DialogContent>
-        </Dialog>
-
-        <Dialog
-            :open="isFooterDialogOpen"
-            @update:open="isFooterDialogOpen = $event"
-        >
-            <DialogContent class="sm:max-w-lg">
-                <DialogHeader class="space-y-1">
-                    <DialogTitle>Batch footer defaults</DialogTitle>
-                    <DialogDescription>
-                        Set the default footer values for this batch. New
-                        uploads will start with these values, and you can still
-                        adjust a row later when regenerating it.
-                    </DialogDescription>
-                </DialogHeader>
-
-                <form class="space-y-5" @submit.prevent="submitFooter">
-                    <div class="space-y-2">
-                        <Label for="batch-footer-source-path">
-                            Footer source path
-                        </Label>
-                        <Input
-                            id="batch-footer-source-path"
-                            :model-value="footerForm.footerSourcePath"
-                            type="text"
-                            placeholder="file:///C:/Users/Driane/AppData/Local/Temp/..."
-                            @update:model-value="
-                                footerForm.footerSourcePath = String($event)
-                            "
-                        />
-                        <InputError
-                            :message="footerForm.errors.footerSourcePath"
-                        />
-                    </div>
-
-                    <div class="space-y-2">
-                        <Label for="batch-footer-printed-date">
-                            Footer printed date
-                        </Label>
-                        <Input
-                            id="batch-footer-printed-date"
-                            :model-value="footerForm.footerPrintedDate"
-                            type="text"
-                            placeholder="DD/MM/YYYY"
-                            @update:model-value="
-                                footerForm.footerPrintedDate = String($event)
-                            "
-                        />
-                        <InputError
-                            :message="footerForm.errors.footerPrintedDate"
-                        />
-                    </div>
-
-                    <DialogFooter class="gap-2">
-                        <Button
-                            type="button"
-                            variant="secondary"
-                            :disabled="footerForm.processing"
-                            @click="isFooterDialogOpen = false"
-                        >
-                            Cancel
-                        </Button>
-
-                        <Button type="submit" :disabled="!canSubmitFooter">
-                            <LoaderCircle
-                                v-if="footerForm.processing"
-                                class="mr-2 size-4 animate-spin"
-                            />
-                            Save Footer
                         </Button>
                     </DialogFooter>
                 </form>
@@ -895,8 +811,7 @@ function submitDeleteRows(): void {
                         imported row{{
                             props.batch.rows.length === 1 ? '' : 's'
                         }}. Merged PDFs are generated automatically after the
-                        import finishes, and the batch prefix plus footer
-                        defaults can be updated from the top buttons.
+                        import finishes, and the batch prefix can be updated from the top buttons.
                     </div>
 
                     <DialogFooter class="gap-2">
@@ -941,10 +856,9 @@ function submitDeleteRows(): void {
         >
             <DialogContent class="sm:max-w-lg">
                 <DialogHeader class="space-y-1">
-                    <DialogTitle>Edit footer and regenerate</DialogTitle>
+                    <DialogTitle>Regenerate PDF</DialogTitle>
                     <DialogDescription>
-                        Update the footer values for this row, then regenerate
-                        its merged 1702-EX page 1 to page 3 PDF.
+                        Queue a fresh PDF build for this row using the saved internal defaults.
                     </DialogDescription>
                 </DialogHeader>
 
@@ -958,41 +872,10 @@ function submitDeleteRows(): void {
                         </span>
                     </div>
 
-                    <div class="space-y-2">
-                        <Label for="footer-source-path">
-                            Footer source path
-                        </Label>
-                        <Input
-                            id="footer-source-path"
-                            :model-value="regenerateForm.footerSourcePath"
-                            type="text"
-                            placeholder="file:///C:/Users/Driane/AppData/Local/Temp/..."
-                            @update:model-value="
-                                regenerateForm.footerSourcePath = String($event)
-                            "
-                        />
-                        <InputError
-                            :message="regenerateForm.errors.footerSourcePath"
-                        />
-                    </div>
-
-                    <div class="space-y-2">
-                        <Label for="footer-printed-date">
-                            Footer printed date
-                        </Label>
-                        <Input
-                            id="footer-printed-date"
-                            :model-value="regenerateForm.footerPrintedDate"
-                            type="text"
-                            placeholder="DD/MM/YYYY"
-                            @update:model-value="
-                                regenerateForm.footerPrintedDate =
-                                    String($event)
-                            "
-                        />
-                        <InputError
-                            :message="regenerateForm.errors.footerPrintedDate"
-                        />
+                    <div
+                        class="rounded-2xl border bg-muted/20 p-4 text-sm text-muted-foreground"
+                    >
+                        The footer configuration stays hidden here and the selected row will regenerate with its saved values.
                     </div>
 
                     <DialogFooter class="gap-2">
@@ -1095,18 +978,10 @@ function submitDeleteRows(): void {
                         </div>
                         <div>
                             <p class="text-xs font-semibold tracking-[0.2em] text-muted-foreground uppercase">
-                                Footer Source
-                            </p>
-                            <p class="mt-1 truncate text-sm font-medium text-foreground">
-                                {{ props.batch.footerSourcePath || 'Default footer source' }}
-                            </p>
-                        </div>
-                        <div>
-                            <p class="text-xs font-semibold tracking-[0.2em] text-muted-foreground uppercase">
-                                Footer Printed Date
+                                Accepted Receipts From
                             </p>
                             <p class="mt-1 text-sm font-medium text-foreground">
-                                {{ props.batch.footerPrintedDate || 'Auto' }}
+                                {{ props.batch.receiptAcceptanceStartDate || 'Not set' }}
                             </p>
                         </div>
                     </div>

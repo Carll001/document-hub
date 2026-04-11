@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Storage;
 
 #[Fillable([
@@ -30,9 +31,15 @@ class SyncedEmail extends Model
     protected static function booted(): void
     {
         static::deleting(function (self $email): void {
-            Storage::disk('local')->deleteDirectory(
-                "email-sync/{$email->user_id}/{$email->id}",
-            );
+            /** @var Collection<int, string> $paths */
+            $paths = $email->attachments()
+                ->pluck('storage_path');
+
+            foreach ($paths as $path) {
+                Storage::disk('local')->delete((string) $path);
+            }
+
+            Storage::disk('local')->deleteDirectory("email-sync/shared/{$email->id}");
         });
     }
 

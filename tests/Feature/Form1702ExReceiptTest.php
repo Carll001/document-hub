@@ -10,7 +10,6 @@ use App\Mail\Form1702ExCompletedRowEmail;
 use App\Mail\Form1702ExCompletedRowsEmail;
 use App\Models\Form1702ExBatch;
 use App\Models\Form1702ExBatchRow;
-use App\Models\Form1702ExCompletedEmailRecipient;
 use App\Models\SyncedEmail;
 use App\Models\User;
 use App\Services\EmailSync\BirReceiptAutoMatchService;
@@ -642,7 +641,7 @@ class Form1702ExReceiptTest extends TestCase
         Mail::assertNotQueued(Form1702ExCompletedRowsEmail::class);
     }
 
-    public function test_two_completed_rows_for_the_same_recipient_queue_a_final_grouped_email(): void
+    public function test_two_completed_rows_for_the_same_recipient_queue_two_individual_emails_only(): void
     {
         Storage::fake('local');
         Queue::fake();
@@ -672,19 +671,10 @@ class Form1702ExReceiptTest extends TestCase
         $this->runReceiptJob($rowTwo);
 
         Mail::assertQueued(Form1702ExCompletedRowEmail::class, 2);
-        Mail::assertQueued(Form1702ExCompletedRowsEmail::class, function (Form1702ExCompletedRowsEmail $mail): bool {
-            return count($mail->attachmentsData) === 2
-                && $mail->subjectLine === 'Completed 1702-EX Files - 2 attached'
-                && $mail->messageBody === 'Attached are 2 completed 1702-EX PDF files.';
-        });
-
-        $recipientState = Form1702ExCompletedEmailRecipient::query()->where('recipient_email_normalized', 'shared@example.com')->sole();
-        $this->assertSame($staff->id, $recipientState->user_id);
-        $this->assertNotNull($recipientState->latest_group_hash);
-        $this->assertNotNull($recipientState->latest_group_queued_at);
+        Mail::assertNotQueued(Form1702ExCompletedRowsEmail::class);
     }
 
-    public function test_a_new_later_completed_row_for_the_same_recipient_queues_a_new_updated_grouped_email(): void
+    public function test_a_new_later_completed_row_for_the_same_recipient_still_queues_only_individual_emails(): void
     {
         Storage::fake('local');
         Queue::fake();
@@ -722,12 +712,10 @@ class Form1702ExReceiptTest extends TestCase
         $this->runReceiptJob($rowThree);
 
         Mail::assertQueued(Form1702ExCompletedRowEmail::class, 3);
-        Mail::assertQueued(Form1702ExCompletedRowsEmail::class, 2);
-        Mail::assertQueued(Form1702ExCompletedRowsEmail::class, fn (Form1702ExCompletedRowsEmail $mail): bool => count($mail->attachmentsData) === 2);
-        Mail::assertQueued(Form1702ExCompletedRowsEmail::class, fn (Form1702ExCompletedRowsEmail $mail): bool => count($mail->attachmentsData) === 3);
+        Mail::assertNotQueued(Form1702ExCompletedRowsEmail::class);
     }
 
-    public function test_duplicate_reprocessing_does_not_resend_the_same_grouped_set(): void
+    public function test_duplicate_reprocessing_does_not_resend_any_grouped_email(): void
     {
         Storage::fake('local');
         Queue::fake();
@@ -758,7 +746,7 @@ class Form1702ExReceiptTest extends TestCase
         $this->runReceiptJob($rowTwo);
 
         Mail::assertQueued(Form1702ExCompletedRowEmail::class, 2);
-        Mail::assertQueued(Form1702ExCompletedRowsEmail::class, 1);
+        Mail::assertNotQueued(Form1702ExCompletedRowsEmail::class);
     }
 
     public function test_unmatched_bir_receipt_email_is_stored_without_queueing_a_receipt(): void

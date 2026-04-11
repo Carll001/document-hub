@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services\EmailSync;
 
-use App\Models\User;
+use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Cache;
 use RuntimeException;
 
@@ -18,51 +18,67 @@ class EmailSyncRunner
     }
 
     /**
-     * Run an inbox sync immediately, failing fast if the same user already has
-     * a sync in progress.
+     * Run the shared inbox sync immediately, failing fast if it is already running.
      *
      * @return array{fetched: int, created: int, updated: int, mailbox: string}
      */
-    public function sync(User $user): array
+    public function sync(): array
     {
-        $lock = Cache::lock(self::lockKey($user), self::LOCK_TTL_SECONDS);
+        $lock = Cache::lock(self::lockKey(), self::LOCK_TTL_SECONDS);
 
         if (! $lock->get()) {
             throw new RuntimeException('Inbox sync is already running.');
         }
 
         try {
-            return $this->emailSyncService->sync($user);
+            return $this->emailSyncService->sync();
         } finally {
             $lock->release();
         }
     }
 
     /**
-     * Attempt a sync for queued/background work and quietly skip if another
-     * sync for the user is already running.
+     * Attempt a shared sync for queued/background work and quietly skip if it is already running.
      *
      * @return array{fetched: int, created: int, updated: int, mailbox: string}|null
      */
-    public function syncIfAvailable(User $user): ?array
+    public function syncIfAvailable(): ?array
     {
-        $lock = Cache::lock(self::lockKey($user), self::LOCK_TTL_SECONDS);
+        $lock = Cache::lock(self::lockKey(), self::LOCK_TTL_SECONDS);
 
         if (! $lock->get()) {
             return null;
         }
 
         try {
-            return $this->emailSyncService->sync($user);
+            return $this->emailSyncService->sync();
         } finally {
             $lock->release();
         }
     }
 
-    public static function lockKey(User|int $user): string
+    /**
+     * Run a shared inbox backfill immediately using the same shared lock.
+     *
+     * @return array{fetched: int, created: int, updated: int, mailbox: string}
+     */
+    public function backfill(CarbonImmutable $startDate): array
     {
-        $userId = $user instanceof User ? (int) $user->getKey() : $user;
+        $lock = Cache::lock(self::lockKey(), self::LOCK_TTL_SECONDS);
 
-        return "email-sync:user:{$userId}:lock";
+        if (! $lock->get()) {
+            throw new RuntimeException('Inbox sync is already running.');
+        }
+
+        try {
+            return $this->emailSyncService->backfill($startDate);
+        } finally {
+            $lock->release();
+        }
+    }
+
+    public static function lockKey(): string
+    {
+        return 'email-sync:shared:lock';
     }
 }

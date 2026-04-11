@@ -5,7 +5,7 @@ namespace Tests\Feature;
 use App\Models\SyncedEmail;
 use App\Models\SyncedEmailAttachment;
 use App\Models\User;
-use App\Services\EmailSync\EmailSyncService;
+use App\Services\EmailSync\EmailSyncRunner;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Storage;
 use Inertia\Testing\AssertableInertia as Assert;
@@ -36,7 +36,7 @@ class EmailSyncTest extends TestCase
         $user = User::factory()->create();
 
         $email = SyncedEmail::query()->create([
-            'user_id' => $user->id,
+            'user_id' => null,
             'mailbox' => 'INBOX',
             'imap_uid' => '1001',
             'message_id' => '<message-1001@example.com>',
@@ -57,7 +57,7 @@ class EmailSyncTest extends TestCase
 
         $email->attachments()->create([
             'file_name' => 'quarterly-update.pdf',
-            'storage_path' => 'email-sync/1/1/01-quarterly-update.pdf',
+            'storage_path' => 'email-sync/shared/'.$email->id.'/01-quarterly-update.pdf',
             'content_type' => 'application/pdf',
             'file_size' => 4096,
         ]);
@@ -93,7 +93,7 @@ class EmailSyncTest extends TestCase
 
         foreach (range(1, 26) as $offset) {
             SyncedEmail::query()->create([
-                'user_id' => $user->id,
+                'user_id' => null,
                 'mailbox' => 'INBOX',
                 'imap_uid' => (string) (2000 + $offset),
                 'message_id' => "<message-{$offset}@example.com>",
@@ -134,7 +134,7 @@ class EmailSyncTest extends TestCase
         $user = User::factory()->create();
 
         SyncedEmail::query()->create([
-            'user_id' => $user->id,
+            'user_id' => null,
             'mailbox' => 'INBOX',
             'imap_uid' => '4001',
             'message_id' => '<message-4001@example.com>',
@@ -153,7 +153,7 @@ class EmailSyncTest extends TestCase
         ]);
 
         SyncedEmail::query()->create([
-            'user_id' => $user->id,
+            'user_id' => null,
             'mailbox' => 'INBOX',
             'imap_uid' => '4002',
             'message_id' => '<message-4002@example.com>',
@@ -187,7 +187,7 @@ class EmailSyncTest extends TestCase
 
         foreach (range(1, 30) as $offset) {
             SyncedEmail::query()->create([
-                'user_id' => $user->id,
+                'user_id' => null,
                 'mailbox' => 'INBOX',
                 'imap_uid' => (string) (3000 + $offset),
                 'message_id' => "<message-{$offset}@example.com>",
@@ -217,10 +217,9 @@ class EmailSyncTest extends TestCase
     {
         $user = User::factory()->create();
 
-        $this->mock(EmailSyncService::class, function ($mock) use ($user): void {
+        $this->mock(EmailSyncRunner::class, function ($mock): void {
             $mock->shouldReceive('sync')
                 ->once()
-                ->with(\Mockery::on(fn (User $candidate): bool => $candidate->is($user)))
                 ->andReturn([
                     'fetched' => 2,
                     'created' => 2,
@@ -245,7 +244,7 @@ class EmailSyncTest extends TestCase
     {
         $user = User::factory()->create();
 
-        $this->mock(EmailSyncService::class, function ($mock): void {
+        $this->mock(EmailSyncRunner::class, function ($mock): void {
             $mock->shouldReceive('sync')
                 ->once()
                 ->andThrow(new \RuntimeException('Email sync is not configured yet. Set your Gmail address in MAIL_USERNAME first.'));
@@ -261,11 +260,10 @@ class EmailSyncTest extends TestCase
     {
         $user = User::factory()->create();
 
-        $this->mock(EmailSyncService::class, function ($mock) use ($user): void {
+        $this->mock(EmailSyncRunner::class, function ($mock): void {
             $mock->shouldReceive('backfill')
                 ->once()
                 ->with(
-                    \Mockery::on(fn (User $candidate): bool => $candidate->is($user)),
                     \Mockery::on(fn ($candidate): bool => $candidate instanceof \Carbon\CarbonImmutable && $candidate->format('Y-m-d') === '2026-01-01'),
                 )
                 ->andReturn([
@@ -323,7 +321,7 @@ class EmailSyncTest extends TestCase
         $user = User::factory()->create();
 
         $email = SyncedEmail::query()->create([
-            'user_id' => $user->id,
+            'user_id' => null,
             'mailbox' => 'INBOX',
             'imap_uid' => '1002',
             'message_id' => '<message-1002@example.com>',
@@ -339,7 +337,7 @@ class EmailSyncTest extends TestCase
         $attachment = SyncedEmailAttachment::query()->create([
             'synced_email_id' => $email->id,
             'file_name' => 'report.txt',
-            'storage_path' => 'email-sync/'.$user->id.'/'.$email->id.'/01-report.txt',
+            'storage_path' => 'email-sync/shared/'.$email->id.'/01-report.txt',
             'content_type' => 'text/plain',
             'file_size' => 21,
         ]);
@@ -362,7 +360,7 @@ class EmailSyncTest extends TestCase
         $user = User::factory()->create();
 
         $email = SyncedEmail::query()->create([
-            'user_id' => $user->id,
+            'user_id' => null,
             'mailbox' => 'INBOX',
             'imap_uid' => '1200',
             'message_id' => '<message-1200@example.com>',
@@ -379,7 +377,7 @@ class EmailSyncTest extends TestCase
         $attachment = SyncedEmailAttachment::query()->create([
             'synced_email_id' => $email->id,
             'file_name' => 'google.png',
-            'storage_path' => 'email-sync/'.$user->id.'/'.$email->id.'/01-google.png',
+            'storage_path' => 'email-sync/shared/'.$email->id.'/01-google.png',
             'content_type' => 'image/png',
             'content_id' => 'google-logo',
             'is_inline' => true,
@@ -410,7 +408,7 @@ class EmailSyncTest extends TestCase
         $user = User::factory()->create();
 
         $email = SyncedEmail::query()->create([
-            'user_id' => $user->id,
+            'user_id' => null,
             'mailbox' => 'INBOX',
             'imap_uid' => '1300',
             'message_id' => '<message-1300@example.com>',
@@ -431,7 +429,7 @@ class EmailSyncTest extends TestCase
 
         $email->attachments()->create([
             'file_name' => 'Payment_Confirmation_Receipt_Mockup.pdf',
-            'storage_path' => 'email-sync/'.$user->id.'/'.$email->id.'/01-payment-confirmation.pdf',
+            'storage_path' => 'email-sync/shared/'.$email->id.'/01-payment-confirmation.pdf',
             'content_type' => 'application/pdf',
             'file_size' => 32768,
             'is_inline' => false,
@@ -447,5 +445,89 @@ class EmailSyncTest extends TestCase
                 ->where('emails.0.parsedBirReceiptDetails.fileName', '1234567890000_RPT.pdf')
                 ->where('emails.0.attachments.0.fileName', 'Payment_Confirmation_Receipt_Mockup.pdf'),
             );
+    }
+
+    public function test_staff_users_share_the_same_email_sync_dataset()
+    {
+        $this->withoutVite();
+
+        $firstUser = User::factory()->create();
+        $secondUser = User::factory()->create();
+
+        SyncedEmail::query()->create([
+            'user_id' => null,
+            'mailbox' => 'INBOX',
+            'imap_uid' => '1400',
+            'message_id' => '<message-1400@example.com>',
+            'from_name' => 'Support Team',
+            'from_email' => 'support@example.com',
+            'subject' => 'Shared receipt',
+            'body_preview' => 'Shared receipt body preview',
+            'body_text' => 'Shared receipt body',
+            'bir_receipt_file_name' => '1234567890000-1702EXv2018C.xml',
+            'bir_receipt_date_received_by_bir' => 'Apr 10, 2026',
+            'bir_receipt_time_received_by_bir' => '9:30 AM',
+            'bir_receipt_tin' => '1234567890000',
+            'bir_receipt_match_status' => 'unmatched',
+            'received_at' => now()->subMinutes(5),
+            'synced_at' => now(),
+        ]);
+
+        $assertSharedInbox = function (Assert $page): void {
+            $page->component('EmailSync')
+                ->where('stats.totalStored', 1)
+                ->where('receiptCounts.unmatched', 1)
+                ->has('emails', 1)
+                ->where('emails.0.subject', 'Shared receipt');
+        };
+
+        $this->actingAs($firstUser)
+            ->get(route('email-sync.index'))
+            ->assertOk()
+            ->assertInertia($assertSharedInbox);
+
+        $this->actingAs($secondUser)
+            ->get(route('email-sync.index'))
+            ->assertOk()
+            ->assertInertia($assertSharedInbox);
+    }
+
+    public function test_staff_users_can_download_shared_inbox_attachments()
+    {
+        Storage::fake('local');
+
+        $viewer = User::factory()->create();
+
+        $email = SyncedEmail::query()->create([
+            'user_id' => null,
+            'mailbox' => 'INBOX',
+            'imap_uid' => '1500',
+            'message_id' => '<message-1500@example.com>',
+            'from_name' => 'Support Team',
+            'from_email' => 'support@example.com',
+            'subject' => 'Shared attachment',
+            'body_preview' => 'Please download the shared file.',
+            'body_text' => 'Please download the shared file.',
+            'received_at' => now()->subMinutes(30),
+            'synced_at' => now(),
+        ]);
+
+        $attachment = SyncedEmailAttachment::query()->create([
+            'synced_email_id' => $email->id,
+            'file_name' => 'shared-report.txt',
+            'storage_path' => 'email-sync/shared/'.$email->id.'/01-shared-report.txt',
+            'content_type' => 'text/plain',
+            'file_size' => 21,
+        ]);
+
+        Storage::disk('local')->put($attachment->storage_path, 'Attachment body text');
+
+        $this->actingAs($viewer)
+            ->get(route('email-sync.attachments.download', [
+                'syncedEmail' => $email,
+                'attachment' => $attachment,
+            ]))
+            ->assertOk()
+            ->assertDownload('shared-report.txt');
     }
 }

@@ -578,32 +578,6 @@ function submitRemoveReceipt(): void {
                         <InputError :message="settingsForm.errors.fileNamePrefix" />
                     </div>
 
-                    <div class="grid gap-4 sm:grid-cols-2">
-                        <div class="space-y-2">
-                            <Label for="footerSourcePath">Footer source path</Label>
-                            <Input
-                                id="footerSourcePath"
-                                v-model="settingsForm.footerSourcePath"
-                                type="text"
-                                maxlength="500"
-                                placeholder="file:///path/to/footer.pdf"
-                            />
-                            <InputError :message="settingsForm.errors.footerSourcePath" />
-                        </div>
-
-                        <div class="space-y-2">
-                            <Label for="footerPrintedDate">Footer printed date</Label>
-                            <Input
-                                id="footerPrintedDate"
-                                v-model="settingsForm.footerPrintedDate"
-                                type="text"
-                                maxlength="64"
-                                placeholder="MM/DD/YYYY"
-                            />
-                            <InputError :message="settingsForm.errors.footerPrintedDate" />
-                        </div>
-                    </div>
-
                     <DialogFooter class="gap-2">
                         <Button
                             type="button"
@@ -651,9 +625,9 @@ function submitRemoveReceipt(): void {
         >
             <DialogContent class="sm:max-w-2xl">
                 <DialogHeader class="space-y-1">
-                    <DialogTitle>Edit footer and regenerate</DialogTitle>
+                    <DialogTitle>Regenerate PDF</DialogTitle>
                     <DialogDescription>
-                        Update the footer values for this row and queue a fresh PDF build.
+                        Queue a fresh PDF build for this row using the saved internal defaults.
                     </DialogDescription>
                 </DialogHeader>
 
@@ -670,30 +644,8 @@ function submitRemoveReceipt(): void {
                         </p>
                     </div>
 
-                    <div class="grid gap-4 sm:grid-cols-2">
-                        <div class="space-y-2">
-                            <Label for="regenerateFooterSourcePath">Footer source path</Label>
-                            <Input
-                                id="regenerateFooterSourcePath"
-                                v-model="regenerateForm.footerSourcePath"
-                                type="text"
-                                maxlength="500"
-                                placeholder="file:///path/to/footer.pdf"
-                            />
-                            <InputError :message="regenerateForm.errors.footerSourcePath" />
-                        </div>
-
-                        <div class="space-y-2">
-                            <Label for="regenerateFooterPrintedDate">Footer printed date</Label>
-                            <Input
-                                id="regenerateFooterPrintedDate"
-                                v-model="regenerateForm.footerPrintedDate"
-                                type="text"
-                                maxlength="64"
-                                placeholder="MM/DD/YYYY"
-                            />
-                            <InputError :message="regenerateForm.errors.footerPrintedDate" />
-                        </div>
+                    <div class="rounded-2xl border bg-muted/20 p-4 text-sm text-muted-foreground">
+                        This keeps the saved footer configuration hidden and only queues a fresh PDF build for the selected row.
                     </div>
 
                     <DialogFooter class="gap-2">
@@ -804,20 +756,12 @@ function submitRemoveReceipt(): void {
                                 {{ props.settings.fileNamePrefix || 'None' }}
                             </p>
                         </div>
-                        <div>
+                        <div class="md:col-span-2">
                             <p class="text-xs font-semibold tracking-[0.2em] text-muted-foreground uppercase">
-                                Footer Source
-                            </p>
-                            <p class="mt-1 truncate text-sm font-medium text-foreground">
-                                {{ props.settings.footerSourcePath || 'Default footer source' }}
-                            </p>
-                        </div>
-                        <div>
-                            <p class="text-xs font-semibold tracking-[0.2em] text-muted-foreground uppercase">
-                                Footer Printed Date
+                                Receipt Acceptance Start
                             </p>
                             <p class="mt-1 text-sm font-medium text-foreground">
-                                {{ props.settings.footerPrintedDate || 'Auto' }}
+                                {{ props.settings.receiptAcceptanceStartDate || 'Not set' }}
                             </p>
                         </div>
                     </div>

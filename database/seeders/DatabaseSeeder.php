@@ -28,5 +28,11 @@ class DatabaseSeeder extends Seeder
             'role' => UserRole::Staff,
             'password' => Hash::make('password'),
         ]);
+        User::updateOrCreate([
+            'name' => 'user2',
+            'email' => 'user2@gmail.com',
+            'role' => UserRole::Staff,
+            'password' => Hash::make('password'),
+        ]);
     }
 }

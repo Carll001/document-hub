@@ -24,6 +24,7 @@ class BirReceiptEmailParserTest extends TestCase
             'date_received_by_bir' => '10 April 2026',
             'time_received_by_bir' => '02:49 PM',
             'tin' => '010803043000',
+            'form_type' => '1702EXV2018C',
         ], $parsed);
     }
 
@@ -40,6 +41,7 @@ class BirReceiptEmailParserTest extends TestCase
             'date_received_by_bir' => null,
             'time_received_by_bir' => null,
             'tin' => null,
+            'form_type' => null,
         ], $parsed);
     }
 }

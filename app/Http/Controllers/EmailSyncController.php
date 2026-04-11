@@ -6,7 +6,7 @@ use App\Models\SyncedEmail;
 use App\Models\SyncedEmailAttachment;
 use App\Services\EmailSync\BirReceiptAutoMatchService;
 use App\Services\EmailSync\EmailHtmlRenderer;
-use App\Services\EmailSync\EmailSyncService;
+use App\Services\EmailSync\EmailSyncRunner;
 use Carbon\CarbonImmutable;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Http\JsonResponse;
@@ -35,19 +35,15 @@ class EmailSyncController extends Controller
             'search' => ['nullable', 'string', 'max:120'],
         ]);
 
-        $user = $request->user();
         $search = isset($validated['search']) ? trim((string) $validated['search']) : '';
         $emailPage = $this->birReceiptPage(
-            $user,
             (int) ($validated['page'] ?? 1),
             $search,
         );
         $appliedPage = $this->appliedBirReceiptPage(
-            $user,
             (int) ($validated['appliedPage'] ?? 1),
         );
         $latestSyncedEmail = SyncedEmail::query()
-            ->whereBelongsTo($user)
             ->latest('synced_at')
             ->first();
 
@@ -70,9 +66,7 @@ class EmailSyncController extends Controller
                 'syncResult' => $request->session()->get('syncResult'),
             ],
             'stats' => [
-                'totalStored' => SyncedEmail::query()
-                    ->whereBelongsTo($user)
-                    ->count(),
+                'totalStored' => SyncedEmail::query()->count(),
                 'latestSyncedAt' => $latestSyncedEmail?->synced_at?->toIso8601String(),
             ],
             'emails' => $this->transformEmails(collect($emailPage->items())),
@@ -80,8 +74,8 @@ class EmailSyncController extends Controller
             'appliedEmails' => $this->transformEmails(collect($appliedPage->items())),
             'appliedPagination' => $this->paginationPayload($appliedPage),
             'receiptCounts' => [
-                'unmatched' => $this->birReceiptQuery($user, false, $search)->count(),
-                'applied' => $this->birReceiptQuery($user, true)->count(),
+                'unmatched' => $this->birReceiptQuery(false, $search)->count(),
+                'applied' => $this->birReceiptQuery(true)->count(),
             ],
             'filters' => [
                 'search' => $search,
@@ -101,8 +95,8 @@ class EmailSyncController extends Controller
         $page = (int) ($validated['cursor'] ?? 1);
 
         return response()->json(
-            $this->legacyEmailPagePayload(
-                $this->emailPage($request->user(), $page),
+                $this->legacyEmailPagePayload(
+                $this->emailPage($page),
             ),
         );
     }
@@ -146,7 +140,7 @@ class EmailSyncController extends Controller
         SyncedEmail $syncedEmail,
         EmailHtmlRenderer $renderer,
     ): HttpResponse {
-        abort_unless($syncedEmail->user->is($request->user()), 404);
+        $this->abortUnlessAccessibleEmail($request, $syncedEmail);
 
         $syncedEmail->loadMissing('attachments');
 
@@ -179,10 +173,10 @@ class EmailSyncController extends Controller
     /**
      * Trigger an incremental Gmail inbox sync.
      */
-    public function sync(Request $request, EmailSyncService $service): RedirectResponse
+    public function sync(Request $request, EmailSyncRunner $runner): RedirectResponse
     {
         try {
-            $result = $service->sync($request->user());
+            $result = $runner->sync();
 
             return to_route('email-sync.index')
                 ->with('success', 'Inbox sync completed successfully.')
@@ -203,15 +197,14 @@ class EmailSyncController extends Controller
     /**
      * Import older Gmail inbox history.
      */
-    public function backfill(Request $request, EmailSyncService $service): RedirectResponse
+    public function backfill(Request $request, EmailSyncRunner $runner): RedirectResponse
     {
         $validated = $request->validate([
             'startDate' => ['required', 'date_format:Y-m-d'],
         ]);
 
         try {
-            $result = $service->backfill(
-                $request->user(),
+            $result = $runner->backfill(
                 CarbonImmutable::createFromFormat('Y-m-d', $validated['startDate'])->startOfDay(),
             );
 
@@ -234,10 +227,9 @@ class EmailSyncController extends Controller
     /**
      * Build the paginated stored-email query for the legacy inbox view.
      */
-    private function emailPage($user, int $page): LengthAwarePaginator
+    private function emailPage(int $page): LengthAwarePaginator
     {
         return SyncedEmail::query()
-            ->whereBelongsTo($user)
             ->with('attachments')
             ->orderByRaw(
                 'CASE WHEN received_at IS NULL OR received_at > synced_at THEN synced_at ELSE received_at END DESC',
@@ -246,9 +238,9 @@ class EmailSyncController extends Controller
             ->paginate(self::EMAILS_PER_PAGE, ['*'], 'page', $page);
     }
 
-    private function birReceiptPage($user, int $page, string $search): LengthAwarePaginator
+    private function birReceiptPage(int $page, string $search): LengthAwarePaginator
     {
-        return $this->birReceiptQuery($user, false, $search)
+        return $this->birReceiptQuery(false, $search)
             ->orderByRaw(
                 'CASE WHEN received_at IS NULL OR received_at > synced_at THEN synced_at ELSE received_at END DESC',
             )
@@ -257,19 +249,18 @@ class EmailSyncController extends Controller
             ->withQueryString();
     }
 
-    private function appliedBirReceiptPage($user, int $page): LengthAwarePaginator
+    private function appliedBirReceiptPage(int $page): LengthAwarePaginator
     {
-        return $this->birReceiptQuery($user, true)
+        return $this->birReceiptQuery(true)
             ->orderByDesc('bir_receipt_applied_at')
             ->orderByDesc('id')
             ->paginate(self::EMAILS_PER_PAGE, ['*'], 'appliedPage', $page)
             ->withQueryString();
     }
 
-    private function birReceiptQuery($user, bool $applied, string $search = '')
+    private function birReceiptQuery(bool $applied, string $search = '')
     {
         $query = SyncedEmail::query()
-            ->whereBelongsTo($user)
             ->with('attachments');
 
         if ($applied) {
@@ -476,10 +467,13 @@ class EmailSyncController extends Controller
         SyncedEmail $syncedEmail,
         SyncedEmailAttachment $attachment,
     ): void {
-        abort_unless(
-            $syncedEmail->user->is($request->user())
-                && $attachment->syncedEmail->is($syncedEmail),
-            404,
-        );
+        $this->abortUnlessAccessibleEmail($request, $syncedEmail);
+        abort_unless($attachment->syncedEmail->is($syncedEmail), 404);
+    }
+
+    private function abortUnlessAccessibleEmail(Request $request, SyncedEmail $syncedEmail): void
+    {
+        abort_unless($request->user()?->isStaff(), 404);
+        abort_unless($syncedEmail->exists, 404);
     }
 }

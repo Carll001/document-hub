@@ -11,7 +11,8 @@ class BirReceiptEmailParser
      *     file_name: string|null,
      *     date_received_by_bir: string|null,
      *     time_received_by_bir: string|null,
-     *     tin: string|null
+     *     tin: string|null,
+     *     form_type: string|null
      * }|null
      */
     public function parse(?string $text): ?array
@@ -45,6 +46,7 @@ class BirReceiptEmailParser
             'date_received_by_bir' => $dateReceived,
             'time_received_by_bir' => $timeReceived,
             'tin' => $this->tinFromFileName($fileName),
+            'form_type' => $this->formTypeFromFileName($fileName),
         ];
     }
 
@@ -76,5 +78,22 @@ class BirReceiptEmailParser
         $tin = is_string($tin) ? $tin : '';
 
         return $tin !== '' ? $tin : null;
+    }
+
+    private function formTypeFromFileName(?string $fileName): ?string
+    {
+        $fileName = trim((string) $fileName);
+
+        if ($fileName === '') {
+            return null;
+        }
+
+        if (! preg_match('/^\d+-([A-Za-z0-9]+)/', $fileName, $matches)) {
+            return null;
+        }
+
+        $formType = strtoupper(trim((string) ($matches[1] ?? '')));
+
+        return $formType !== '' ? $formType : null;
     }
 }

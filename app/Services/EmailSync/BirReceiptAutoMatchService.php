@@ -42,17 +42,27 @@ class BirReceiptAutoMatchService
             return;
         }
 
-        $matchedRow = $this->matchRowForTin(
-            $email->user_id,
-            $parsed['tin'],
-            $parsed['date_received_by_bir'] ?? null,
-        );
-
         if ($parsed['tin'] === null) {
             $email->forceFill($this->emailState($parsed, self::MATCH_STATUS_NO_TIN))->save();
 
             return;
         }
+
+        if (! $this->supportsFormType($parsed['form_type'] ?? null)) {
+            $email->forceFill($this->emailState(
+                $parsed,
+                self::MATCH_STATUS_UNMATCHED,
+                null,
+                'The receipt file type does not apply to 1702-EX.',
+            ))->save();
+
+            return;
+        }
+
+        $matchedRow = $this->matchRowForTin(
+            $parsed['tin'],
+            $parsed['date_received_by_bir'] ?? null,
+        );
 
         if ($matchedRow === null) {
             $email->forceFill($this->emailState($parsed, self::MATCH_STATUS_UNMATCHED))->save();
@@ -103,9 +113,13 @@ class BirReceiptAutoMatchService
             'date_received_by_bir' => $email->bir_receipt_date_received_by_bir,
             'time_received_by_bir' => $email->bir_receipt_time_received_by_bir,
             'tin' => $email->bir_receipt_tin,
+            'form_type' => $email->bir_receipt_form_type,
         ];
 
-        if (! $this->receiptPassesAcceptanceStartDate($row, $parsed['date_received_by_bir'])) {
+        if (
+            ! $this->supportsFormType($parsed['form_type'] ?? null)
+            || ! $this->receiptPassesAcceptanceStartDate($row, $parsed['date_received_by_bir'])
+        ) {
             return;
         }
 
@@ -118,7 +132,7 @@ class BirReceiptAutoMatchService
      *
      * @param  list<string|null>  $tins
      */
-    public function syncStoredEmailsForTins(int $userId, array $tins): void
+    public function syncStoredEmailsForTins(array $tins): void
     {
         $normalizedTins = collect($tins)
             ->map(fn (mixed $tin): ?string => $this->normalizeTin($tin))
@@ -131,7 +145,6 @@ class BirReceiptAutoMatchService
         }
 
         $emails = SyncedEmail::query()
-            ->where('user_id', $userId)
             ->where(function ($query): void {
                 $query
                     ->whereNotNull('bir_receipt_tin')
@@ -195,7 +208,8 @@ class BirReceiptAutoMatchService
      *     file_name: string|null,
      *     date_received_by_bir: string|null,
      *     time_received_by_bir: string|null,
-     *     tin: string|null
+     *     tin: string|null,
+     *     form_type: string|null
      * }|null  $parsed
      * @return array<string, mixed>
      */
@@ -210,6 +224,7 @@ class BirReceiptAutoMatchService
             'bir_receipt_date_received_by_bir' => $parsed['date_received_by_bir'] ?? null,
             'bir_receipt_time_received_by_bir' => $parsed['time_received_by_bir'] ?? null,
             'bir_receipt_tin' => $parsed['tin'] ?? null,
+            'bir_receipt_form_type' => $parsed['form_type'] ?? null,
             'matched_form_1702_ex_batch_row_id' => $matchedRow?->getKey(),
             'bir_receipt_match_status' => $status,
             'bir_receipt_match_error' => $error,
@@ -219,7 +234,6 @@ class BirReceiptAutoMatchService
     }
 
     private function matchRowForTin(
-        int $userId,
         ?string $tin,
         ?string $dateReceivedByBir = null,
     ): ?Form1702ExBatchRow
@@ -233,7 +247,6 @@ class BirReceiptAutoMatchService
         /** @var Collection<int, Form1702ExBatchRow> $rows */
         $rows = Form1702ExBatchRow::query()
             ->with('batch')
-            ->whereHas('batch', fn ($query) => $query->where('user_id', $userId))
             ->orderBy('uploaded_at')
             ->orderBy('id')
             ->get();
@@ -331,6 +344,13 @@ class BirReceiptAutoMatchService
         $digits = is_string($digits) ? $digits : '';
 
         return $digits !== '' ? $digits : null;
+    }
+
+    private function supportsFormType(?string $formType): bool
+    {
+        $normalized = strtoupper(trim((string) $formType));
+
+        return in_array($normalized, ['1702EX', '1702EXV2018C'], true);
     }
 
     private function rowIsEligibleForMatch(Form1702ExBatchRow $row): bool
