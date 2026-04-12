@@ -121,7 +121,7 @@ class Form1702ExTest extends TestCase
 
         $staff = User::factory()->create();
         $email = SyncedEmail::query()->create([
-            'user_id' => $staff->id,
+            'claimed_by_user_id' => $staff->id,
             'mailbox' => 'INBOX',
             'imap_uid' => '9501',
             'message_id' => '<message-9501@example.com>',

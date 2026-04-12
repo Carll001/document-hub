@@ -183,7 +183,7 @@ class Form1702ExReceiptTest extends TestCase
             ]),
         ]));
         $email = SyncedEmail::query()->create([
-            'user_id' => $staff->id,
+            'claimed_by_user_id' => $staff->id,
             'mailbox' => 'INBOX',
             'imap_uid' => '9001',
             'message_id' => '<message-9001@example.com>',
@@ -253,7 +253,7 @@ class Form1702ExReceiptTest extends TestCase
             ]),
         ]);
         $email = SyncedEmail::query()->create([
-            'user_id' => $staff->id,
+            'claimed_by_user_id' => $staff->id,
             'mailbox' => 'INBOX',
             'imap_uid' => '9002',
             'message_id' => '<message-9002@example.com>',
@@ -309,7 +309,7 @@ class Form1702ExReceiptTest extends TestCase
             ]),
         ]));
         $email = SyncedEmail::query()->create([
-            'user_id' => $staff->id,
+            'claimed_by_user_id' => $staff->id,
             'mailbox' => 'INBOX',
             'imap_uid' => '9004',
             'message_id' => '<message-9004@example.com>',
@@ -344,7 +344,7 @@ class Form1702ExReceiptTest extends TestCase
             'receipt_acceptance_start_date' => '2026-04-10',
         ]);
         $email = SyncedEmail::query()->create([
-            'user_id' => $staff->id,
+            'claimed_by_user_id' => $staff->id,
             'mailbox' => 'INBOX',
             'imap_uid' => '9013',
             'message_id' => '<message-9013@example.com>',
@@ -391,7 +391,7 @@ class Form1702ExReceiptTest extends TestCase
             'name' => 'Uploaded Later Batch',
         ]);
         $email = SyncedEmail::query()->create([
-            'user_id' => $staff->id,
+            'claimed_by_user_id' => $staff->id,
             'mailbox' => 'INBOX',
             'imap_uid' => '9010',
             'message_id' => '<message-9010@example.com>',
@@ -468,7 +468,7 @@ class Form1702ExReceiptTest extends TestCase
             'source_row_number' => 4,
         ]));
         $email = SyncedEmail::query()->create([
-            'user_id' => $staff->id,
+            'claimed_by_user_id' => $staff->id,
             'mailbox' => 'INBOX',
             'imap_uid' => '9011',
             'message_id' => '<message-9011@example.com>',
@@ -551,7 +551,7 @@ class Form1702ExReceiptTest extends TestCase
             'source_row_number' => 3,
         ]));
         $email = SyncedEmail::query()->create([
-            'user_id' => $staff->id,
+            'claimed_by_user_id' => $staff->id,
             'mailbox' => 'INBOX',
             'imap_uid' => '9012',
             'message_id' => '<message-9012@example.com>',
@@ -755,7 +755,7 @@ class Form1702ExReceiptTest extends TestCase
 
         $staff = User::factory()->create();
         $email = SyncedEmail::query()->create([
-            'user_id' => $staff->id,
+            'claimed_by_user_id' => $staff->id,
             'mailbox' => 'INBOX',
             'imap_uid' => '9003',
             'message_id' => '<message-9003@example.com>',

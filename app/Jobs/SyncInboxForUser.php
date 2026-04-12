@@ -22,18 +22,22 @@ class SyncInboxForUser implements ShouldQueue
     public int $tries = 1;
 
     public function __construct(
-        public readonly int $userId,
+        public readonly ?int $userId = null,
     ) {
     }
 
     public function handle(EmailSyncRunner $runner): void
     {
-        $user = User::query()->find($this->userId);
+        if ($this->userId !== null) {
+            $user = User::query()->find($this->userId);
 
-        if (! $user instanceof User || ! $user->isStaff()) {
+            if (! $user instanceof User || ! $user->isStaff()) {
+                return;
+            }
+        } elseif (! User::query()->where('role', \App\Enums\UserRole::Staff)->exists()) {
             return;
         }
 
-        $runner->syncIfAvailable($user);
+        $runner->syncIfAvailable();
     }
 }

@@ -36,7 +36,7 @@ class EmailSyncTest extends TestCase
         $user = User::factory()->create();
 
         $email = SyncedEmail::query()->create([
-            'user_id' => null,
+            'claimed_by_user_id' => $user->id,
             'mailbox' => 'INBOX',
             'imap_uid' => '1001',
             'message_id' => '<message-1001@example.com>',
@@ -93,7 +93,7 @@ class EmailSyncTest extends TestCase
 
         foreach (range(1, 26) as $offset) {
             SyncedEmail::query()->create([
-                'user_id' => null,
+                'claimed_by_user_id' => $user->id,
                 'mailbox' => 'INBOX',
                 'imap_uid' => (string) (2000 + $offset),
                 'message_id' => "<message-{$offset}@example.com>",
@@ -134,7 +134,7 @@ class EmailSyncTest extends TestCase
         $user = User::factory()->create();
 
         SyncedEmail::query()->create([
-            'user_id' => null,
+            'claimed_by_user_id' => $user->id,
             'mailbox' => 'INBOX',
             'imap_uid' => '4001',
             'message_id' => '<message-4001@example.com>',
@@ -153,7 +153,7 @@ class EmailSyncTest extends TestCase
         ]);
 
         SyncedEmail::query()->create([
-            'user_id' => null,
+            'claimed_by_user_id' => $user->id,
             'mailbox' => 'INBOX',
             'imap_uid' => '4002',
             'message_id' => '<message-4002@example.com>',
@@ -187,7 +187,7 @@ class EmailSyncTest extends TestCase
 
         foreach (range(1, 30) as $offset) {
             SyncedEmail::query()->create([
-                'user_id' => null,
+                'claimed_by_user_id' => $user->id,
                 'mailbox' => 'INBOX',
                 'imap_uid' => (string) (3000 + $offset),
                 'message_id' => "<message-{$offset}@example.com>",
@@ -211,6 +211,75 @@ class EmailSyncTest extends TestCase
             ->assertJsonCount(5, 'emails')
             ->assertJsonPath('emails.0.subject', 'Message 26')
             ->assertJsonPath('emails.4.subject', 'Message 30');
+    }
+
+    public function test_unclaimed_emails_are_visible_to_multiple_staff_users(): void
+    {
+        $this->withoutVite();
+
+        $firstUser = User::factory()->create();
+        $secondUser = User::factory()->create();
+
+        SyncedEmail::query()->create([
+            'mailbox' => 'INBOX',
+            'imap_uid' => '3500',
+            'message_id' => '<message-3500@example.com>',
+            'subject' => 'Shared unclaimed receipt',
+            'body_text' => 'Shared unclaimed receipt',
+            'bir_receipt_tin' => '1234567890000',
+            'bir_receipt_match_status' => 'unmatched',
+            'synced_at' => now(),
+        ]);
+
+        $this->actingAs($firstUser)
+            ->get(route('email-sync.index'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('stats.totalStored', 1)
+                ->where('emails.0.subject', 'Shared unclaimed receipt'),
+            );
+
+        $this->actingAs($secondUser)
+            ->get(route('email-sync.index'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('stats.totalStored', 1)
+                ->where('emails.0.subject', 'Shared unclaimed receipt'),
+            );
+    }
+
+    public function test_claimed_emails_are_hidden_from_other_staff_users(): void
+    {
+        $this->withoutVite();
+
+        $owner = User::factory()->create();
+        $otherUser = User::factory()->create();
+
+        $email = SyncedEmail::query()->create([
+            'claimed_by_user_id' => $owner->id,
+            'mailbox' => 'INBOX',
+            'imap_uid' => '3600',
+            'message_id' => '<message-3600@example.com>',
+            'subject' => 'Claimed receipt',
+            'body_text' => 'Claimed receipt',
+            'bir_receipt_tin' => '1234567890000',
+            'bir_receipt_match_status' => 'applied',
+            'bir_receipt_applied_at' => now(),
+            'synced_at' => now(),
+        ]);
+
+        $this->actingAs($otherUser)
+            ->get(route('email-sync.index'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('stats.totalStored', 0)
+                ->has('emails', 0)
+                ->has('appliedEmails', 0),
+            );
+
+        $this->actingAs($otherUser)
+            ->get(route('email-sync.rendered', ['syncedEmail' => $email]))
+            ->assertNotFound();
     }
 
     public function test_authenticated_users_can_trigger_an_email_sync()
@@ -321,7 +390,7 @@ class EmailSyncTest extends TestCase
         $user = User::factory()->create();
 
         $email = SyncedEmail::query()->create([
-            'user_id' => null,
+            'claimed_by_user_id' => $user->id,
             'mailbox' => 'INBOX',
             'imap_uid' => '1002',
             'message_id' => '<message-1002@example.com>',
@@ -360,7 +429,7 @@ class EmailSyncTest extends TestCase
         $user = User::factory()->create();
 
         $email = SyncedEmail::query()->create([
-            'user_id' => null,
+            'claimed_by_user_id' => $user->id,
             'mailbox' => 'INBOX',
             'imap_uid' => '1200',
             'message_id' => '<message-1200@example.com>',
@@ -408,7 +477,7 @@ class EmailSyncTest extends TestCase
         $user = User::factory()->create();
 
         $email = SyncedEmail::query()->create([
-            'user_id' => null,
+            'claimed_by_user_id' => $user->id,
             'mailbox' => 'INBOX',
             'imap_uid' => '1300',
             'message_id' => '<message-1300@example.com>',

@@ -4,6 +4,7 @@ namespace App\Services\EmailSync;
 
 use App\Models\SyncedEmail;
 use Carbon\CarbonImmutable;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use RuntimeException;
@@ -115,7 +116,6 @@ class EmailSyncService
                     'imap_uid' => $message['imap_uid'],
                 ],
                 [
-                    'user_id' => null,
                     'message_id' => $message['message_id'],
                     'from_name' => $message['from_name'],
                     'from_email' => $message['from_email'],
@@ -162,6 +162,7 @@ class EmailSyncService
      * Build the base query used for synced email mailbox lookups.
      */
     private function mailboxQuery(string $mailbox)
+    : Builder
     {
         return SyncedEmail::query()
             ->where('mailbox', $mailbox);

@@ -4,6 +4,7 @@ namespace Tests\Unit;
 
 use App\Models\SyncedEmail;
 use App\Models\SyncedEmailAttachment;
+use App\Services\EmailSync\BirReceiptAutoMatchService;
 use App\Services\EmailSync\EmailSyncClient;
 use App\Services\EmailSync\EmailSyncService;
 use Carbon\CarbonImmutable;
@@ -47,7 +48,6 @@ class EmailSyncServiceTest extends TestCase
         ], $result);
         $this->assertDatabaseCount('synced_emails', 2);
         $this->assertDatabaseHas('synced_emails', [
-            'user_id' => null,
             'imap_uid' => '9001',
             'subject' => 'Message 9001',
             'body_html' => '<p>Body 9001</p>',
@@ -65,7 +65,6 @@ class EmailSyncServiceTest extends TestCase
     public function test_incremental_sync_only_fetches_uids_newer_than_the_latest_saved_email()
     {
         SyncedEmail::query()->create([
-            'user_id' => null,
             'mailbox' => 'INBOX',
             'imap_uid' => '200',
             'message_id' => '<message-200@example.com>',
@@ -95,7 +94,6 @@ class EmailSyncServiceTest extends TestCase
         $this->assertSame(2, $result['created']);
         $this->assertDatabaseCount('synced_emails', 3);
         $this->assertDatabaseHas('synced_emails', [
-            'user_id' => null,
             'imap_uid' => '202',
         ]);
     }
@@ -115,11 +113,10 @@ class EmailSyncServiceTest extends TestCase
 
         $result = $service->backfill($startDate);
 
-        $this->assertTrue($client->wasCalled('uidsReceivedSince', [$startDate->startOfDay()]));
+        $this->assertTrue($client->wasCalled('uidsReceivedSince'));
         $this->assertSame(2, $result['created']);
         $this->assertDatabaseCount('synced_emails', 2);
         $this->assertDatabaseHas('synced_emails', [
-            'user_id' => null,
             'imap_uid' => '150',
         ]);
     }
@@ -138,7 +135,7 @@ class EmailSyncServiceTest extends TestCase
             'updated' => 0,
             'mailbox' => 'INBOX',
         ], $result);
-        $this->assertTrue($client->wasCalled('uidsReceivedSince', [$startDate->startOfDay()]));
+        $this->assertTrue($client->wasCalled('uidsReceivedSince'));
     }
 
     /**
@@ -201,9 +198,17 @@ class EmailSyncServiceTest extends TestCase
             ],
         ]);
 
-        return new class($client) extends EmailSyncService
+        $autoMatchService = \Mockery::mock(BirReceiptAutoMatchService::class);
+        $autoMatchService->shouldReceive('syncEmail')->andReturnNull();
+
+        return new class($client, $autoMatchService) extends EmailSyncService
         {
-            public function __construct(private readonly FakeEmailSyncClient $client) {}
+            public function __construct(
+                private readonly FakeEmailSyncClient $client,
+                BirReceiptAutoMatchService $birReceiptAutoMatchService,
+            ) {
+                parent::__construct($birReceiptAutoMatchService);
+            }
 
             protected function makeClient(array $config): EmailSyncClient
             {

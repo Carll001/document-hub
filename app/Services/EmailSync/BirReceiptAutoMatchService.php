@@ -10,6 +10,7 @@ use App\Models\Form1702ExBatchRow;
 use App\Models\SyncedEmail;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 
 class BirReceiptAutoMatchService
 {
@@ -42,6 +43,10 @@ class BirReceiptAutoMatchService
             return;
         }
 
+        $matchedRow = $this->matchRowForTin(
+            $parsed['tin'],
+            $parsed['date_received_by_bir'] ?? null,
+        );
         if ($parsed['tin'] === null) {
             $email->forceFill($this->emailState($parsed, self::MATCH_STATUS_NO_TIN))->save();
 
@@ -82,14 +87,20 @@ class BirReceiptAutoMatchService
             return;
         }
 
+        $claimedEmail = $this->claimEmailForUser($email, (int) $matchedRow->batch->user_id);
+
+        if (! $claimedEmail instanceof SyncedEmail) {
+            return;
+        }
+
         if (! $this->rowCanQueueReceipt($matchedRow)) {
-            $this->markPending($email, $matchedRow, $parsed);
+            $this->markPending($claimedEmail, $matchedRow, $parsed);
             $this->ensureRowGenerationQueued($matchedRow);
 
             return;
         }
 
-        $this->queueReceipt($email, $matchedRow, $parsed);
+        $this->queueReceipt($claimedEmail, $matchedRow, $parsed);
     }
 
     public function applyPendingForRow(Form1702ExBatchRow $row): void
@@ -172,11 +183,15 @@ class BirReceiptAutoMatchService
 
     public function markReceiptApplied(Form1702ExBatchRow $row, SyncedEmail $email): void
     {
+        $row->loadMissing('batch');
+
         $email->forceFill([
             'matched_form_1702_ex_batch_row_id' => $row->getKey(),
             'bir_receipt_match_status' => self::MATCH_STATUS_APPLIED,
             'bir_receipt_applied_at' => now(),
             'bir_receipt_match_error' => null,
+            'claimed_by_user_id' => (int) $row->batch->user_id,
+            'claimed_at' => $email->claimed_at ?? now(),
         ])->save();
 
         $row->forceFill([
@@ -190,10 +205,14 @@ class BirReceiptAutoMatchService
 
     public function markReceiptFailed(Form1702ExBatchRow $row, SyncedEmail $email, string $message): void
     {
+        $row->loadMissing('batch');
+
         $email->forceFill([
             'matched_form_1702_ex_batch_row_id' => $row->getKey(),
             'bir_receipt_match_status' => self::MATCH_STATUS_FAILED,
             'bir_receipt_match_error' => $message,
+            'claimed_by_user_id' => (int) $row->batch->user_id,
+            'claimed_at' => $email->claimed_at ?? now(),
         ])->save();
 
         $row->forceFill([
@@ -270,6 +289,8 @@ class BirReceiptAutoMatchService
      */
     private function queueReceipt(SyncedEmail $email, Form1702ExBatchRow $row, array $parsed): void
     {
+        $row->loadMissing('batch');
+
         $values = [
             'file_name' => (string) ($parsed['file_name'] ?? ''),
             'date_received_by_bir' => (string) ($parsed['date_received_by_bir'] ?? ''),
@@ -285,6 +306,7 @@ class BirReceiptAutoMatchService
         ])->save();
 
         $email->forceFill($this->emailState($parsed, self::MATCH_STATUS_QUEUED, $row))->save();
+        $this->touchClaim($email, (int) $row->batch->user_id);
 
         GenerateForm1702ExRowReceipt::dispatch(
             (int) $row->getKey(),
@@ -303,7 +325,10 @@ class BirReceiptAutoMatchService
      */
     private function markPending(SyncedEmail $email, Form1702ExBatchRow $row, array $parsed): void
     {
+        $row->loadMissing('batch');
+
         $email->forceFill($this->emailState($parsed, self::MATCH_STATUS_PENDING_PDF, $row))->save();
+        $this->touchClaim($email, (int) $row->batch->user_id);
         $row->forceFill([
             'auto_receipt_synced_email_id' => $email->getKey(),
             'auto_receipt_status' => self::MATCH_STATUS_PENDING_PDF,
@@ -504,5 +529,41 @@ class BirReceiptAutoMatchService
         } catch (\Throwable) {
             return null;
         }
+    }
+
+    private function claimEmailForUser(SyncedEmail $email, int $userId): ?SyncedEmail
+    {
+        return DB::transaction(function () use ($email, $userId): ?SyncedEmail {
+            $lockedEmail = SyncedEmail::query()
+                ->with('claimedByUser')
+                ->whereKey($email->getKey())
+                ->lockForUpdate()
+                ->first();
+
+            if (! $lockedEmail instanceof SyncedEmail) {
+                return null;
+            }
+
+            if ($lockedEmail->claimed_by_user_id !== null && (int) $lockedEmail->claimed_by_user_id !== $userId) {
+                return null;
+            }
+
+            if ($lockedEmail->claimed_by_user_id === null) {
+                $lockedEmail->forceFill([
+                    'claimed_by_user_id' => $userId,
+                    'claimed_at' => now(),
+                ])->save();
+            }
+
+            return $lockedEmail;
+        });
+    }
+
+    private function touchClaim(SyncedEmail $email, int $userId): void
+    {
+        $email->forceFill([
+            'claimed_by_user_id' => $userId,
+            'claimed_at' => $email->claimed_at ?? now(),
+        ])->save();
     }
 }

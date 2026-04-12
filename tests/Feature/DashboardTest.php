@@ -28,7 +28,7 @@ class DashboardTest extends TestCase
         $otherUser = User::factory()->create();
 
         SyncedEmail::query()->create([
-            'user_id' => $user->id,
+            'claimed_by_user_id' => $user->id,
             'mailbox' => 'INBOX',
             'imap_uid' => '1001',
             'message_id' => '<dashboard-1@example.com>',
@@ -41,13 +41,13 @@ class DashboardTest extends TestCase
             'synced_at' => now()->subMinutes(5),
         ])->attachments()->create([
             'file_name' => 'alert.pdf',
-            'storage_path' => 'email-sync/'.$user->id.'/1/alert.pdf',
+            'storage_path' => 'email-sync/shared/1/alert.pdf',
             'content_type' => 'application/pdf',
             'file_size' => 1024,
         ]);
 
         SyncedEmail::query()->create([
-            'user_id' => $user->id,
+            'claimed_by_user_id' => $user->id,
             'mailbox' => 'INBOX',
             'imap_uid' => '1002',
             'message_id' => '<dashboard-2@example.com>',
@@ -61,7 +61,7 @@ class DashboardTest extends TestCase
         ]);
 
         SyncedEmail::query()->create([
-            'user_id' => $otherUser->id,
+            'claimed_by_user_id' => $otherUser->id,
             'mailbox' => 'INBOX',
             'imap_uid' => '9999',
             'message_id' => '<foreign-dashboard@example.com>',

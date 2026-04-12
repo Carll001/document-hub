@@ -27,7 +27,7 @@ class DashboardController extends Controller
         }
 
         $syncedEmailQuery = SyncedEmail::query()
-            ->whereBelongsTo($user);
+            ->visibleTo($user);
 
         $mergedPdfQuery = MergedPdf::query()
             ->whereBelongsTo($user);
