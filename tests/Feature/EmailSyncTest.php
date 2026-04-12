@@ -47,6 +47,7 @@ class EmailSyncTest extends TestCase
             'body_text' => "Hello there,\n\nYour quarterly account update is ready to review.",
             'body_html' => '<p>Hello there,</p><p>Your quarterly account update is ready to review.</p>',
             'bir_receipt_file_name' => '1234567890000_RPT.pdf',
+            'bir_receipt_form_type' => '1702EXV2018C',
             'bir_receipt_date_received_by_bir' => 'Apr 10, 2026',
             'bir_receipt_time_received_by_bir' => '9:30 AM',
             'bir_receipt_tin' => '1234567890000',
@@ -79,8 +80,11 @@ class EmailSyncTest extends TestCase
                 ->where('emails.0.matchedTin', '1234567890000')
                 ->where('emails.0.matchStatus', 'unmatched')
                 ->where('emails.0.parsedBirReceiptDetails.fileName', '1234567890000_RPT.pdf')
+                ->where('emails.0.parsedBirReceiptDetails.formType', '1702EXV2018C')
                 ->where('emails.0.parsedBirReceiptDetails.dateReceived', 'Apr 10, 2026')
                 ->where('emails.0.parsedBirReceiptDetails.timeReceived', '9:30 AM')
+                ->where('filters.formType', '')
+                ->where('filters.formTypeOptions.0', '1702EXV2018C')
                 ->has('appliedEmails', 0),
             );
     }
@@ -488,6 +492,7 @@ class EmailSyncTest extends TestCase
             'body_text' => null,
             'body_html' => '<div dir="ltr"><br></div>',
             'bir_receipt_file_name' => '1234567890000_RPT.pdf',
+            'bir_receipt_form_type' => '1702EXV2018C',
             'bir_receipt_date_received_by_bir' => 'Apr 10, 2026',
             'bir_receipt_time_received_by_bir' => '9:30 AM',
             'bir_receipt_tin' => '1234567890000',
@@ -512,7 +517,103 @@ class EmailSyncTest extends TestCase
                 ->where('emails.0.subject', null)
                 ->where('emails.0.hasHtmlBody', false)
                 ->where('emails.0.parsedBirReceiptDetails.fileName', '1234567890000_RPT.pdf')
+                ->where('emails.0.parsedBirReceiptDetails.formType', '1702EXV2018C')
                 ->where('emails.0.attachments.0.fileName', 'Payment_Confirmation_Receipt_Mockup.pdf'),
+            );
+    }
+
+    public function test_scanned_email_search_can_filter_by_form_type()
+    {
+        $this->withoutVite();
+
+        $user = User::factory()->create();
+
+        SyncedEmail::query()->create([
+            'claimed_by_user_id' => $user->id,
+            'mailbox' => 'INBOX',
+            'imap_uid' => '1600',
+            'message_id' => '<message-1600@example.com>',
+            'subject' => '1702-EX receipt',
+            'body_text' => '1702-EX receipt',
+            'bir_receipt_file_name' => '010860961000-1702EXv2018C-122025.xml',
+            'bir_receipt_form_type' => '1702EXV2018C',
+            'bir_receipt_tin' => '010860961000',
+            'bir_receipt_match_status' => 'unmatched',
+            'synced_at' => now()->subMinute(),
+        ]);
+
+        SyncedEmail::query()->create([
+            'claimed_by_user_id' => $user->id,
+            'mailbox' => 'INBOX',
+            'imap_uid' => '1601',
+            'message_id' => '<message-1601@example.com>',
+            'subject' => '1701A receipt',
+            'body_text' => '1701A receipt',
+            'bir_receipt_file_name' => '445926028000-1701A-122025.xml',
+            'bir_receipt_form_type' => '1701A',
+            'bir_receipt_tin' => '445926028000',
+            'bir_receipt_match_status' => 'unmatched',
+            'bir_receipt_match_error' => 'The receipt file type does not apply to 1702-EX.',
+            'synced_at' => now(),
+        ]);
+
+        $this->actingAs($user)
+            ->get(route('email-sync.index', ['search' => '1701A']))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('EmailSync')
+                ->has('emails', 1)
+                ->where('emails.0.parsedBirReceiptDetails.fileName', '445926028000-1701A-122025.xml')
+                ->where('emails.0.parsedBirReceiptDetails.formType', '1701A')
+                ->where('emails.0.matchError', 'The receipt file type does not apply to 1702-EX.'),
+            );
+    }
+
+    public function test_scanned_email_form_type_filter_returns_only_matching_form_types()
+    {
+        $this->withoutVite();
+
+        $user = User::factory()->create();
+
+        SyncedEmail::query()->create([
+            'claimed_by_user_id' => $user->id,
+            'mailbox' => 'INBOX',
+            'imap_uid' => '1700',
+            'message_id' => '<message-1700@example.com>',
+            'subject' => '1702-EX receipt',
+            'body_text' => '1702-EX receipt',
+            'bir_receipt_file_name' => '010860961000-1702EXv2018C-122025.xml',
+            'bir_receipt_form_type' => '1702EXV2018C',
+            'bir_receipt_tin' => '010860961000',
+            'bir_receipt_match_status' => 'unmatched',
+            'synced_at' => now()->subMinute(),
+        ]);
+
+        SyncedEmail::query()->create([
+            'claimed_by_user_id' => $user->id,
+            'mailbox' => 'INBOX',
+            'imap_uid' => '1701',
+            'message_id' => '<message-1701@example.com>',
+            'subject' => '1701A receipt',
+            'body_text' => '1701A receipt',
+            'bir_receipt_file_name' => '445926028000-1701A-122025.xml',
+            'bir_receipt_form_type' => '1701A',
+            'bir_receipt_tin' => '445926028000',
+            'bir_receipt_match_status' => 'unmatched',
+            'bir_receipt_match_error' => 'The receipt file type does not apply to 1702-EX.',
+            'synced_at' => now(),
+        ]);
+
+        $this->actingAs($user)
+            ->get(route('email-sync.index', ['formType' => '1701A']))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('EmailSync')
+                ->where('filters.formType', '1701A')
+                ->has('filters.formTypeOptions', 2)
+                ->has('emails', 1)
+                ->where('emails.0.parsedBirReceiptDetails.formType', '1701A')
+                ->where('emails.0.parsedBirReceiptDetails.fileName', '445926028000-1701A-122025.xml'),
             );
     }
 

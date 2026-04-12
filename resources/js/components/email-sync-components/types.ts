@@ -33,6 +33,7 @@ export type EmailRecord = {
     matchError: string | null;
     parsedBirReceiptDetails: {
         fileName: string | null;
+        formType: string | null;
         dateReceived: string | null;
         timeReceived: string | null;
     };
@@ -97,6 +98,8 @@ export type EmailSyncPageProps = {
     };
     filters: {
         search: string;
+        formType: string;
+        formTypeOptions: string[];
     };
 };
 

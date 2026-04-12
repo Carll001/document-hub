@@ -36,6 +36,7 @@ const props = defineProps<{
         from: number | null;
         to: number | null;
     };
+    formTypeFilter: string;
     unmatchedPage: number;
 }>();
 
@@ -79,6 +80,7 @@ function visitPage(page: number): void {
         {
             page: props.unmatchedPage,
             appliedPage: page,
+            formType: props.formTypeFilter || undefined,
         },
         {
             preserveScroll: true,
@@ -113,6 +115,7 @@ function visitPage(page: number): void {
                         <TableRow>
                             <TableHead>TIN</TableHead>
                             <TableHead>FILE NAME</TableHead>
+                            <TableHead>FORM TYPE</TableHead>
                             <TableHead>DATE RECEIVED</TableHead>
                             <TableHead>TIME RECEIVED</TableHead>
                             <TableHead>MATCH STATUS</TableHead>
@@ -142,6 +145,12 @@ function visitPage(page: number): void {
                                 </TableCell>
                                 <TableCell class="text-sm text-muted-foreground">
                                     {{
+                                        email.parsedBirReceiptDetails.formType ||
+                                        'Not detected'
+                                    }}
+                                </TableCell>
+                                <TableCell class="text-sm text-muted-foreground">
+                                    {{
                                         email.parsedBirReceiptDetails.dateReceived ||
                                         '-'
                                     }}
@@ -167,7 +176,7 @@ function visitPage(page: number): void {
                             </TableRow>
                         </template>
 
-                        <TableEmpty v-else :colspan="5">
+                        <TableEmpty v-else :colspan="6">
                             No applied BIR receipts yet.
                         </TableEmpty>
                     </TableBody>

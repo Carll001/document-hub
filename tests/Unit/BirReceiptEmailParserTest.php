@@ -44,4 +44,23 @@ class BirReceiptEmailParserTest extends TestCase
             'form_type' => null,
         ], $parsed);
     }
+
+    public function test_it_extracts_non_1702_ex_form_types_from_the_receipt_file_name(): void
+    {
+        $parser = new BirReceiptEmailParser();
+
+        $parsed = $parser->parse(implode("\n", [
+            'File name: 445926028000-1701A-122025.xml',
+            'Date received by BIR: 9 April 2026',
+            'Time received by BIR: 11:10 AM',
+        ]));
+
+        $this->assertSame([
+            'file_name' => '445926028000-1701A-122025.xml',
+            'date_received_by_bir' => '9 April 2026',
+            'time_received_by_bir' => '11:10 AM',
+            'tin' => '445926028000',
+            'form_type' => '1701A',
+        ], $parsed);
+    }
 }

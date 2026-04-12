@@ -6,6 +6,13 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from '@/components/ui/select';
+import {
     Table,
     TableBody,
     TableCell,
@@ -30,14 +37,18 @@ const props = defineProps<{
         to: number | null;
     };
     searchTerm: string;
+    formTypeFilter: string;
+    formTypeOptions: string[];
     totalStoredEmails: number;
 }>();
 
 const emit = defineEmits<{
     'update:searchTerm': [value: string];
+    'update:formTypeFilter': [value: string];
 }>();
 
 const paginationControls = ref<HTMLElement | null>(null);
+const ALL_FORM_TYPES_VALUE = '__all_form_types__';
 
 type PaginationItem = number | 'ellipsis-start' | 'ellipsis-end';
 
@@ -85,6 +96,8 @@ function visitPage(page: number): void {
         {
             page,
             appliedPage: props.appliedPage,
+            search: props.searchTerm.trim() || undefined,
+            formType: props.formTypeFilter || undefined,
         },
         {
             preserveScroll: true,
@@ -108,19 +121,53 @@ function visitPage(page: number): void {
             <div
                 class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between"
             >
-                <div class="relative w-full max-w-xl">
-                    <Search
-                        class="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
-                    />
-                    <Input
-                        :model-value="props.searchTerm"
-                        class="h-10 rounded-2xl pl-10 text-sm"
-                        type="search"
-                        placeholder="Search TIN, file name, date, time, or status"
-                        @update:model-value="
-                            emit('update:searchTerm', String($event))
+                <div class="flex w-full max-w-4xl flex-col gap-3 md:flex-row">
+                    <div class="relative flex-1">
+                        <Search
+                            class="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
+                        />
+                        <Input
+                            :model-value="props.searchTerm"
+                            class="h-10 rounded-2xl pl-10 text-sm"
+                            type="search"
+                            placeholder="Search TIN, file name, date, time, or status"
+                            @update:model-value="
+                                emit('update:searchTerm', String($event))
+                            "
+                        />
+                    </div>
+
+                    <Select
+                        :model-value="
+                            props.formTypeFilter === ''
+                                ? ALL_FORM_TYPES_VALUE
+                                : props.formTypeFilter
                         "
-                    />
+                        @update:model-value="
+                            emit(
+                                'update:formTypeFilter',
+                                $event === ALL_FORM_TYPES_VALUE
+                                    ? ''
+                                    : String($event ?? ''),
+                            )
+                        "
+                    >
+                        <SelectTrigger class="h-10 w-full rounded-2xl md:w-[15rem]">
+                            <SelectValue placeholder="All form types" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem :value="ALL_FORM_TYPES_VALUE">
+                                All form types
+                            </SelectItem>
+                            <SelectItem
+                                v-for="formType in props.formTypeOptions"
+                                :key="formType"
+                                :value="formType"
+                            >
+                                {{ formType }}
+                            </SelectItem>
+                        </SelectContent>
+                    </Select>
                 </div>
 
                 <p class="text-sm text-muted-foreground">
@@ -138,6 +185,7 @@ function visitPage(page: number): void {
                         <TableRow>
                             <TableHead>TIN</TableHead>
                             <TableHead>FILE NAME</TableHead>
+                            <TableHead>FORM TYPE</TableHead>
                             <TableHead>DATE RECEIVED</TableHead>
                             <TableHead>TIME RECEIVED</TableHead>
                             <TableHead>MATCH STATUS</TableHead>
@@ -163,6 +211,12 @@ function visitPage(page: number): void {
                                     {{
                                         email.parsedBirReceiptDetails.fileName ||
                                         '-'
+                                    }}
+                                </TableCell>
+                                <TableCell class="text-sm text-muted-foreground">
+                                    {{
+                                        email.parsedBirReceiptDetails.formType ||
+                                        'Not detected'
                                     }}
                                 </TableCell>
                                 <TableCell class="text-sm text-muted-foreground">
@@ -202,7 +256,7 @@ function visitPage(page: number): void {
                             </TableRow>
                         </template>
 
-                        <TableEmpty v-else :colspan="5">
+                        <TableEmpty v-else :colspan="6">
                             {{
                                 props.totalStoredEmails === 0
                                     ? 'No unmatched BIR receipt email yet. Sync your inbox to build the list.'

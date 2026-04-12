@@ -23,6 +23,7 @@ use Illuminate\Support\Facades\Storage;
     'bir_receipt_date_received_by_bir',
     'bir_receipt_time_received_by_bir',
     'bir_receipt_tin',
+    'bir_receipt_form_type',
     'matched_form_1702_ex_batch_row_id',
     'bir_receipt_match_status',
     'bir_receipt_queued_at',

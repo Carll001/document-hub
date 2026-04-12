@@ -10,6 +10,13 @@ import EmailSyncToolbar from '@/components/email-sync-components/EmailSyncToolba
 import type { EmailSyncPageProps } from '@/components/email-sync-components/types';
 import { formatDateTime } from '@/components/email-sync-components/utils';
 import { Button } from '@/components/ui/button';
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from '@/components/ui/select';
 import AppLayout from '@/layouts/AppLayout.vue';
 import emailSync from '@/routes/email-sync';
 import type { BreadcrumbItem } from '@/types';
@@ -25,6 +32,7 @@ const breadcrumbs: BreadcrumbItem[] = [
 
 const isAppliedDialogOpen = ref(false);
 const searchTerm = ref(props.filters.search);
+const formTypeFilter = ref(props.filters.formType);
 const searchTimeoutId = ref<number | null>(null);
 const startDate = ref('');
 
@@ -43,13 +51,15 @@ const syncResultSummary = computed(() => {
 });
 
 watch(
-    () => props.filters.search,
+    () => props.filters,
     (value) => {
-        searchTerm.value = value;
+        searchTerm.value = value.search;
+        formTypeFilter.value = value.formType;
     },
+    { deep: true },
 );
 
-watch(searchTerm, (value) => {
+watch([searchTerm, formTypeFilter], ([searchValue, formTypeValue]) => {
     if (searchTimeoutId.value !== null) {
         window.clearTimeout(searchTimeoutId.value);
     }
@@ -60,7 +70,8 @@ watch(searchTerm, (value) => {
             {
                 page: 1,
                 appliedPage: props.appliedPagination.currentPage,
-                search: value.trim(),
+                search: searchValue.trim(),
+                formType: formTypeValue || undefined,
             },
             {
                 preserveScroll: true,
@@ -158,8 +169,11 @@ onBeforeUnmount(() => {
                         :page-url="emailSync.index.url()"
                         :pagination="props.pagination"
                         :search-term="searchTerm"
+                        :form-type-filter="formTypeFilter"
+                        :form-type-options="props.filters.formTypeOptions"
                         :total-stored-emails="props.receiptCounts.unmatched"
                         @update:search-term="searchTerm = $event"
+                        @update:form-type-filter="formTypeFilter = $event"
                     />
                 </div>
             </div>
@@ -170,6 +184,7 @@ onBeforeUnmount(() => {
             :open="isAppliedDialogOpen"
             :page-url="emailSync.index.url()"
             :pagination="props.appliedPagination"
+            :form-type-filter="formTypeFilter"
             :unmatched-page="props.pagination.currentPage"
             @update:open="isAppliedDialogOpen = $event"
         />

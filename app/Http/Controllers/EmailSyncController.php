@@ -30,20 +30,24 @@ class EmailSyncController extends Controller
             'page' => ['nullable', 'integer', 'min:1'],
             'appliedPage' => ['nullable', 'integer', 'min:1'],
             'search' => ['nullable', 'string', 'max:120'],
+            'formType' => ['nullable', 'string', 'max:64'],
         ]);
 
         $user = $request->user();
         $search = isset($validated['search']) ? trim((string) $validated['search']) : '';
+        $formType = isset($validated['formType']) ? trim((string) $validated['formType']) : '';
 
         $emailPage = $this->birReceiptPage(
             $user,
             (int) ($validated['page'] ?? 1),
             $search,
+            $formType,
         );
 
         $appliedPage = $this->appliedBirReceiptPage(
             $user,
             (int) ($validated['appliedPage'] ?? 1),
+            $formType,
         );
 
         $latestSyncedEmail = SyncedEmail::query()
@@ -80,11 +84,13 @@ class EmailSyncController extends Controller
             'appliedEmails' => $this->transformEmails(collect($appliedPage->items())),
             'appliedPagination' => $this->paginationPayload($appliedPage),
             'receiptCounts' => [
-                'unmatched' => $this->birReceiptQuery($user, false, $search)->count(),
-                'applied' => $this->birReceiptQuery($user, true)->count(),
+                'unmatched' => $this->birReceiptQuery($user, false, $search, $formType)->count(),
+                'applied' => $this->birReceiptQuery($user, true, '', $formType)->count(),
             ],
             'filters' => [
                 'search' => $search,
+                'formType' => $formType,
+                'formTypeOptions' => $this->formTypeOptions($user),
             ],
         ]);
     }
@@ -224,9 +230,9 @@ class EmailSyncController extends Controller
             ->paginate(self::EMAILS_PER_PAGE, ['*'], 'page', $page);
     }
 
-    private function birReceiptPage($user, int $page, string $search): LengthAwarePaginator
+    private function birReceiptPage($user, int $page, string $search, string $formType = ''): LengthAwarePaginator
     {
-        return $this->birReceiptQuery($user, false, $search)
+        return $this->birReceiptQuery($user, false, $search, $formType)
             ->orderByRaw(
                 'CASE WHEN received_at IS NULL OR received_at > synced_at THEN synced_at ELSE received_at END DESC',
             )
@@ -235,16 +241,16 @@ class EmailSyncController extends Controller
             ->withQueryString();
     }
 
-    private function appliedBirReceiptPage($user, int $page): LengthAwarePaginator
+    private function appliedBirReceiptPage($user, int $page, string $formType = ''): LengthAwarePaginator
     {
-        return $this->birReceiptQuery($user, true)
+        return $this->birReceiptQuery($user, true, '', $formType)
             ->orderByDesc('bir_receipt_applied_at')
             ->orderByDesc('id')
             ->paginate(self::EMAILS_PER_PAGE, ['*'], 'appliedPage', $page)
             ->withQueryString();
     }
 
-    private function birReceiptQuery($user, bool $applied, string $search = '')
+    private function birReceiptQuery($user, bool $applied, string $search = '', string $formType = '')
     {
         $query = SyncedEmail::query()
             ->visibleTo($user)
@@ -260,6 +266,7 @@ class EmailSyncController extends Controller
         }
 
         $search = trim($search);
+        $formType = strtoupper(trim($formType));
 
         if ($search !== '') {
             $like = '%'.$search.'%';
@@ -268,6 +275,7 @@ class EmailSyncController extends Controller
                 $searchQuery
                     ->where('bir_receipt_tin', 'like', $like)
                     ->orWhere('bir_receipt_file_name', 'like', $like)
+                    ->orWhere('bir_receipt_form_type', 'like', $like)
                     ->orWhere('bir_receipt_date_received_by_bir', 'like', $like)
                     ->orWhere('bir_receipt_time_received_by_bir', 'like', $like)
                     ->orWhere('bir_receipt_match_status', 'like', $like)
@@ -275,7 +283,28 @@ class EmailSyncController extends Controller
             });
         }
 
+        if ($formType !== '') {
+            $query->where('bir_receipt_form_type', $formType);
+        }
+
         return $query;
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function formTypeOptions($user): array
+    {
+        return SyncedEmail::query()
+            ->visibleTo($user)
+            ->whereNotNull('bir_receipt_form_type')
+            ->where('bir_receipt_form_type', '!=', '')
+            ->distinct()
+            ->orderBy('bir_receipt_form_type')
+            ->pluck('bir_receipt_form_type')
+            ->map(fn (mixed $formType): string => (string) $formType)
+            ->values()
+            ->all();
     }
 
     private function legacyEmailPagePayload(LengthAwarePaginator $emailPage): array
@@ -324,6 +353,7 @@ class EmailSyncController extends Controller
                 'matchError' => $email->bir_receipt_match_error,
                 'parsedBirReceiptDetails' => [
                     'fileName' => $email->bir_receipt_file_name,
+                    'formType' => $email->bir_receipt_form_type,
                     'dateReceived' => $email->bir_receipt_date_received_by_bir,
                     'timeReceived' => $email->bir_receipt_time_received_by_bir,
                 ],
