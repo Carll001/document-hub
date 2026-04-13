@@ -11,6 +11,11 @@ use Illuminate\Support\Facades\Storage;
 
 class Form1702ExCompletedEmailService
 {
+    private const DEFAULT_FORM_TYPE = '1702-EX';
+
+    private const DEFAULT_EMAIL_FOOTER =
+        'Please do not reply to this message. If you have any concerns, please contact:';
+
     public function isCompleted(Form1702ExBatchRow $row): bool
     {
         return $row->pdf_status === Form1702ExBatchRow::PDF_STATUS_GENERATED
@@ -101,18 +106,20 @@ class Form1702ExCompletedEmailService
 
     public function defaultSubject(Form1702ExBatchRow $row): string
     {
-        return sprintf(
-            'Completed 1702-EX File - %s',
-            (string) ($row->generated_pdf_file_name ?? '1702-ex.pdf'),
-        );
+        return sprintf('1702EX - %s', $this->companyName($row));
     }
 
     public function defaultMessage(Form1702ExBatchRow $row): string
     {
-        $payload = is_array($row->payload) ? $row->payload : [];
-        $name = (string) ($payload['taxpayer_name'] ?? $payload['registered_name'] ?? 'Taxpayer');
-
-        return "Attached is the completed 1702-EX PDF for {$name}.";
+        return implode("\n", [
+            sprintf(
+                'Good day! Attached is the %s with the confirmation for %s. Thank you!',
+                self::DEFAULT_FORM_TYPE,
+                $this->companyName($row),
+            ),
+            '',
+            self::DEFAULT_EMAIL_FOOTER,
+        ]);
     }
 
     private function generatedPdfExists(Form1702ExBatchRow $row): bool
@@ -146,5 +153,13 @@ class Form1702ExCompletedEmailService
     private function normalizeRecipientEmail(string $value): string
     {
         return mb_strtolower(trim($value));
+    }
+
+    private function companyName(Form1702ExBatchRow $row): string
+    {
+        $payload = is_array($row->payload) ? $row->payload : [];
+        $companyName = trim((string) ($payload['taxpayer_name'] ?? $payload['registered_name'] ?? ''));
+
+        return $companyName !== '' ? $companyName : 'Taxpayer';
     }
 }

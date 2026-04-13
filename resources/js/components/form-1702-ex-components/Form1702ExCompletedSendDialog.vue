@@ -54,7 +54,7 @@ function handleAttachmentSelected(event: Event): void {
     <Dialog :open="props.open" @update:open="emit('update:open', $event)">
         <DialogContent class="sm:max-w-xl">
             <DialogHeader class="space-y-2">
-                <DialogTitle>Send completed file</DialogTitle>
+                <DialogTitle>TFCI FILER</DialogTitle>
                 <DialogDescription>
                     Queue {{ props.row?.fileName ?? 'the completed PDF' }} to
                     {{ props.row?.recipientEmail ?? 'the saved recipient email' }}.
