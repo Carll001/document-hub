@@ -78,12 +78,20 @@ watch(
     { immediate: true },
 );
 
+const DEFAULT_FORM_TYPE = '1702-EX';
+const DEFAULT_EMAIL_FOOTER =
+    'Please do not reply to this message. If you have any concerns, please contact:';
+
 function defaultSubject(row: Form1702ExBatchRow): string {
-    return `Completed 1702-EX File - ${row.fileName}`;
+    return `1702EX - ${row.taxpayerName}`;
 }
 
 function defaultMessage(row: Form1702ExBatchRow): string {
-    return `Attached is the completed 1702-EX PDF for ${row.taxpayerName}.`;
+    return [
+        `Good day! Attached is the ${DEFAULT_FORM_TYPE} with the confirmation for ${row.taxpayerName}. Thank you!`,
+        '',
+        DEFAULT_EMAIL_FOOTER,
+    ].join('\n');
 }
 
 function openSendEmail(row: Form1702ExBatchRow): void {
