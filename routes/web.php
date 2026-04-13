@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\ClientController;
 use App\Http\Controllers\DocMergeBatchController;
 use App\Http\Controllers\DocMergeController;
 use App\Http\Controllers\EmailSyncAccountManagementController;
@@ -21,6 +22,14 @@ Route::inertia('/', 'Welcome', [
 Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('dashboard', DashboardController::class)->name('dashboard');
     Route::middleware('staff')->group(function () {
+        Route::controller(ClientController::class)
+            ->prefix('clients')
+            ->name('clients.')
+            ->group(function () {
+                Route::get('/', 'index')->name('index');
+                Route::get('{client}', 'show')->name('show');
+                Route::post('{client}/forms/1702-ex/send', 'send1702Ex')->name('forms.1702-ex.send');
+            });
         Route::controller(DocMergeController::class)
             ->prefix('doc-merge')
             ->name('doc-merge.')

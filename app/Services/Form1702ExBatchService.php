@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Models\Client;
+use App\Models\Company;
 use App\Models\Form1702ExBatch;
 use App\Models\Form1702ExBatchRow;
 use App\Models\User;
@@ -17,6 +19,8 @@ use RuntimeException;
 
 class Form1702ExBatchService
 {
+    private const UNASSIGNED_CLIENT_NAME = 'Unassigned Client';
+
     public function __construct(
         private readonly BirReceiptAutoMatchService $birReceiptAutoMatchService,
     ) {
@@ -84,6 +88,7 @@ class Form1702ExBatchService
 
             foreach ($rows as $row) {
                 $payload = $row['payload'];
+                [$client, $company] = $this->resolveClientAndCompany($batch, $payload);
                 $normalizedTin = $this->normalizeTin($payload['tin'] ?? null);
                 $receiptOwner = $normalizedTin !== null
                     ? $existingRows->first(fn (Form1702ExBatchRow $existingRow): bool => $this->rowOwnsReceiptForTin($existingRow, $normalizedTin))
@@ -91,6 +96,8 @@ class Form1702ExBatchService
 
                 $attributes = [
                     'form_1702_ex_batch_id' => $batch->id,
+                    'client_id' => $client?->id,
+                    'company_id' => $company?->id,
                     'source_name' => $sourceName,
                     'source_type' => $sourceType,
                     'source_row_number' => (int) ($row['rowNumber'] ?? 0),
@@ -152,6 +159,92 @@ class Form1702ExBatchService
         $digits = is_string($digits) ? $digits : '';
 
         return $digits !== '' ? $digits : null;
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     * @return array{0: Client|null, 1: Company|null}
+     */
+    private function resolveClientAndCompany(Form1702ExBatch $batch, array $payload): array
+    {
+        $clientName = $this->normalizeName($payload['client_name'] ?? null) ?? self::UNASSIGNED_CLIENT_NAME;
+        $client = Client::query()->firstOrCreate(
+            [
+                'user_id' => $batch->user_id,
+                'name_normalized' => $this->normalizeNameKey($clientName),
+            ],
+            [
+                'name' => $clientName,
+            ],
+        );
+
+        $companyTin = $this->normalizeTin($payload['tin'] ?? null);
+        $companyName = $this->normalizeName($payload['taxpayer_name'] ?? $payload['registered_name'] ?? null);
+
+        if ($companyTin === null || $companyName === null) {
+            return [$client, null];
+        }
+
+        $company = Company::query()
+            ->where('user_id', $batch->user_id)
+            ->where('tin_normalized', $companyTin)
+            ->first();
+
+        if (! $company instanceof Company) {
+            $company = Company::query()->create([
+                'user_id' => $batch->user_id,
+                'client_id' => $client->id,
+                'name' => $companyName,
+                'name_normalized' => $this->normalizeNameKey($companyName),
+                'tin' => $companyTin,
+                'tin_normalized' => $companyTin,
+            ]);
+
+            return [$client, $company];
+        }
+
+        if ($company->client_id !== $client->id) {
+            $existingClientName = $company->client?->name ?? self::UNASSIGNED_CLIENT_NAME;
+
+            if ($existingClientName === self::UNASSIGNED_CLIENT_NAME && $client->name !== self::UNASSIGNED_CLIENT_NAME) {
+                $company->forceFill([
+                    'client_id' => $client->id,
+                    'name' => $companyName,
+                    'name_normalized' => $this->normalizeNameKey($companyName),
+                ])->save();
+
+                return [$client, $company->fresh() ?? $company];
+            }
+
+            throw ValidationException::withMessages([
+                'spreadsheet' => sprintf(
+                    'TIN %s is already linked to client "%s". Use the same client_name for that company.',
+                    $companyTin,
+                    $existingClientName,
+                ),
+            ]);
+        }
+
+        if ($company->name !== $companyName) {
+            $company->forceFill([
+                'name' => $companyName,
+                'name_normalized' => $this->normalizeNameKey($companyName),
+            ])->save();
+        }
+
+        return [$client, $company];
+    }
+
+    private function normalizeName(mixed $value): ?string
+    {
+        $normalized = trim(preg_replace('/\s+/u', ' ', (string) $value) ?? '');
+
+        return $normalized !== '' ? $normalized : null;
+    }
+
+    private function normalizeNameKey(string $value): string
+    {
+        return mb_strtolower(trim(preg_replace('/\s+/u', ' ', $value) ?? $value));
     }
 
     private function rowOwnsReceiptForTin(Form1702ExBatchRow $row, string $normalizedTin): bool

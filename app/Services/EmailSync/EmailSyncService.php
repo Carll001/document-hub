@@ -20,7 +20,7 @@ class EmailSyncService
     }
 
     /**
-     * @return array{accountId: int, accountLabel: string, fetched: int, created: int, updated: int, mailbox: string, skipped: bool}
+     * @return array{accountId: int, accountLabel: string, fetched: int, created: int, updated: int, mailbox: string, skipped: bool, emailIds: list<int>}
      */
     public function syncAccount(EmailSyncAccount $account): array
     {
@@ -44,7 +44,7 @@ class EmailSyncService
     }
 
     /**
-     * @return array{accountId: int, accountLabel: string, fetched: int, created: int, updated: int, mailbox: string, skipped: bool}
+     * @return array{accountId: int, accountLabel: string, fetched: int, created: int, updated: int, mailbox: string, skipped: bool, emailIds: list<int>}
      */
     public function backfillAccount(EmailSyncAccount $account, CarbonImmutable $startDate): array
     {
@@ -91,7 +91,7 @@ class EmailSyncService
 
     /**
      * @param  list<int>  $uids
-     * @return array{accountId: int, accountLabel: string, fetched: int, created: int, updated: int, mailbox: string, skipped: bool}
+     * @return array{accountId: int, accountLabel: string, fetched: int, created: int, updated: int, mailbox: string, skipped: bool, emailIds: list<int>}
      */
     private function syncUids(
         EmailSyncAccount $account,
@@ -102,6 +102,7 @@ class EmailSyncService
         $created = 0;
         $updated = 0;
         $fetched = 0;
+        $emailIds = [];
         $syncedAt = now();
 
         foreach ($uids as $uid) {
@@ -133,6 +134,8 @@ class EmailSyncService
                 $updated++;
             }
 
+            $emailIds[] = (int) $email->getKey();
+
             $this->syncAttachments($email, $message['attachments']);
             $this->birReceiptAutoMatchService->syncEmail($email);
         }
@@ -145,6 +148,7 @@ class EmailSyncService
             'updated' => $updated,
             'mailbox' => $mailbox,
             'skipped' => false,
+            'emailIds' => array_values(array_unique($emailIds)),
         ];
     }
 

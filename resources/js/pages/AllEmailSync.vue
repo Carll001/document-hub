@@ -41,6 +41,10 @@ const hasMoreEmails = ref(props.hasMoreEmails);
 const nextEmailsCursor = ref(props.nextEmailsCursor);
 const loadMoreError = ref<string | null>(null);
 const isLoadingMore = ref(false);
+const isSyncDialogOpen = ref(false);
+const runningActionLabel = ref<string | null>(null);
+const runningAccountLabels = ref<string[]>([]);
+const hasSubmittedSyncAction = ref(false);
 const startDate = ref('');
 const selectedSyncAccountIds = ref(
     props.syncAccounts.options.map((account) => account.id),
@@ -124,18 +128,21 @@ watch(
 );
 
 watch(
-    () => [props.flash.success, props.flash.error, syncResultSummary.value] as const,
-    ([success, error, summary]) => {
+    () => [props.flash.success, props.flash.error, syncResultSummary.value, props.flash.syncResultDetails] as const,
+    ([success, error, summary, resultDetails]) => {
         if (success) {
             toast.success(success, {
                 description: summary ?? undefined,
             });
-
-            return;
         }
 
         if (error) {
             toast.error(error);
+        }
+
+        if (hasSubmittedSyncAction.value && (success || error || resultDetails)) {
+            isSyncDialogOpen.value = true;
+            hasSubmittedSyncAction.value = false;
         }
     },
     { immediate: true },
@@ -230,24 +237,45 @@ async function loadMoreEmails(): Promise<void> {
 }
 
 function submitSyncAll(): void {
+    hasSubmittedSyncAction.value = true;
+    isSyncDialogOpen.value = true;
+    runningActionLabel.value = 'Sync all';
+    runningAccountLabels.value = props.syncAccounts.options.map((account) => account.label);
     syncForm.accountIds = [];
     syncForm.post(emailSync.sync.url(), {
         preserveScroll: true,
+        preserveState: true,
     });
 }
 
 function submitSyncSelected(): void {
+    hasSubmittedSyncAction.value = true;
+    isSyncDialogOpen.value = true;
+    runningActionLabel.value = 'Sync selected';
+    runningAccountLabels.value = props.syncAccounts.options
+        .filter((account) => selectedSyncAccountIds.value.includes(account.id))
+        .map((account) => account.label);
     syncForm.accountIds = [...selectedSyncAccountIds.value];
     syncForm.post(emailSync.sync.url(), {
         preserveScroll: true,
+        preserveState: true,
     });
 }
 
 function submitImportSelected(): void {
+    hasSubmittedSyncAction.value = true;
+    isSyncDialogOpen.value = true;
+    runningActionLabel.value = startDate.value
+        ? `Import older from ${startDate.value}`
+        : 'Import older';
+    runningAccountLabels.value = props.syncAccounts.options
+        .filter((account) => selectedSyncAccountIds.value.includes(account.id))
+        .map((account) => account.label);
     backfillForm.startDate = startDate.value;
     backfillForm.accountIds = [...selectedSyncAccountIds.value];
     backfillForm.post(emailSync.backfill.url(), {
         preserveScroll: true,
+        preserveState: true,
     });
 }
 
@@ -288,15 +316,21 @@ async function copyBirDetails(): Promise<void> {
                     <EmailSyncToolbar
                         :can-backfill="true"
                         :connection="props.connection"
+                        :open="isSyncDialogOpen"
                         :start-date="startDate"
                         :selected-account-ids="selectedSyncAccountIds"
+                        :running-action-label="runningActionLabel"
+                        :running-account-labels="runningAccountLabels"
                         :account-options="props.syncAccounts.options"
                         :sync-processing="syncForm.processing"
                         :backfill-processing="backfillForm.processing"
+                        :flash-error="props.flash.error"
+                        :sync-result-details="props.flash.syncResultDetails"
                         :errors="{
                             accountIds: syncForm.errors.accountIds ?? backfillForm.errors.accountIds,
                             startDate: backfillForm.errors.startDate,
                         }"
+                        @update:open="isSyncDialogOpen = $event"
                         @sync-all="submitSyncAll"
                         @sync-selected="submitSyncSelected"
                         @import-selected="submitImportSelected"

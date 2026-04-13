@@ -12,6 +12,8 @@ use Illuminate\Support\Str;
 
 #[Fillable([
     'form_1702_ex_batch_id',
+    'client_id',
+    'company_id',
     'uuid',
     'source_name',
     'source_type',
@@ -105,6 +107,16 @@ class Form1702ExBatchRow extends Model
     public function batch(): BelongsTo
     {
         return $this->belongsTo(Form1702ExBatch::class, 'form_1702_ex_batch_id');
+    }
+
+    public function client(): BelongsTo
+    {
+        return $this->belongsTo(Client::class);
+    }
+
+    public function company(): BelongsTo
+    {
+        return $this->belongsTo(Company::class);
     }
 
     public function autoReceiptSyncedEmail(): BelongsTo

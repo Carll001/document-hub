@@ -77,7 +77,7 @@ const props = defineProps<{
 const breadcrumbs: BreadcrumbItem[] = [
     {
         title: '1702-EX',
-        href: forms['1702Ex'].index(),
+        href: forms.form1702Ex.index(),
     },
 ];
 
@@ -464,7 +464,7 @@ function submitRemoveReceipt(): void {
 </script>
 
 <template>
-    <Head title="1702-EX" />
+    <Head title="Company Name" />
 
     <AppLayout :breadcrumbs="breadcrumbs">
         <Dialog
@@ -476,6 +476,7 @@ function submitRemoveReceipt(): void {
                     <DialogTitle>Upload spreadsheet</DialogTitle>
                     <DialogDescription>
                         Import a CSV or XLSX file and queue one generated PDF per row.
+                        Use the <code>client_name</code> header to group companies under a client page.
                     </DialogDescription>
                 </DialogHeader>
 
@@ -696,7 +697,7 @@ function submitRemoveReceipt(): void {
                             1702-EX Workspace
                         </p>
                         <h1 class="text-3xl font-semibold tracking-tight text-foreground md:text-4xl">
-                            1702-EX Rows
+                            Company Name Rows
                         </h1>
                         <p class="max-w-3xl text-sm leading-7 text-muted-foreground">
                             Upload spreadsheets directly, keep one shared PDF default configuration,

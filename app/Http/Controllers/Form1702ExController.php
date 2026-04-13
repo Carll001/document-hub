@@ -22,6 +22,7 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -143,6 +144,7 @@ class Form1702ExController extends Controller
         $this->ensureAccessibleBatch($request, $form1702ExBatch);
 
         $rows = $form1702ExBatch->rows()
+            ->with(['client', 'company'])
             ->latest('uploaded_at')
             ->orderByDesc('id')
             ->get();
@@ -304,6 +306,10 @@ class Form1702ExController extends Controller
 
             return to_route('forms.1702-ex.index', $this->indexRouteParameters($request))
                 ->with('success', $successMessage);
+        } catch (ValidationException $exception) {
+            $batch->delete();
+
+            throw $exception;
         } catch (\Throwable $exception) {
             report($exception);
             $batch->delete();
@@ -641,6 +647,8 @@ class Form1702ExController extends Controller
             return to_route('forms.1702-ex.batches.show', [
                 'form1702ExBatch' => $form1702ExBatch,
             ])->with('success', $successMessage);
+        } catch (ValidationException $exception) {
+            throw $exception;
         } catch (\Throwable $exception) {
             report($exception);
 
@@ -1243,7 +1251,7 @@ class Form1702ExController extends Controller
         bool $completed = false,
     ): LengthAwarePaginator {
         $query = Form1702ExBatchRow::query()
-            ->with('batch')
+            ->with(['batch', 'client', 'company'])
             ->whereHas('batch', fn ($batchQuery) => $batchQuery->whereBelongsTo($user));
 
         $this->applyVisibleRowScope($query);
@@ -1262,12 +1270,19 @@ class Form1702ExController extends Controller
                     ->orWhere('pdf_status', 'like', $like)
                     ->orWhere('payload->taxpayer_name', 'like', $like)
                     ->orWhere('payload->registered_name', 'like', $like)
+                    ->orWhere('payload->client_name', 'like', $like)
                     ->orWhere('payload->tin', 'like', $like)
                     ->orWhere('payload->email_address', 'like', $like)
                     ->orWhere('receipt_file_name', 'like', $like)
                     ->orWhere('receipt_job_status', 'like', $like)
                     ->orWhere('receipt_job_error', 'like', $like)
-                    ->orWhere('pdf_error', 'like', $like);
+                    ->orWhere('pdf_error', 'like', $like)
+                    ->orWhereHas('client', fn ($clientQuery) => $clientQuery->where('name', 'like', $like))
+                    ->orWhereHas('company', function ($companyQuery) use ($like): void {
+                        $companyQuery
+                            ->where('name', 'like', $like)
+                            ->orWhere('tin', 'like', $like);
+                    });
             });
         }
 
@@ -1388,6 +1403,8 @@ class Form1702ExController extends Controller
      *     id: string,
      *     fileName: string,
      *     taxpayerName: string,
+     *     clientName: string|null,
+     *     companyName: string|null,
      *     tin: string,
      *     sourceRowNumber: int,
      *     sourceName: string,
@@ -1460,6 +1477,10 @@ class Form1702ExController extends Controller
                 ? (string) $row->generated_pdf_file_name
                 : 'Not generated yet',
             'taxpayerName' => (string) ($payload['taxpayer_name'] ?? $payload['registered_name'] ?? 'Row '.$row->source_row_number),
+            'clientName' => $row->client?->name
+                ?? (is_scalar($payload['client_name'] ?? null) ? (string) $payload['client_name'] : null),
+            'companyName' => $row->company?->name
+                ?? (string) ($payload['taxpayer_name'] ?? $payload['registered_name'] ?? ''),
             'tin' => (string) ($payload['tin'] ?? ''),
             'sourceRowNumber' => $row->source_row_number,
             'sourceName' => $row->source_name,

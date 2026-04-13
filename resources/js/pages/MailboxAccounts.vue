@@ -157,6 +157,20 @@ const allVisibleSelected = computed(
         filteredAccounts.value.length > 0
         && filteredAccounts.value.every((account) => selectedSet.value.has(account.id)),
 );
+const someVisibleSelected = computed(
+    () => filteredAccounts.value.some((account) => selectedSet.value.has(account.id)),
+);
+const selectAllState = computed<boolean | 'indeterminate'>(() => {
+    if (allVisibleSelected.value) {
+        return true;
+    }
+
+    if (someVisibleSelected.value) {
+        return 'indeterminate';
+    }
+
+    return false;
+});
 const canBulkDelete = computed(
     () => selectedAccountIds.value.length > 0 && !deleteForm.processing,
 );
@@ -371,8 +385,11 @@ function submitDelete(): void {
                                 <TableRow>
                                     <TableHead class="w-12">
                                         <Checkbox
-                                            :checked="allVisibleSelected"
-                                            @update:checked="toggleSelectAll"
+                                            :key="`select-all-mailbox-accounts-${selectAllState}`"
+                                            :model-value="selectAllState"
+                                            :disabled="filteredAccounts.length === 0"
+                                            aria-label="Select all mailbox accounts"
+                                            @update:model-value="toggleSelectAll"
                                         />
                                     </TableHead>
                                     <TableHead>ACCOUNT</TableHead>
@@ -393,8 +410,9 @@ function submitDelete(): void {
                                     >
                                         <TableCell>
                                             <Checkbox
-                                                :checked="selectedSet.has(account.id)"
-                                                @update:checked="
+                                                :model-value="selectedSet.has(account.id)"
+                                                :aria-label="`Select ${account.displayName}`"
+                                                @update:model-value="
                                                     toggleSelection(account.id, $event)
                                                 "
                                             />

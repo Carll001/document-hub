@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { Link, usePage } from '@inertiajs/vue3';
 import {
-    BookOpen,
+    BriefcaseBusiness,
     Files,
-    FolderGit2,
     FileSpreadsheet,
     LayoutGrid,
     Mail,
@@ -62,8 +61,13 @@ const mainNavItems = computed<NavItem[]>(() => {
             icon: Mail,
         },
         {
-            title: '1702-EX',
-            href: forms['1702Ex'].index(),
+            title: 'Clients',
+            href: '/clients',
+            icon: BriefcaseBusiness,
+        },
+        {
+            title: 'Company Name',
+            href: forms.form1702Ex.index(),
             icon: FileSpreadsheet,
         },
         {

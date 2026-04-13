@@ -75,6 +75,7 @@ class EmailSyncController extends Controller
                 'success' => $request->session()->get('success'),
                 'error' => $request->session()->get('error'),
                 'syncResult' => $request->session()->get('syncResult'),
+                'syncResultDetails' => $request->session()->get('syncResultDetails'),
             ],
             'stats' => [
                 'totalStored' => SyncedEmail::query()
@@ -146,6 +147,7 @@ class EmailSyncController extends Controller
                 'success' => $request->session()->get('success'),
                 'error' => $request->session()->get('error'),
                 'syncResult' => $request->session()->get('syncResult'),
+                'syncResultDetails' => $request->session()->get('syncResultDetails'),
             ],
             'stats' => [
                 'totalStored' => SyncedEmail::query()
@@ -256,18 +258,31 @@ class EmailSyncController extends Controller
         try {
             $result = $runner->sync($this->normalizedAccountIds($validated['accountIds'] ?? []));
 
-            return to_route('email-sync.index')
+            if ($result['busyAccounts'] !== []) {
+                return back()
+                    ->with('error', $this->busyAccountMessage(
+                        $result['busyAccounts'],
+                        'syncing',
+                        'Sync',
+                        $result['results'],
+                    ))
+                    ->with('syncResult', $result['results'])
+                    ->with('syncResultDetails', $this->manualSyncResultDetails('Sync', $result['results']));
+            }
+
+            return back()
                 ->with('success', 'Inbox sync completed successfully.')
-                ->with('syncResult', $result);
+                ->with('syncResult', $result['results'])
+                ->with('syncResultDetails', $this->manualSyncResultDetails('Sync', $result['results']));
         } catch (RuntimeException $exception) {
             report($exception);
 
-            return to_route('email-sync.index')
+            return back()
                 ->with('error', $exception->getMessage());
         } catch (\Throwable $exception) {
             report($exception);
 
-            return to_route('email-sync.index')
+            return back()
                 ->with('error', 'Email sync failed. Check the configured IMAP accounts, then try again.');
         }
     }
@@ -286,18 +301,31 @@ class EmailSyncController extends Controller
                 $this->normalizedAccountIds($validated['accountIds'] ?? []),
             );
 
-            return to_route('email-sync.index')
+            if ($result['busyAccounts'] !== []) {
+                return back()
+                    ->with('error', $this->busyAccountMessage(
+                        $result['busyAccounts'],
+                        'syncing',
+                        'Import older',
+                        $result['results'],
+                    ))
+                    ->with('syncResult', $result['results'])
+                    ->with('syncResultDetails', $this->manualSyncResultDetails('Import older', $result['results']));
+            }
+
+            return back()
                 ->with('success', 'Older email import completed successfully.')
-                ->with('syncResult', $result);
+                ->with('syncResult', $result['results'])
+                ->with('syncResultDetails', $this->manualSyncResultDetails('Import older', $result['results']));
         } catch (RuntimeException $exception) {
             report($exception);
 
-            return to_route('email-sync.index')
+            return back()
                 ->with('error', $exception->getMessage());
         } catch (\Throwable $exception) {
             report($exception);
 
-            return to_route('email-sync.index')
+            return back()
                 ->with('error', 'Older email import failed. Check the configured IMAP accounts, then try again.');
         }
     }
@@ -569,6 +597,70 @@ class EmailSyncController extends Controller
             ->unique()
             ->values()
             ->all();
+    }
+
+    /**
+     * @param  list<array{accountId: int, accountLabel: string, fetched: int, created: int, updated: int, mailbox: string, skipped: bool, emailIds: list<int>}>  $results
+     * @return array{
+     *     actionLabel: string,
+     *     accountResults: list<array{
+     *         accountId: int,
+     *         accountLabel: string,
+     *         fetched: int,
+     *         created: int,
+     *         updated: int,
+     *         mailbox: string
+     *     }>
+     * }
+     */
+    private function manualSyncResultDetails(string $actionLabel, array $results): array
+    {
+        return [
+            'actionLabel' => $actionLabel,
+            'accountResults' => collect($results)
+                ->map(function (array $result): array {
+                    return [
+                        'accountId' => $result['accountId'],
+                        'accountLabel' => $result['accountLabel'],
+                        'fetched' => $result['fetched'],
+                        'created' => $result['created'],
+                        'updated' => $result['updated'],
+                        'mailbox' => $result['mailbox'],
+                    ];
+                })
+                ->all(),
+        ];
+    }
+
+    /**
+     * @param  list<string>  $busyAccounts
+     * @param  list<array{accountId: int, accountLabel: string, fetched: int, created: int, updated: int, mailbox: string, skipped: bool, emailIds: list<int>}>  $results
+     */
+    private function busyAccountMessage(
+        array $busyAccounts,
+        string $statusLabel,
+        string $actionLabel,
+        array $results = [],
+    ): string {
+        $busyLabel = count($busyAccounts) === 1
+            ? $busyAccounts[0]." is currently {$statusLabel}. Please wait for the current queue to finish, then try again."
+            : implode(', ', $busyAccounts)." are currently {$statusLabel}. Please wait for the current queue to finish, then try again.";
+
+        if ($results === []) {
+            return $busyLabel;
+        }
+
+        $completedSummary = collect($results)
+            ->map(fn (array $result): string => sprintf(
+                '%s: %d fetched, %d created, %d updated',
+                $result['accountLabel'],
+                $result['fetched'],
+                $result['created'],
+                $result['updated'],
+            ))
+            ->implode(' | ');
+
+        return "{$actionLabel} ran for: {$completedSummary}. {$busyLabel}";
     }
 
     private function abortUnlessOwnsAttachment(

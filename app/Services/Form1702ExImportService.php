@@ -298,8 +298,15 @@ class Form1702ExImportService
             $this->firstFilled($normalizedRow, ['contactnumber', 'contactno', 'contactnumbermobileno', 'mobilenumber']),
             (string) ($payload['contact_number'] ?? ''),
         );
+        $payload['client_name'] = $this->firstFilled($normalizedRow, [
+            'clientname',
+            'client_name',
+        ]) ?: (string) ($payload['client_name'] ?? '');
         $payload['email_address'] = $this->firstFilled($normalizedRow, [
             'recipient',
+            'recipientemail',
+            'emailaddress',
+            'email',
         ]) ?: (string) ($payload['email_address'] ?? '');
 
         $payload['deduction_method'] = $deductionMethod;
@@ -408,6 +415,7 @@ class Form1702ExImportService
             'zip_code',
             'incorporation_date',
             'contact_number',
+            'client_name',
             'email_address',
             'deduction_method',
             'deduction_method_itemized',

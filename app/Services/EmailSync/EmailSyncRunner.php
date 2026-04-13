@@ -21,18 +21,21 @@ class EmailSyncRunner
 
     /**
      * @param  list<int>  $accountIds
-     * @return list<array{accountId: int, accountLabel: string, fetched: int, created: int, updated: int, mailbox: string, skipped: bool}>
+     * @return array{
+     *     results: list<array{accountId: int, accountLabel: string, fetched: int, created: int, updated: int, mailbox: string, skipped: bool, emailIds: list<int>}>,
+     *     busyAccounts: list<string>
+     * }
      */
     public function sync(array $accountIds = []): array
     {
         $lock = Cache::lock(self::aggregateLockKey(), 30);
 
         if (! $lock->get()) {
-            throw new RuntimeException('Inbox sync is already running.');
+            throw new RuntimeException('Email sync is currently queued or running. Please wait for the current queue to finish, then try again.');
         }
 
         try {
-            return $this->runAcrossAccounts($this->accountsFor($accountIds), null);
+            return $this->runAcrossAccountsManually($this->accountsFor($accountIds), null);
         } finally {
             $lock->release();
         }
@@ -40,7 +43,7 @@ class EmailSyncRunner
 
     /**
      * @param  list<int>  $accountIds
-     * @return list<array{accountId: int, accountLabel: string, fetched: int, created: int, updated: int, mailbox: string, skipped: bool}>|null
+     * @return list<array{accountId: int, accountLabel: string, fetched: int, created: int, updated: int, mailbox: string, skipped: bool, emailIds: list<int>}>|null
      */
     public function syncIfAvailable(array $accountIds = []): ?array
     {
@@ -67,18 +70,21 @@ class EmailSyncRunner
 
     /**
      * @param  list<int>  $accountIds
-     * @return list<array{accountId: int, accountLabel: string, fetched: int, created: int, updated: int, mailbox: string, skipped: bool}>
+     * @return array{
+     *     results: list<array{accountId: int, accountLabel: string, fetched: int, created: int, updated: int, mailbox: string, skipped: bool, emailIds: list<int>}>,
+     *     busyAccounts: list<string>
+     * }
      */
     public function backfill(CarbonImmutable $startDate, array $accountIds = []): array
     {
         $lock = Cache::lock(self::aggregateLockKey(), 30);
 
         if (! $lock->get()) {
-            throw new RuntimeException('Inbox sync is already running.');
+            throw new RuntimeException('Email sync is currently queued or running. Please wait for the current queue to finish, then try again.');
         }
 
         try {
-            return $this->runAcrossAccounts($this->accountsFor($accountIds), $startDate);
+            return $this->runAcrossAccountsManually($this->accountsFor($accountIds), $startDate);
         } finally {
             $lock->release();
         }
@@ -120,7 +126,7 @@ class EmailSyncRunner
 
     /**
      * @param  Collection<int, EmailSyncAccount>  $accounts
-     * @return list<array{accountId: int, accountLabel: string, fetched: int, created: int, updated: int, mailbox: string, skipped: bool}>
+     * @return list<array{accountId: int, accountLabel: string, fetched: int, created: int, updated: int, mailbox: string, skipped: bool, emailIds: list<int>}>
      */
     private function runAcrossAccounts(Collection $accounts, ?CarbonImmutable $startDate): array
     {
@@ -138,6 +144,7 @@ class EmailSyncRunner
                     'updated' => 0,
                     'mailbox' => (string) $account->mailbox,
                     'skipped' => true,
+                    'emailIds' => [],
                 ];
 
                 continue;
@@ -153,5 +160,41 @@ class EmailSyncRunner
         }
 
         return $results;
+    }
+
+    /**
+     * @param  Collection<int, EmailSyncAccount>  $accounts
+     * @return array{
+     *     results: list<array{accountId: int, accountLabel: string, fetched: int, created: int, updated: int, mailbox: string, skipped: bool, emailIds: list<int>}>,
+     *     busyAccounts: list<string>
+     * }
+     */
+    private function runAcrossAccountsManually(Collection $accounts, ?CarbonImmutable $startDate): array
+    {
+        $results = [];
+        $busyAccounts = [];
+
+        foreach ($accounts as $account) {
+            $lock = Cache::lock(self::accountLockKey((int) $account->getKey()), self::LOCK_TTL_SECONDS);
+
+            if (! $lock->get()) {
+                $busyAccounts[] = $account->label();
+
+                continue;
+            }
+
+            try {
+                $results[] = $startDate === null
+                    ? $this->emailSyncService->syncAccount($account)
+                    : $this->emailSyncService->backfillAccount($account, $startDate);
+            } finally {
+                $lock->release();
+            }
+        }
+
+        return [
+            'results' => $results,
+            'busyAccounts' => array_values(array_unique($busyAccounts)),
+        ];
     }
 }

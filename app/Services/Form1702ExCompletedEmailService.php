@@ -4,8 +4,11 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Mail\Form1702ExCompletedRowsEmail;
+use App\Models\Client;
 use App\Mail\Form1702ExCompletedRowEmail;
 use App\Models\Form1702ExBatchRow;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Storage;
 
@@ -104,6 +107,51 @@ class Form1702ExCompletedEmailService
         return true;
     }
 
+    /**
+     * @param  Collection<int, Form1702ExBatchRow>  $rows
+     */
+    public function queueClientBulk(Client $client, Collection $rows): ?string
+    {
+        $eligibleRows = $rows
+            ->filter(fn (Form1702ExBatchRow $row): bool => $this->isCompleted($row))
+            ->filter(fn (Form1702ExBatchRow $row): bool => ! $row->isSkippedDuplicate())
+            ->filter(fn (Form1702ExBatchRow $row): bool => $this->generatedPdfExists($row))
+            ->values();
+
+        if ($eligibleRows->isEmpty()) {
+            return null;
+        }
+
+        $recipientEmails = $eligibleRows
+            ->map(fn (Form1702ExBatchRow $row): ?string => $this->recipientEmail($row))
+            ->filter()
+            ->unique()
+            ->values();
+
+        if ($recipientEmails->count() !== 1) {
+            return null;
+        }
+
+        $attachments = $eligibleRows
+            ->map(fn (Form1702ExBatchRow $row): array => [
+                'storagePath' => (string) $row->generated_pdf_storage_path,
+                'fileName' => (string) $row->generated_pdf_file_name,
+            ])
+            ->all();
+
+        $recipientEmail = (string) $recipientEmails->first();
+
+        Mail::to($recipientEmail)->queue(
+            (new Form1702ExCompletedRowsEmail(
+                $attachments,
+                $this->defaultClientSubject($client),
+                $this->defaultClientMessage($client),
+            ))->afterCommit(),
+        );
+
+        return $recipientEmail;
+    }
+
     public function defaultSubject(Form1702ExBatchRow $row): string
     {
         return sprintf('1702EX - %s', $this->companyName($row));
@@ -116,6 +164,24 @@ class Form1702ExCompletedEmailService
                 'Good day! Attached is the %s with the confirmation for %s. Thank you!',
                 self::DEFAULT_FORM_TYPE,
                 $this->companyName($row),
+            ),
+            '',
+            self::DEFAULT_EMAIL_FOOTER,
+        ]);
+    }
+
+    public function defaultClientSubject(Client $client): string
+    {
+        return sprintf('1702EX - %s', $client->name);
+    }
+
+    public function defaultClientMessage(Client $client): string
+    {
+        return implode("\n", [
+            sprintf(
+                'Good day! Attached are the completed %s files for %s. Thank you!',
+                self::DEFAULT_FORM_TYPE,
+                $client->name,
             ),
             '',
             self::DEFAULT_EMAIL_FOOTER,

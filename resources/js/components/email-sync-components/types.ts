@@ -52,6 +52,18 @@ export type SyncResult = {
     skipped: boolean;
 };
 
+export type SyncResultDetails = {
+    actionLabel: string;
+    accountResults: Array<{
+        accountId: number;
+        accountLabel: string;
+        fetched: number;
+        created: number;
+        updated: number;
+        mailbox: string;
+    }>;
+};
+
 export type ConnectionState = {
     accountCount: number;
     hasActiveAccounts: boolean;
@@ -70,6 +82,7 @@ export type FlashState = {
     success: string | null;
     error: string | null;
     syncResult: SyncResult[] | null;
+    syncResultDetails: SyncResultDetails | null;
 };
 
 export type EmailSyncAccountOption = {
