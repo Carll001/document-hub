@@ -119,6 +119,9 @@ const emit = defineEmits<{
         </CardContent>
 
         <CardFooter class="mt-4 flex flex-wrap items-center gap-2 px-4 pt-0 pb-4">
+            <Badge variant="outline" class="rounded-full">
+                {{ props.email.accountLabel }}
+            </Badge>
             <Badge
                 v-if="visibleAttachments(props.email).length > 0"
                 variant="outline"

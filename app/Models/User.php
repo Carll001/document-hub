@@ -54,6 +54,11 @@ class User extends Authenticatable
         return $this->isSuperadmin();
     }
 
+    public function canAccessMailboxAccounts(): bool
+    {
+        return $this->isSuperadmin();
+    }
+
     public function canManageUser(self $user): bool
     {
         return $this->isSuperadmin() && $user->isStaff();

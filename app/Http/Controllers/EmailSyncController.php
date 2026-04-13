@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\EmailSyncAccount;
 use App\Models\SyncedEmail;
 use App\Models\SyncedEmailAttachment;
 use App\Services\EmailSync\BirReceiptAutoMatchService;
@@ -15,6 +16,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Response as HttpResponse;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\Rule;
 use Inertia\Inertia;
 use Inertia\Response;
 use RuntimeException;
@@ -31,23 +33,28 @@ class EmailSyncController extends Controller
             'appliedPage' => ['nullable', 'integer', 'min:1'],
             'search' => ['nullable', 'string', 'max:120'],
             'formType' => ['nullable', 'string', 'max:64'],
+            'accountIds' => ['nullable', 'array'],
+            'accountIds.*' => ['integer', Rule::exists('email_sync_accounts', 'id')],
         ]);
 
         $user = $request->user();
         $search = isset($validated['search']) ? trim((string) $validated['search']) : '';
         $formType = isset($validated['formType']) ? trim((string) $validated['formType']) : '';
+        $accountIds = $this->normalizedAccountIds($validated['accountIds'] ?? []);
 
         $emailPage = $this->birReceiptPage(
             $user,
             (int) ($validated['page'] ?? 1),
             $search,
             $formType,
+            $accountIds,
         );
 
         $appliedPage = $this->appliedBirReceiptPage(
             $user,
             (int) ($validated['appliedPage'] ?? 1),
             $formType,
+            $accountIds,
         );
 
         $latestSyncedEmail = SyncedEmail::query()
@@ -57,12 +64,8 @@ class EmailSyncController extends Controller
 
         return Inertia::render('EmailSync', [
             'connection' => [
-                'gmailAddressMasked' => $this->maskEmail((string) config('services.email_sync.username')),
-                'imapConfigured' => $this->imapConfigured(),
-                'imapHost' => config('services.email_sync.host'),
-                'imapPort' => config('services.email_sync.port'),
-                'imapEncryption' => config('services.email_sync.encryption'),
-                'mailbox' => config('services.email_sync.mailbox'),
+                'accountCount' => EmailSyncAccount::query()->where('is_active', true)->count(),
+                'hasActiveAccounts' => EmailSyncAccount::query()->where('is_active', true)->exists(),
                 'smtpConfigured' => $this->smtpConfigured(),
                 'smtpHost' => config('mail.mailers.smtp.host'),
                 'smtpPort' => config('mail.mailers.smtp.port'),
@@ -84,13 +87,18 @@ class EmailSyncController extends Controller
             'appliedEmails' => $this->transformEmails(collect($appliedPage->items())),
             'appliedPagination' => $this->paginationPayload($appliedPage),
             'receiptCounts' => [
-                'unmatched' => $this->birReceiptQuery($user, false, $search, $formType)->count(),
-                'applied' => $this->birReceiptQuery($user, true, '', $formType)->count(),
+                'unmatched' => $this->birReceiptQuery($user, false, $search, $formType, $accountIds)->count(),
+                'applied' => $this->birReceiptQuery($user, true, '', $formType, $accountIds)->count(),
             ],
             'filters' => [
                 'search' => $search,
                 'formType' => $formType,
                 'formTypeOptions' => $this->formTypeOptions($user),
+                'accountIds' => $accountIds,
+                'accountOptions' => $this->filterAccountOptions($user),
+            ],
+            'syncAccounts' => [
+                'options' => $this->syncAccountOptions(),
             ],
         ]);
     }
@@ -106,6 +114,74 @@ class EmailSyncController extends Controller
         return response()->json(
             $this->legacyEmailPagePayload(
                 $this->emailPage($request->user(), $page),
+            ),
+        );
+    }
+
+    public function allEmails(Request $request): Response
+    {
+        $validated = $request->validate([
+            'accountIds' => ['nullable', 'array'],
+            'accountIds.*' => ['integer', Rule::exists('email_sync_accounts', 'id')],
+        ]);
+
+        $user = $request->user();
+        $accountIds = $this->normalizedAccountIds($validated['accountIds'] ?? []);
+        $emailPage = $this->emailPage($user, 1, $accountIds);
+        $latestSyncedEmail = SyncedEmail::query()
+            ->visibleTo($user)
+            ->latest('synced_at')
+            ->first();
+
+        return Inertia::render('AllEmailSync', [
+            'connection' => [
+                'accountCount' => EmailSyncAccount::query()->where('is_active', true)->count(),
+                'hasActiveAccounts' => EmailSyncAccount::query()->where('is_active', true)->exists(),
+                'smtpConfigured' => $this->smtpConfigured(),
+                'smtpHost' => config('mail.mailers.smtp.host'),
+                'smtpPort' => config('mail.mailers.smtp.port'),
+                'smtpScheme' => config('mail.mailers.smtp.scheme'),
+            ],
+            'flash' => [
+                'success' => $request->session()->get('success'),
+                'error' => $request->session()->get('error'),
+                'syncResult' => $request->session()->get('syncResult'),
+            ],
+            'stats' => [
+                'totalStored' => SyncedEmail::query()
+                    ->visibleTo($user)
+                    ->count(),
+                'latestSyncedAt' => $latestSyncedEmail?->synced_at?->toIso8601String(),
+            ],
+            'emails' => $this->transformEmails(collect($emailPage->items())),
+            'hasMoreEmails' => $emailPage->hasMorePages(),
+            'nextEmailsCursor' => $emailPage->hasMorePages()
+                ? (string) ($emailPage->currentPage() + 1)
+                : null,
+            'filters' => [
+                'accountIds' => $accountIds,
+                'accountOptions' => $this->filterAccountOptions($user),
+            ],
+            'syncAccounts' => [
+                'options' => $this->syncAccountOptions(),
+            ],
+        ]);
+    }
+
+    public function allEmailMessages(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'cursor' => ['nullable', 'integer', 'min:1'],
+            'accountIds' => ['nullable', 'array'],
+            'accountIds.*' => ['integer', Rule::exists('email_sync_accounts', 'id')],
+        ]);
+
+        $page = (int) ($validated['cursor'] ?? 1);
+        $accountIds = $this->normalizedAccountIds($validated['accountIds'] ?? []);
+
+        return response()->json(
+            $this->legacyEmailPagePayload(
+                $this->emailPage($request->user(), $page, $accountIds),
             ),
         );
     }
@@ -172,8 +248,13 @@ class EmailSyncController extends Controller
 
     public function sync(Request $request, EmailSyncRunner $runner): RedirectResponse
     {
+        $validated = $request->validate([
+            'accountIds' => ['nullable', 'array'],
+            'accountIds.*' => ['integer', Rule::exists('email_sync_accounts', 'id')],
+        ]);
+
         try {
-            $result = $runner->sync();
+            $result = $runner->sync($this->normalizedAccountIds($validated['accountIds'] ?? []));
 
             return to_route('email-sync.index')
                 ->with('success', 'Inbox sync completed successfully.')
@@ -187,7 +268,7 @@ class EmailSyncController extends Controller
             report($exception);
 
             return to_route('email-sync.index')
-                ->with('error', 'Email sync failed. Check your Gmail address, app password, and IMAP access, then try again.');
+                ->with('error', 'Email sync failed. Check the configured IMAP accounts, then try again.');
         }
     }
 
@@ -195,11 +276,14 @@ class EmailSyncController extends Controller
     {
         $validated = $request->validate([
             'startDate' => ['required', 'date_format:Y-m-d'],
+            'accountIds' => ['nullable', 'array'],
+            'accountIds.*' => ['integer', Rule::exists('email_sync_accounts', 'id')],
         ]);
 
         try {
             $result = $runner->backfill(
                 CarbonImmutable::createFromFormat('Y-m-d', $validated['startDate'])->startOfDay(),
+                $this->normalizedAccountIds($validated['accountIds'] ?? []),
             );
 
             return to_route('email-sync.index')
@@ -214,25 +298,30 @@ class EmailSyncController extends Controller
             report($exception);
 
             return to_route('email-sync.index')
-                ->with('error', 'Older email import failed. Check your Gmail IMAP access, then try again.');
+                ->with('error', 'Older email import failed. Check the configured IMAP accounts, then try again.');
         }
     }
 
-    private function emailPage($user, int $page): LengthAwarePaginator
+    private function emailPage($user, int $page, array $accountIds = []): LengthAwarePaginator
     {
-        return SyncedEmail::query()
+        $query = SyncedEmail::query()
             ->visibleTo($user)
-            ->with('attachments')
+            ->with(['attachments', 'emailSyncAccount'])
             ->orderByRaw(
                 'CASE WHEN received_at IS NULL OR received_at > synced_at THEN synced_at ELSE received_at END DESC',
             )
-            ->orderByDesc('id')
-            ->paginate(self::EMAILS_PER_PAGE, ['*'], 'page', $page);
+            ->orderByDesc('id');
+
+        if ($accountIds !== []) {
+            $query->whereIn('email_sync_account_id', $accountIds);
+        }
+
+        return $query->paginate(self::EMAILS_PER_PAGE, ['*'], 'page', $page);
     }
 
-    private function birReceiptPage($user, int $page, string $search, string $formType = ''): LengthAwarePaginator
+    private function birReceiptPage($user, int $page, string $search, string $formType = '', array $accountIds = []): LengthAwarePaginator
     {
-        return $this->birReceiptQuery($user, false, $search, $formType)
+        return $this->birReceiptQuery($user, false, $search, $formType, $accountIds)
             ->orderByRaw(
                 'CASE WHEN received_at IS NULL OR received_at > synced_at THEN synced_at ELSE received_at END DESC',
             )
@@ -241,20 +330,20 @@ class EmailSyncController extends Controller
             ->withQueryString();
     }
 
-    private function appliedBirReceiptPage($user, int $page, string $formType = ''): LengthAwarePaginator
+    private function appliedBirReceiptPage($user, int $page, string $formType = '', array $accountIds = []): LengthAwarePaginator
     {
-        return $this->birReceiptQuery($user, true, '', $formType)
+        return $this->birReceiptQuery($user, true, '', $formType, $accountIds)
             ->orderByDesc('bir_receipt_applied_at')
             ->orderByDesc('id')
             ->paginate(self::EMAILS_PER_PAGE, ['*'], 'appliedPage', $page)
             ->withQueryString();
     }
 
-    private function birReceiptQuery($user, bool $applied, string $search = '', string $formType = '')
+    private function birReceiptQuery($user, bool $applied, string $search = '', string $formType = '', array $accountIds = [])
     {
         $query = SyncedEmail::query()
             ->visibleTo($user)
-            ->with('attachments');
+            ->with(['attachments', 'emailSyncAccount']);
 
         if ($applied) {
             $query->where('bir_receipt_match_status', BirReceiptAutoMatchService::MATCH_STATUS_APPLIED);
@@ -287,6 +376,10 @@ class EmailSyncController extends Controller
             $query->where('bir_receipt_form_type', $formType);
         }
 
+        if ($accountIds !== []) {
+            $query->whereIn('email_sync_account_id', $accountIds);
+        }
+
         return $query;
     }
 
@@ -307,6 +400,58 @@ class EmailSyncController extends Controller
             ->all();
     }
 
+    /**
+     * @return array<int, array{id: number, label: string, username: string|null, isActive: bool}>
+     */
+    private function filterAccountOptions($user): array
+    {
+        return EmailSyncAccount::withTrashed()
+            ->where(function ($query) use ($user): void {
+                $query
+                    ->whereExists(function ($subquery) use ($user): void {
+                        $subquery->selectRaw('1')
+                            ->from('synced_emails')
+                            ->whereColumn('synced_emails.email_sync_account_id', 'email_sync_accounts.id')
+                            ->where(function ($visibility) use ($user): void {
+                                $visibility
+                                    ->whereNull('claimed_by_user_id')
+                                    ->orWhere('claimed_by_user_id', $user->getKey());
+                            });
+                    })
+                    ->orWhere('is_active', true);
+            })
+            ->orderBy('display_name')
+            ->orderBy('username')
+            ->get()
+            ->map(fn (EmailSyncAccount $account): array => [
+                'id' => $account->id,
+                'label' => $account->label(),
+                'username' => $account->username,
+                'isActive' => (bool) $account->is_active && $account->deleted_at === null,
+            ])
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @return array<int, array{id: number, label: string, username: string}>
+     */
+    private function syncAccountOptions(): array
+    {
+        return EmailSyncAccount::query()
+            ->where('is_active', true)
+            ->orderBy('display_name')
+            ->orderBy('username')
+            ->get()
+            ->map(fn (EmailSyncAccount $account): array => [
+                'id' => $account->id,
+                'label' => $account->label(),
+                'username' => $account->username,
+            ])
+            ->values()
+            ->all();
+    }
+
     private function legacyEmailPagePayload(LengthAwarePaginator $emailPage): array
     {
         return [
@@ -322,10 +467,14 @@ class EmailSyncController extends Controller
     {
         return $emails->map(function (SyncedEmail $email): array {
             $hasHtmlBody = $this->hasMeaningfulHtmlBody($email->body_html);
+            $account = $email->emailSyncAccount;
 
             return [
                 'id' => $email->id,
                 'mailbox' => $email->mailbox,
+                'accountId' => $email->email_sync_account_id,
+                'accountLabel' => $account?->label() ?? 'Removed account',
+                'accountEmail' => $account?->username,
                 'fromName' => $email->from_name,
                 'fromEmail' => $email->from_email,
                 'subject' => $email->subject,
@@ -396,17 +545,6 @@ class EmailSyncController extends Controller
         return preg_match('/<(img|svg|video|audio|table|hr|canvas)\b/i', $bodyHtml) === 1;
     }
 
-    private function imapConfigured(): bool
-    {
-        $username = trim((string) config('services.email_sync.username'));
-
-        return filled(config('services.email_sync.host'))
-            && filled(config('services.email_sync.port'))
-            && filled(config('services.email_sync.password'))
-            && $username !== ''
-            && $username !== 'your-google-account@gmail.com';
-    }
-
     private function smtpConfigured(): bool
     {
         $username = trim((string) config('mail.mailers.smtp.username'));
@@ -419,26 +557,18 @@ class EmailSyncController extends Controller
             && $username !== 'your-google-account@gmail.com';
     }
 
-    private function maskEmail(string $email): ?string
+    /**
+     * @param  array<int, mixed>  $accountIds
+     * @return list<int>
+     */
+    private function normalizedAccountIds(array $accountIds): array
     {
-        $email = trim($email);
-
-        if ($email === '' || ! str_contains($email, '@')) {
-            return null;
-        }
-
-        [$local, $domain] = explode('@', $email, 2);
-
-        if ($local === '') {
-            return null;
-        }
-
-        return sprintf(
-            '%s%s@%s',
-            $local[0],
-            str_repeat('*', max(strlen($local) - 1, 1)),
-            $domain,
-        );
+        return collect($accountIds)
+            ->map(fn (mixed $accountId): int => (int) $accountId)
+            ->filter(fn (int $accountId): bool => $accountId > 0)
+            ->unique()
+            ->values()
+            ->all();
     }
 
     private function abortUnlessOwnsAttachment(

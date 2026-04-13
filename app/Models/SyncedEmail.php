@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Facades\Storage;
 
 #[Fillable([
+    'email_sync_account_id',
     'mailbox',
     'imap_uid',
     'message_id',
@@ -66,6 +67,14 @@ class SyncedEmail extends Model
     public function claimedByUser(): BelongsTo
     {
         return $this->belongsTo(User::class, 'claimed_by_user_id');
+    }
+
+    /**
+     * Get the mailbox account that sourced this synced email.
+     */
+    public function emailSyncAccount(): BelongsTo
+    {
+        return $this->belongsTo(EmailSyncAccount::class)->withTrashed();
     }
 
     /**

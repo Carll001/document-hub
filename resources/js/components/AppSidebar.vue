@@ -42,6 +42,11 @@ const mainNavItems = computed<NavItem[]>(() => {
                 href: '/users',
                 icon: Users,
             },
+            {
+                title: 'Mailbox Accounts',
+                href: '/mailbox-accounts',
+                icon: Mail,
+            },
         ];
     }
 

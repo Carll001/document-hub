@@ -2,6 +2,7 @@
 
 namespace App\Services\EmailSync;
 
+use App\Models\EmailSyncAccount;
 use App\Models\SyncedEmail;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Builder;
@@ -19,16 +20,13 @@ class EmailSyncService
     }
 
     /**
-     * Incrementally sync newer Gmail inbox messages into the local database.
-     *
-     * @return array{fetched: int, created: int, updated: int, mailbox: string}
+     * @return array{accountId: int, accountLabel: string, fetched: int, created: int, updated: int, mailbox: string, skipped: bool}
      */
-    public function sync(): array
+    public function syncAccount(EmailSyncAccount $account): array
     {
-        $config = $this->configuration();
+        $config = $this->configuration($account);
         $mailbox = $config['mailbox'];
-        $newestSyncedUid = $this->newestSyncedUid($mailbox);
-
+        $newestSyncedUid = $this->newestSyncedUid($account, $mailbox);
         $client = $this->makeClient($config);
 
         try {
@@ -39,20 +37,18 @@ class EmailSyncService
                 ? $client->latestUids(self::INITIAL_SYNC_LIMIT)
                 : $client->uidsNewerThan($newestSyncedUid);
 
-            return $this->syncUids($mailbox, $client, $uids);
+            return $this->syncUids($account, $mailbox, $client, $uids);
         } finally {
             $client->disconnect();
         }
     }
 
     /**
-     * Backfill older Gmail inbox messages into the local database.
-     *
-     * @return array{fetched: int, created: int, updated: int, mailbox: string}
+     * @return array{accountId: int, accountLabel: string, fetched: int, created: int, updated: int, mailbox: string, skipped: bool}
      */
-    public function backfill(CarbonImmutable $startDate): array
+    public function backfillAccount(EmailSyncAccount $account, CarbonImmutable $startDate): array
     {
-        $config = $this->configuration();
+        $config = $this->configuration($account);
         $mailbox = $config['mailbox'];
         $client = $this->makeClient($config);
 
@@ -62,7 +58,7 @@ class EmailSyncService
 
             $uids = $client->uidsReceivedSince($startDate->startOfDay());
 
-            return $this->syncUids($mailbox, $client, $uids);
+            return $this->syncUids($account, $mailbox, $client, $uids);
         } finally {
             $client->disconnect();
         }
@@ -94,13 +90,15 @@ class EmailSyncService
     }
 
     /**
-     * Persist the fetched IMAP UIDs for a mailbox.
-     *
      * @param  list<int>  $uids
-     * @return array{fetched: int, created: int, updated: int, mailbox: string}
+     * @return array{accountId: int, accountLabel: string, fetched: int, created: int, updated: int, mailbox: string, skipped: bool}
      */
-    private function syncUids(string $mailbox, EmailSyncClient $client, array $uids): array
-    {
+    private function syncUids(
+        EmailSyncAccount $account,
+        string $mailbox,
+        EmailSyncClient $client,
+        array $uids,
+    ): array {
         $created = 0;
         $updated = 0;
         $fetched = 0;
@@ -112,6 +110,7 @@ class EmailSyncService
 
             $email = SyncedEmail::query()->updateOrCreate(
                 [
+                    'email_sync_account_id' => $account->getKey(),
                     'mailbox' => $mailbox,
                     'imap_uid' => $message['imap_uid'],
                 ],
@@ -139,38 +138,32 @@ class EmailSyncService
         }
 
         return [
+            'accountId' => (int) $account->getKey(),
+            'accountLabel' => $account->label(),
             'fetched' => $fetched,
             'created' => $created,
             'updated' => $updated,
             'mailbox' => $mailbox,
+            'skipped' => false,
         ];
     }
 
-    /**
-     * Get the newest synced IMAP UID for the user and mailbox.
-     */
-    private function newestSyncedUid(string $mailbox): ?int
+    private function newestSyncedUid(EmailSyncAccount $account, string $mailbox): ?int
     {
-        $imapUid = $this->mailboxQuery($mailbox)
+        $imapUid = $this->mailboxQuery($account, $mailbox)
             ->orderByRaw('CAST(imap_uid AS BIGINT) DESC')
             ->value('imap_uid');
 
         return $imapUid !== null ? (int) $imapUid : null;
     }
 
-    /**
-     * Build the base query used for synced email mailbox lookups.
-     */
-    private function mailboxQuery(string $mailbox)
-    : Builder
+    private function mailboxQuery(EmailSyncAccount $account, string $mailbox): Builder
     {
         return SyncedEmail::query()
+            ->where('email_sync_account_id', $account->getKey())
             ->where('mailbox', $mailbox);
     }
 
-    /**
-     * Generate a short single-line preview from the extracted message body.
-     */
     private function previewFromBody(?string $bodyText): ?string
     {
         $bodyText = preg_replace('/\s+/u', ' ', trim((string) $bodyText)) ?? '';
@@ -183,8 +176,6 @@ class EmailSyncService
     }
 
     /**
-     * Store the latest attachment set for a synced email.
-     *
      * @param  list<array{file_name: string, content_type: string|null, content: string, size: int, content_id: string|null, is_inline: bool}>  $attachments
      */
     private function syncAttachments(SyncedEmail $email, array $attachments): void
@@ -212,9 +203,6 @@ class EmailSyncService
         }
     }
 
-    /**
-     * Prevent unsafe or empty attachment filenames from being written directly.
-     */
     private function safeAttachmentFilename(string $fileName, int $position): string
     {
         $extension = Str::of(pathinfo($fileName, PATHINFO_EXTENSION))
@@ -239,8 +227,6 @@ class EmailSyncService
     }
 
     /**
-     * Get the validated email sync configuration.
-     *
      * @return array{
      *     host: string,
      *     port: int,
@@ -251,29 +237,29 @@ class EmailSyncService
      *     validate_certificate: bool
      * }
      */
-    private function configuration(): array
+    private function configuration(EmailSyncAccount $account): array
     {
-        $config = config('services.email_sync');
+        $username = trim((string) $account->username);
+        $password = trim((string) $account->password);
 
-        $username = trim((string) ($config['username'] ?? ''));
-        $password = trim((string) ($config['password'] ?? ''));
-
-        if ($username === '' || $username === 'your-google-account@gmail.com') {
-            throw new RuntimeException('Email sync is not configured yet. Set your Gmail address in MAIL_USERNAME first.');
+        if ($username === '') {
+            throw new RuntimeException("Email sync account {$account->label()} is missing a username.");
         }
 
         if ($password === '') {
-            throw new RuntimeException('Email sync is not configured yet. Set your Gmail app password in MAIL_PASSWORD first.');
+            throw new RuntimeException("Email sync account {$account->label()} is missing a password.");
         }
 
         return [
-            'host' => trim((string) ($config['host'] ?? 'imap.gmail.com')),
-            'port' => (int) ($config['port'] ?? 993),
+            'host' => trim((string) $account->host),
+            'port' => (int) $account->port,
             'username' => $username,
             'password' => $password,
-            'encryption' => trim((string) ($config['encryption'] ?? 'ssl')),
-            'mailbox' => trim((string) ($config['mailbox'] ?? 'INBOX')),
-            'validate_certificate' => (bool) ($config['validate_certificate'] ?? true),
+            'encryption' => $account->encryption === 'none'
+                ? ''
+                : trim((string) $account->encryption),
+            'mailbox' => trim((string) $account->mailbox),
+            'validate_certificate' => (bool) $account->validate_certificate,
         ];
     }
 }

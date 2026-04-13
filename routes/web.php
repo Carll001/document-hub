@@ -3,6 +3,7 @@
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\DocMergeBatchController;
 use App\Http\Controllers\DocMergeController;
+use App\Http\Controllers\EmailSyncAccountManagementController;
 use App\Http\Controllers\EmailSyncController;
 use App\Http\Controllers\Form1702ExController;
 use App\Http\Controllers\Form1702ExPage1TemplateController;
@@ -65,7 +66,9 @@ Route::middleware(['auth', 'verified'])->group(function () {
             ->name('email-sync.')
             ->group(function () {
                 Route::get('/', 'index')->name('index');
+                Route::get('all-emails', 'allEmails')->name('all-emails');
                 Route::get('messages', 'emails')->name('emails');
+                Route::get('all-emails/messages', 'allEmailMessages')->name('all-emails.messages');
                 Route::post('/', 'sync')->name('sync');
                 Route::post('backfill', 'backfill')->name('backfill');
                 Route::get('{syncedEmail}/rendered', 'renderedMessage')->name('rendered');
@@ -166,6 +169,17 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::delete('/', 'destroyMany')->name('destroy-many');
             Route::put('{user}', 'update')->name('update');
             Route::delete('{user}', 'destroy')->name('destroy');
+        });
+    Route::middleware('superadmin')
+        ->controller(EmailSyncAccountManagementController::class)
+        ->prefix('mailbox-accounts')
+        ->name('mailbox-accounts.')
+        ->group(function () {
+            Route::get('/', 'index')->name('index');
+            Route::post('/', 'store')->name('store');
+            Route::delete('/', 'destroyMany')->name('destroy-many');
+            Route::put('{emailSyncAccount}', 'update')->name('update');
+            Route::delete('{emailSyncAccount}', 'destroy')->name('destroy');
         });
 });
 

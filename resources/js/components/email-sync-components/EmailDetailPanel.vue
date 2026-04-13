@@ -86,6 +86,9 @@ const { onRenderedEmailLoad, renderedEmailFrame } = useRenderedEmailFrame(
                                     </template>
                                 </p>
                                 <Badge variant="outline" class="rounded-full">
+                                    {{ props.selectedEmail.accountLabel }}
+                                </Badge>
+                                <Badge variant="outline" class="rounded-full">
                                     {{ props.selectedEmail.mailbox }}
                                 </Badge>
                                 <Badge

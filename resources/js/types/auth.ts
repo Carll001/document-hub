@@ -12,6 +12,7 @@ export type User = {
     canAccessDocMerge: boolean;
     canAccessEmailSync: boolean;
     canAccessUserManagement: boolean;
+    canAccessMailboxAccounts: boolean;
     [key: string]: unknown;
 };
 

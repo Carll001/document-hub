@@ -10,6 +10,9 @@ export type EmailAttachment = {
 export type EmailRecord = {
     id: number;
     mailbox: string;
+    accountId: number | null;
+    accountLabel: string;
+    accountEmail: string | null;
     fromName: string | null;
     fromEmail: string | null;
     subject: string | null;
@@ -40,19 +43,18 @@ export type EmailRecord = {
 };
 
 export type SyncResult = {
+    accountId: number;
+    accountLabel: string;
     fetched: number;
     created: number;
     updated: number;
     mailbox: string;
+    skipped: boolean;
 };
 
 export type ConnectionState = {
-    gmailAddressMasked: string | null;
-    imapConfigured: boolean;
-    imapHost: string | null;
-    imapPort: number | string | null;
-    imapEncryption: string | null;
-    mailbox: string | null;
+    accountCount: number;
+    hasActiveAccounts: boolean;
     smtpConfigured: boolean;
     smtpHost: string | null;
     smtpPort: number | string | null;
@@ -67,7 +69,14 @@ export type StatsState = {
 export type FlashState = {
     success: string | null;
     error: string | null;
-    syncResult: SyncResult | null;
+    syncResult: SyncResult[] | null;
+};
+
+export type EmailSyncAccountOption = {
+    id: number;
+    label: string;
+    username: string | null;
+    isActive?: boolean;
 };
 
 export type EmailSyncPageProps = {
@@ -96,10 +105,31 @@ export type EmailSyncPageProps = {
         unmatched: number;
         applied: number;
     };
+    syncAccounts: {
+        options: EmailSyncAccountOption[];
+    };
     filters: {
         search: string;
         formType: string;
         formTypeOptions: string[];
+        accountIds: number[];
+        accountOptions: EmailSyncAccountOption[];
+    };
+};
+
+export type AllEmailSyncPageProps = {
+    connection: ConnectionState;
+    flash: FlashState;
+    stats: StatsState;
+    emails: EmailRecord[];
+    hasMoreEmails: boolean;
+    nextEmailsCursor: string | null;
+    syncAccounts: {
+        options: EmailSyncAccountOption[];
+    };
+    filters: {
+        accountIds: number[];
+        accountOptions: EmailSyncAccountOption[];
     };
 };
 

@@ -166,6 +166,9 @@ export function highlightText(
 
 export function emailSearchableText(email: EmailRecord): string {
     return [
+        email.accountLabel,
+        email.accountEmail,
+        email.mailbox,
         email.subject,
         email.fromName,
         email.fromEmail,

@@ -21,7 +21,7 @@ import {
     TableHeader,
     TableRow,
 } from '@/components/ui/table';
-import type { EmailRecord } from '@/components/email-sync-components/types';
+import type { EmailRecord, EmailSyncAccountOption } from '@/components/email-sync-components/types';
 import { emailMatchStatusLabel } from '@/components/email-sync-components/utils';
 
 const props = defineProps<{
@@ -39,16 +39,20 @@ const props = defineProps<{
     searchTerm: string;
     formTypeFilter: string;
     formTypeOptions: string[];
+    accountFilterIds: number[];
+    accountOptions: EmailSyncAccountOption[];
     totalStoredEmails: number;
 }>();
 
 const emit = defineEmits<{
     'update:searchTerm': [value: string];
     'update:formTypeFilter': [value: string];
+    'update:accountFilterIds': [value: number[]];
 }>();
 
 const paginationControls = ref<HTMLElement | null>(null);
 const ALL_FORM_TYPES_VALUE = '__all_form_types__';
+const ALL_ACCOUNTS_VALUE = '__all_accounts__';
 
 type PaginationItem = number | 'ellipsis-start' | 'ellipsis-end';
 
@@ -72,6 +76,14 @@ const paginationItems = computed<PaginationItem[]>(() => {
     }
 
     return [1, 'ellipsis-start', currentPage - 1, currentPage, currentPage + 1, 'ellipsis-end', lastPage];
+});
+
+const selectedAccountValue = computed(() => {
+    if (props.accountFilterIds.length !== 1) {
+        return ALL_ACCOUNTS_VALUE;
+    }
+
+    return String(props.accountFilterIds[0]);
 });
 
 function statusVariant(status: EmailRecord['matchStatus']): 'outline' | 'secondary' | 'destructive' {
@@ -98,11 +110,12 @@ function visitPage(page: number): void {
             appliedPage: props.appliedPage,
             search: props.searchTerm.trim() || undefined,
             formType: props.formTypeFilter || undefined,
+            accountIds: props.accountFilterIds.length > 0 ? props.accountFilterIds : undefined,
         },
         {
             preserveScroll: true,
             preserveState: true,
-            only: ['emails', 'pagination', 'stats', 'flash', 'receiptCounts', 'appliedPagination'],
+            only: ['emails', 'pagination', 'stats', 'flash', 'receiptCounts', 'appliedPagination', 'filters'],
             onSuccess: () => {
                 void nextTick(() => {
                     paginationControls.value?.scrollIntoView({
@@ -113,6 +126,16 @@ function visitPage(page: number): void {
         },
     );
 }
+
+function updateSelectedAccount(value: string): void {
+    if (value === ALL_ACCOUNTS_VALUE) {
+        emit('update:accountFilterIds', []);
+
+        return;
+    }
+
+    emit('update:accountFilterIds', [Number(value)]);
+}
 </script>
 
 <template>
@@ -121,7 +144,7 @@ function visitPage(page: number): void {
             <div
                 class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between"
             >
-                <div class="flex w-full max-w-4xl flex-col gap-3 md:flex-row">
+                <div class="flex w-full max-w-5xl flex-col gap-3 md:flex-row">
                     <div class="relative flex-1">
                         <Search
                             class="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
@@ -168,6 +191,32 @@ function visitPage(page: number): void {
                             </SelectItem>
                         </SelectContent>
                     </Select>
+
+                    <Select
+                        :model-value="selectedAccountValue"
+                        @update:model-value="
+                            updateSelectedAccount(String($event ?? ALL_ACCOUNTS_VALUE))
+                        "
+                    >
+                        <SelectTrigger class="h-10 w-full rounded-2xl md:w-[15rem]">
+                            <SelectValue placeholder="All accounts" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem :value="ALL_ACCOUNTS_VALUE">
+                                All accounts
+                            </SelectItem>
+                            <SelectItem
+                                v-for="account in props.accountOptions"
+                                :key="account.id"
+                                :value="String(account.id)"
+                            >
+                                {{ account.label }}
+                                <span v-if="account.isActive === false">
+                                    (inactive)
+                                </span>
+                            </SelectItem>
+                        </SelectContent>
+                    </Select>
                 </div>
 
                 <p class="text-sm text-muted-foreground">
@@ -183,6 +232,7 @@ function visitPage(page: number): void {
                 <Table>
                     <TableHeader>
                         <TableRow>
+                            <TableHead>ACCOUNT</TableHead>
                             <TableHead>TIN</TableHead>
                             <TableHead>FILE NAME</TableHead>
                             <TableHead>FORM TYPE</TableHead>
@@ -198,6 +248,16 @@ function visitPage(page: number): void {
                                 v-for="email in props.emails"
                                 :key="email.id"
                             >
+                                <TableCell class="text-sm text-muted-foreground">
+                                    <div class="space-y-1">
+                                        <p class="font-medium text-foreground">
+                                            {{ email.accountLabel }}
+                                        </p>
+                                        <p v-if="email.accountEmail">
+                                            {{ email.accountEmail }}
+                                        </p>
+                                    </div>
+                                </TableCell>
                                 <TableCell class="font-medium text-foreground">
                                     {{ email.matchedTin || '-' }}
                                 </TableCell>
@@ -256,11 +316,11 @@ function visitPage(page: number): void {
                             </TableRow>
                         </template>
 
-                        <TableEmpty v-else :colspan="6">
+                        <TableEmpty v-else :colspan="7">
                             {{
                                 props.totalStoredEmails === 0
                                     ? 'No unmatched BIR receipt email yet. Sync your inbox to build the list.'
-                                    : 'No unmatched BIR receipt email matches your search yet.'
+                                    : 'No unmatched BIR receipt email matches your current filters.'
                             }}
                         </TableEmpty>
                     </TableBody>

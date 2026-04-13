@@ -55,6 +55,7 @@ class HandleInertiaRequests extends Middleware
                     'canAccessDocMerge' => $user->isStaff(),
                     'canAccessEmailSync' => $user->isStaff(),
                     'canAccessUserManagement' => $user->canAccessUserManagement(),
+                    'canAccessMailboxAccounts' => $user->canAccessMailboxAccounts(),
                 ] : null,
             ],
             'sidebarOpen' => ! $request->hasCookie('sidebar_state') || $request->cookie('sidebar_state') === 'true',

@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace App\Services\EmailSync;
 
+use App\Models\EmailSyncAccount;
 use Carbon\CarbonImmutable;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use RuntimeException;
 
@@ -18,67 +20,138 @@ class EmailSyncRunner
     }
 
     /**
-     * Run the shared inbox sync immediately, failing fast if it is already running.
-     *
-     * @return array{fetched: int, created: int, updated: int, mailbox: string}
+     * @param  list<int>  $accountIds
+     * @return list<array{accountId: int, accountLabel: string, fetched: int, created: int, updated: int, mailbox: string, skipped: bool}>
      */
-    public function sync(): array
+    public function sync(array $accountIds = []): array
     {
-        $lock = Cache::lock(self::lockKey(), self::LOCK_TTL_SECONDS);
+        $lock = Cache::lock(self::aggregateLockKey(), 30);
 
         if (! $lock->get()) {
             throw new RuntimeException('Inbox sync is already running.');
         }
 
         try {
-            return $this->emailSyncService->sync();
+            return $this->runAcrossAccounts($this->accountsFor($accountIds), null);
         } finally {
             $lock->release();
         }
     }
 
     /**
-     * Attempt a shared sync for queued/background work and quietly skip if it is already running.
-     *
-     * @return array{fetched: int, created: int, updated: int, mailbox: string}|null
+     * @param  list<int>  $accountIds
+     * @return list<array{accountId: int, accountLabel: string, fetched: int, created: int, updated: int, mailbox: string, skipped: bool}>|null
      */
-    public function syncIfAvailable(): ?array
+    public function syncIfAvailable(array $accountIds = []): ?array
     {
-        $lock = Cache::lock(self::lockKey(), self::LOCK_TTL_SECONDS);
+        $lock = Cache::lock(self::aggregateLockKey(), 30);
 
         if (! $lock->get()) {
             return null;
         }
 
         try {
-            return $this->emailSyncService->sync();
+            try {
+                return $this->runAcrossAccounts($this->accountsFor($accountIds), null);
+            } catch (RuntimeException $exception) {
+                if ($exception->getMessage() === 'No active mailbox accounts are configured.') {
+                    return null;
+                }
+
+                throw $exception;
+            }
         } finally {
             $lock->release();
         }
     }
 
     /**
-     * Run a shared inbox backfill immediately using the same shared lock.
-     *
-     * @return array{fetched: int, created: int, updated: int, mailbox: string}
+     * @param  list<int>  $accountIds
+     * @return list<array{accountId: int, accountLabel: string, fetched: int, created: int, updated: int, mailbox: string, skipped: bool}>
      */
-    public function backfill(CarbonImmutable $startDate): array
+    public function backfill(CarbonImmutable $startDate, array $accountIds = []): array
     {
-        $lock = Cache::lock(self::lockKey(), self::LOCK_TTL_SECONDS);
+        $lock = Cache::lock(self::aggregateLockKey(), 30);
 
         if (! $lock->get()) {
             throw new RuntimeException('Inbox sync is already running.');
         }
 
         try {
-            return $this->emailSyncService->backfill($startDate);
+            return $this->runAcrossAccounts($this->accountsFor($accountIds), $startDate);
         } finally {
             $lock->release();
         }
     }
 
-    public static function lockKey(): string
+    public static function aggregateLockKey(): string
     {
-        return 'email-sync:shared:lock';
+        return 'email-sync:shared:aggregate-lock';
+    }
+
+    public static function accountLockKey(int $accountId): string
+    {
+        return "email-sync:account:{$accountId}:lock";
+    }
+
+    /**
+     * @param  list<int>  $accountIds
+     * @return Collection<int, EmailSyncAccount>
+     */
+    private function accountsFor(array $accountIds): Collection
+    {
+        $query = EmailSyncAccount::query()
+            ->where('is_active', true)
+            ->orderBy('display_name')
+            ->orderBy('id');
+
+        if ($accountIds !== []) {
+            $query->whereIn('id', $accountIds);
+        }
+
+        $accounts = $query->get();
+
+        if ($accounts->isEmpty()) {
+            throw new RuntimeException('No active mailbox accounts are configured.');
+        }
+
+        return $accounts;
+    }
+
+    /**
+     * @param  Collection<int, EmailSyncAccount>  $accounts
+     * @return list<array{accountId: int, accountLabel: string, fetched: int, created: int, updated: int, mailbox: string, skipped: bool}>
+     */
+    private function runAcrossAccounts(Collection $accounts, ?CarbonImmutable $startDate): array
+    {
+        $results = [];
+
+        foreach ($accounts as $account) {
+            $lock = Cache::lock(self::accountLockKey((int) $account->getKey()), self::LOCK_TTL_SECONDS);
+
+            if (! $lock->get()) {
+                $results[] = [
+                    'accountId' => (int) $account->getKey(),
+                    'accountLabel' => $account->label(),
+                    'fetched' => 0,
+                    'created' => 0,
+                    'updated' => 0,
+                    'mailbox' => (string) $account->mailbox,
+                    'skipped' => true,
+                ];
+
+                continue;
+            }
+
+            try {
+                $results[] = $startDate === null
+                    ? $this->emailSyncService->syncAccount($account)
+                    : $this->emailSyncService->backfillAccount($account, $startDate);
+            } finally {
+                $lock->release();
+            }
+        }
+
+        return $results;
     }
 }

@@ -37,6 +37,7 @@ const props = defineProps<{
         to: number | null;
     };
     formTypeFilter: string;
+    accountFilterIds: number[];
     unmatchedPage: number;
 }>();
 
@@ -81,11 +82,12 @@ function visitPage(page: number): void {
             page: props.unmatchedPage,
             appliedPage: page,
             formType: props.formTypeFilter || undefined,
+            accountIds: props.accountFilterIds.length > 0 ? props.accountFilterIds : undefined,
         },
         {
             preserveScroll: true,
             preserveState: true,
-            only: ['appliedEmails', 'appliedPagination', 'receiptCounts', 'flash'],
+            only: ['appliedEmails', 'appliedPagination', 'receiptCounts', 'flash', 'filters'],
             onSuccess: () => {
                 void nextTick(() => {
                     paginationControls.value?.scrollIntoView({
@@ -113,6 +115,7 @@ function visitPage(page: number): void {
                 <Table>
                     <TableHeader>
                         <TableRow>
+                            <TableHead>ACCOUNT</TableHead>
                             <TableHead>TIN</TableHead>
                             <TableHead>FILE NAME</TableHead>
                             <TableHead>FORM TYPE</TableHead>
@@ -128,6 +131,16 @@ function visitPage(page: number): void {
                                 v-for="email in props.emails"
                                 :key="email.id"
                             >
+                                <TableCell class="text-sm text-muted-foreground">
+                                    <div class="space-y-1">
+                                        <p class="font-medium text-foreground">
+                                            {{ email.accountLabel }}
+                                        </p>
+                                        <p v-if="email.accountEmail">
+                                            {{ email.accountEmail }}
+                                        </p>
+                                    </div>
+                                </TableCell>
                                 <TableCell class="font-medium text-foreground">
                                     {{ email.matchedTin || '-' }}
                                 </TableCell>
@@ -176,7 +189,7 @@ function visitPage(page: number): void {
                             </TableRow>
                         </template>
 
-                        <TableEmpty v-else :colspan="6">
+                        <TableEmpty v-else :colspan="7">
                             No applied BIR receipts yet.
                         </TableEmpty>
                     </TableBody>
