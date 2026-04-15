@@ -112,7 +112,7 @@ function scrollToFeatures(): void {
     <Head title="Document Hub" />
 
     <div
-        class="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(0,0,0,0.08),_transparent_24%),linear-gradient(180deg,_hsl(0_0%_100%),_hsl(0_0%_98%))] text-foreground"
+        class="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(0,0,0,0.08),_transparent_24%),linear-gradient(180deg,_hsl(0_0%_100%),_hsl(0_0%_98%))] text-foreground dark:bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.08),_transparent_24%),linear-gradient(180deg,_hsl(0_0%_6%),_hsl(0_0%_4%))]"
     >
         <div class="mx-auto flex min-h-screen w-full max-w-7xl flex-col px-4 py-6 md:px-6 lg:px-8">
             <header
@@ -333,7 +333,7 @@ function scrollToFeatures(): void {
                     </Card>
 
                     <Card
-                        class="rounded-[2rem] border-0 bg-[linear-gradient(160deg,_rgba(0,0,0,0.06),_rgba(0,0,0,0.02))]"
+                        class="rounded-[2rem] border border-border/60 bg-[linear-gradient(160deg,_rgba(0,0,0,0.06),_rgba(0,0,0,0.02))] dark:bg-[linear-gradient(160deg,_rgba(255,255,255,0.06),_rgba(255,255,255,0.02))]"
                     >
                         <CardContent class="flex h-full flex-col justify-between gap-8 p-6 sm:p-8">
                             <div class="space-y-3">
