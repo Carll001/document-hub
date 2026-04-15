@@ -20,6 +20,7 @@ use App\Services\Form1702ExImportService;
 use App\Services\Form1702ExRowReceiptService;
 use App\Services\Form1702ExRowsExportService;
 use App\Services\Form1702ExService;
+use App\Services\Form1702ExTemporaryConfirmationService;
 use App\Support\Form1702ExRecipientEmailNormalizer;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Http\RedirectResponse;
@@ -48,6 +49,7 @@ class Form1702ExController extends Controller
         private readonly Form1702ExImportService $form1702ExImportService,
         private readonly Form1702ExRowsExportService $form1702ExRowsExportService,
         private readonly Form1702ExService $form1702ExService,
+        private readonly Form1702ExTemporaryConfirmationService $form1702ExTemporaryConfirmationService,
         private readonly Form1702ExRecipientEmailNormalizer $recipientEmailNormalizer,
     ) {
     }
@@ -1323,6 +1325,115 @@ class Form1702ExController extends Controller
         }
     }
 
+    public function storeTemporaryConfirmationDirect(
+        Request $request,
+        Form1702ExBatchRow $form1702ExBatchRow,
+    ): RedirectResponse {
+        $this->ensureAccessibleStandaloneRow($request, $form1702ExBatchRow);
+
+        if (! $this->rowCanManageTemporaryConfirmation($form1702ExBatchRow)) {
+            return back()
+                ->with('error', 'Generate the 1702-EX PDF before attaching a temporary confirmation.');
+        }
+
+        if (filled($form1702ExBatchRow->receipt_storage_path) || filled($form1702ExBatchRow->receipt_file_name)) {
+            return back()
+                ->with('error', 'This row already has a real receipt attached.');
+        }
+
+        $validated = $request->validate([
+            'screenshot' => ['required', 'file', 'image', 'max:10240'],
+            'recipientEmail' => ['nullable', 'email', 'max:254'],
+        ]);
+
+        /** @var UploadedFile $screenshot */
+        $screenshot = $validated['screenshot'];
+        $recipientEmail = $this->normalizeOptionalRecipientEmail($validated['recipientEmail'] ?? null);
+
+        try {
+            $this->form1702ExTemporaryConfirmationService->store($form1702ExBatchRow, $screenshot);
+
+            $form1702ExBatchRow->forceFill([
+                'completed_email_recipient' => $recipientEmail,
+            ])->save();
+
+            return back()
+                ->with('success', 'Temporary confirmation attached to the selected row.');
+        } catch (\Throwable $exception) {
+            report($exception);
+
+            return back()
+                ->with('error', 'The temporary confirmation could not be saved right now. Please try again.');
+        }
+    }
+
+    public function destroyTemporaryConfirmationDirect(
+        Request $request,
+        Form1702ExBatchRow $form1702ExBatchRow,
+    ): RedirectResponse {
+        $this->ensureAccessibleStandaloneRow($request, $form1702ExBatchRow);
+
+        if (! $form1702ExBatchRow->hasTemporaryConfirmation()) {
+            return back()
+                ->with('error', 'There is no temporary confirmation attached to this row.');
+        }
+
+        try {
+            $this->form1702ExTemporaryConfirmationService->clear($form1702ExBatchRow);
+
+            return back()
+                ->with('success', 'Temporary confirmation removed from the selected row.');
+        } catch (\Throwable $exception) {
+            report($exception);
+
+            return back()
+                ->with('error', 'The temporary confirmation could not be removed right now. Please try again.');
+        }
+    }
+
+    public function sendTemporaryConfirmationDirect(
+        Request $request,
+        Form1702ExBatchRow $form1702ExBatchRow,
+    ): RedirectResponse {
+        $this->ensureAccessibleStandaloneRow($request, $form1702ExBatchRow);
+
+        if (! $this->rowCanSendTemporaryConfirmation($form1702ExBatchRow)) {
+            return back()
+                ->with('error', 'Only generated rows with a temporary confirmation can be emailed from this page.');
+        }
+
+        $recipientEmail = $this->form1702ExCompletedEmailService->recipientEmail($form1702ExBatchRow);
+
+        if ($recipientEmail === null) {
+            return back()
+                ->with('error', 'Add a recipient email before sending this temporary confirmation.');
+        }
+
+        try {
+            $queuedRecipient = $this->form1702ExCompletedEmailService->queueManual(
+                $form1702ExBatchRow,
+                $this->form1702ExCompletedEmailService->defaultSubject($form1702ExBatchRow),
+                $this->temporaryConfirmationMessage($form1702ExBatchRow),
+                (string) $form1702ExBatchRow->temporary_confirmation_storage_path,
+                (string) $form1702ExBatchRow->temporary_confirmation_file_name,
+                (string) ($form1702ExBatchRow->temporary_confirmation_mime_type ?: 'application/octet-stream'),
+            );
+
+            if ($queuedRecipient === null) {
+                return back()
+                    ->with('error', 'The generated PDF is no longer available for this row.');
+            }
+
+            return back()
+                ->with('success', "Email queued to {$queuedRecipient}.");
+        } catch (\Throwable $exception) {
+            report($exception);
+
+            return back()
+                ->with('error', 'The email could not be queued right now. Please verify your mail settings and try again.');
+        }
+    }
+
     public function regenerateRow(
         Request $request,
         Form1702ExBatch $form1702ExBatch,
@@ -1730,6 +1841,7 @@ class Form1702ExController extends Controller
         $previewUrl = null;
         $downloadUrl = null;
         $hasReceipt = filled($row->receipt_file_name) && filled($row->receipt_storage_path);
+        $hasTemporaryConfirmation = $row->hasTemporaryConfirmation();
 
         if (
             $row->pdf_status === Form1702ExBatchRow::PDF_STATUS_GENERATED
@@ -1831,6 +1943,25 @@ class Form1702ExController extends Controller
             'updateRecipientUrl' => route('forms.1702-ex.rows.recipient.update', [
                 'form1702ExBatchRow' => $row,
             ]),
+            'hasTemporaryConfirmation' => $hasTemporaryConfirmation,
+            'temporaryConfirmationFileName' => $hasTemporaryConfirmation
+                ? (string) $row->temporary_confirmation_file_name
+                : null,
+            'temporaryConfirmationFileSize' => $row->temporary_confirmation_file_size,
+            'temporaryConfirmationAttachedAt' => $row->temporary_confirmation_attached_at?->toIso8601String(),
+            'temporaryConfirmationStoreUrl' => route('forms.1702-ex.rows.temporary-confirmation.store', [
+                'form1702ExBatchRow' => $row,
+            ]),
+            'temporaryConfirmationRemoveUrl' => $hasTemporaryConfirmation
+                ? route('forms.1702-ex.rows.temporary-confirmation.destroy', [
+                    'form1702ExBatchRow' => $row,
+                ])
+                : null,
+            'temporaryConfirmationSendUrl' => $this->rowCanSendTemporaryConfirmation($row)
+                ? route('forms.1702-ex.rows.temporary-confirmation.send', [
+                    'form1702ExBatchRow' => $row,
+                ])
+                : null,
             'sendEmailUrl' => $this->form1702ExCompletedEmailService->isCompleted($row)
                 ? route('forms.1702-ex.completed.send', [
                     'form1702ExBatchRow' => $row,
@@ -2193,6 +2324,44 @@ XML;
         $row->delete();
 
         return true;
+    }
+
+    private function rowCanManageTemporaryConfirmation(Form1702ExBatchRow $row): bool
+    {
+        return $row->pdf_status === Form1702ExBatchRow::PDF_STATUS_GENERATED
+            && filled($row->generated_pdf_storage_path)
+            && ! $row->isSkippedDuplicate()
+            && ! $row->receiptJobIsBusy();
+    }
+
+    private function rowCanSendTemporaryConfirmation(Form1702ExBatchRow $row): bool
+    {
+        return $this->rowCanManageTemporaryConfirmation($row)
+            && ! $this->form1702ExCompletedEmailService->isCompleted($row)
+            && $row->hasTemporaryConfirmation()
+            && filled($row->temporary_confirmation_storage_path)
+            && Storage::disk('local')->exists((string) $row->temporary_confirmation_storage_path)
+            && $this->form1702ExCompletedEmailService->recipientEmail($row) !== null;
+    }
+
+    private function temporaryConfirmationMessage(Form1702ExBatchRow $row): string
+    {
+        return implode("\n", [
+            sprintf(
+                'Good day! Attached is the 1702EX for %s. A temporary confirmation screenshot is also attached while the final confirmation is still pending. Thank you!',
+                $this->companyName($row),
+            ),
+            '',
+            'Please do not reply to this message. If you have any concerns, please contact:',
+        ]);
+    }
+
+    private function companyName(Form1702ExBatchRow $row): string
+    {
+        $payload = is_array($row->payload) ? $row->payload : [];
+        $companyName = trim((string) ($payload['taxpayer_name'] ?? $payload['registered_name'] ?? ''));
+
+        return $companyName !== '' ? $companyName : 'Taxpayer';
     }
 
     private function normalizeOptionalText(mixed $value): ?string
