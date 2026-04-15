@@ -30,27 +30,68 @@ class Form1702ExImportService
      *     sourceType: string,
      *     importedAt: string,
      *     headers: list<string>,
-     *     rows: list<array{rowNumber: int, payload: array<string, mixed>}>
+     *     rows: list<array{rowNumber: int, payload: array<string, mixed>, recipientEmail: string|null}>
      * }
      */
     public function import(UploadedFile $file, array $basePayload): array
     {
-        $extension = Str::lower($file->getClientOriginalExtension() ?: $file->extension() ?: '');
+        return $this->importFromPath(
+            $file->getRealPath() ?: $file->getPathname(),
+            $file->getClientOriginalName(),
+            Str::lower($file->getClientOriginalExtension() ?: $file->extension() ?: ''),
+            $basePayload,
+        );
+    }
 
+    /**
+     * @param  array<string, mixed>  $basePayload
+     * @return array{
+     *     sourceName: string,
+     *     sourceType: string,
+     *     importedAt: string,
+     *     headers: list<string>,
+     *     rows: list<array{rowNumber: int, payload: array<string, mixed>, recipientEmail: string|null}>
+     * }
+     */
+    public function importStoredFile(string $path, string $sourceName, array $basePayload): array
+    {
+        $extension = Str::lower(pathinfo($sourceName, PATHINFO_EXTENSION));
+
+        return $this->importFromPath($path, $sourceName, $extension, $basePayload);
+    }
+
+    /**
+     * @param  array<string, mixed>  $basePayload
+     * @return array{
+     *     sourceName: string,
+     *     sourceType: string,
+     *     importedAt: string,
+     *     headers: list<string>,
+     *     rows: list<array{rowNumber: int, payload: array<string, mixed>, recipientEmail: string|null}>
+     * }
+     */
+    private function importFromPath(string $path, string $sourceName, string $extension, array $basePayload): array
+    {
         $parsed = match ($extension) {
-            'csv', 'txt' => $this->parseCsv($file->getRealPath() ?: $file->getPathname()),
-            'xlsx' => $this->parseXlsx($file->getRealPath() ?: $file->getPathname()),
+            'csv', 'txt' => $this->parseCsv($path),
+            'xlsx' => $this->parseXlsx($path),
             default => throw new RuntimeException('Only CSV and XLSX files are supported for 1702-EX imports.'),
         };
 
         $rows = [];
 
         foreach ($parsed['rows'] as $row) {
-            $payload = $this->normalizePayload($row['values'], $basePayload);
+            $normalized = $this->normalizePayload($row['values'], $basePayload);
+            $payload = $normalized['payload'];
+
+            if (! $this->hasRequiredImportIdentity($payload)) {
+                continue;
+            }
 
             $rows[] = [
                 'rowNumber' => $row['rowNumber'],
                 'payload' => $payload,
+                'recipientEmail' => $normalized['recipientEmail'],
             ];
         }
 
@@ -59,12 +100,23 @@ class Form1702ExImportService
         }
 
         return [
-            'sourceName' => $file->getClientOriginalName(),
+            'sourceName' => $sourceName,
             'sourceType' => $extension,
             'importedAt' => Carbon::now()->toIso8601String(),
             'headers' => $parsed['headers'],
             'rows' => $rows,
         ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    private function hasRequiredImportIdentity(array $payload): bool
+    {
+        $companyName = $this->cleanCellText((string) ($payload['taxpayer_name'] ?? $payload['registered_name'] ?? ''));
+        $tin = $this->cleanCellText((string) ($payload['tin'] ?? ''));
+
+        return $companyName !== '' && $tin !== '';
     }
 
     /**
@@ -172,7 +224,7 @@ class Form1702ExImportService
     /**
      * @param  array<string, string>  $row
      * @param  array<string, mixed>  $basePayload
-     * @return array<string, mixed>
+     * @return array{payload: array<string, mixed>, recipientEmail: string|null}
      */
     private function normalizePayload(array $row, array $basePayload): array
     {
@@ -302,12 +354,12 @@ class Form1702ExImportService
             'clientname',
             'client_name',
         ]) ?: (string) ($payload['client_name'] ?? '');
-        $payload['email_address'] = $this->firstFilled($normalizedRow, [
-            'recipient',
-            'recipientemail',
-            'emailaddress',
-            'email',
-        ]) ?: (string) ($payload['email_address'] ?? '');
+        $payload['email_address'] = array_key_exists('emailaddress', $normalizedRow)
+            ? $normalizedRow['emailaddress']
+            : (string) ($payload['email_address'] ?? '');
+        $recipientEmail = array_key_exists('recipient', $normalizedRow)
+            ? ($normalizedRow['recipient'] !== '' ? $normalizedRow['recipient'] : null)
+            : null;
 
         $payload['deduction_method'] = $deductionMethod;
         $payload['deduction_method_itemized'] = $deductionMethod === 'itemized';
@@ -386,7 +438,8 @@ class Form1702ExImportService
             (string) ($payload['number_of_attachments'] ?? ''),
         );
 
-        return $this->mergeGenericSchemaFields($payload, $normalizedRow, [
+        return [
+            'payload' => $this->mergeGenericSchemaFields($payload, $normalizedRow, [
             'registered_name',
             'taxpayer_name',
             'tin',
@@ -440,7 +493,9 @@ class Form1702ExImportService
             'number_of_attachments',
             'footer_source_path',
             'footer_printed_date',
-        ]);
+            ]),
+            'recipientEmail' => $recipientEmail,
+        ];
     }
 
     /**

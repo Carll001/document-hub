@@ -5,14 +5,22 @@ declare(strict_types=1);
 namespace App\Http\Controllers;
 
 use App\Jobs\GenerateForm1702ExRowReceipt;
+use App\Jobs\ProcessForm1702ExBatchImport;
 use App\Jobs\ProcessForm1702ExBatchRows;
+use App\Jobs\ProcessForm1702ExCompletedExport;
+use App\Jobs\ProcessForm1702ExRowsExport;
 use App\Models\Form1702ExBatch;
 use App\Models\Form1702ExBatchRow;
+use App\Models\SyncedEmail;
+use App\Services\EmailSync\BirReceiptAutoMatchService;
 use App\Services\Form1702ExBatchService;
+use App\Services\Form1702ExCompletedExportService;
 use App\Services\Form1702ExCompletedEmailService;
 use App\Services\Form1702ExImportService;
 use App\Services\Form1702ExRowReceiptService;
+use App\Services\Form1702ExRowsExportService;
 use App\Services\Form1702ExService;
+use App\Support\Form1702ExRecipientEmailNormalizer;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -25,6 +33,8 @@ use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response;
+use ZipArchive;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class Form1702ExController extends Controller
@@ -33,9 +43,12 @@ class Form1702ExController extends Controller
 
     public function __construct(
         private readonly Form1702ExBatchService $form1702ExBatchService,
+        private readonly Form1702ExCompletedExportService $form1702ExCompletedExportService,
         private readonly Form1702ExCompletedEmailService $form1702ExCompletedEmailService,
         private readonly Form1702ExImportService $form1702ExImportService,
+        private readonly Form1702ExRowsExportService $form1702ExRowsExportService,
         private readonly Form1702ExService $form1702ExService,
+        private readonly Form1702ExRecipientEmailNormalizer $recipientEmailNormalizer,
     ) {
     }
 
@@ -63,6 +76,7 @@ class Form1702ExController extends Controller
             'completedCount' => $this->completedCount($user),
             'importUrl' => route('forms.1702-ex.import.store'),
             'bulkDeleteUrl' => route('forms.1702-ex.rows.destroy'),
+            'rowsExportUrl' => route('forms.1702-ex.rows.export', $this->indexRouteParameters($request)),
             'settingsUpdateUrl' => route('forms.1702-ex.settings.update'),
             'templateSpreadsheetUrl' => asset('form-assets/1702-ex/1702-ex-import-template.xlsx'),
             'receiptTemplateUrl' => route('forms.1702-ex.receipt-template.show'),
@@ -95,6 +109,10 @@ class Form1702ExController extends Controller
                 'sort' => isset($validated['sort']) ? (string) $validated['sort'] : 'uploadedAt',
                 'direction' => isset($validated['direction']) ? (string) $validated['direction'] : 'desc',
             ],
+            'importStatus' => $this->indexImportStatus($user),
+            'importError' => $this->indexImportError($user),
+            'importSourceName' => $this->indexImportSourceName($user),
+            'rowsExportState' => $this->rowsExportState($user),
             'hasActiveJobs' => $this->userHasActiveJobs($user),
         ]);
     }
@@ -121,6 +139,7 @@ class Form1702ExController extends Controller
             'flash' => $this->flash($request),
             'indexUrl' => route('forms.1702-ex.index'),
             'completedFilesUrl' => route('forms.1702-ex.completed.index'),
+            'completedBulkCancelUrl' => route('forms.1702-ex.completed.cancel.bulk'),
             'completedBulkSendUrl' => route('forms.1702-ex.completed.send.bulk'),
             'rows' => $this->transformRows(collect($rowPage->items()), true),
             'pagination' => [
@@ -136,7 +155,151 @@ class Form1702ExController extends Controller
                 'sort' => isset($validated['sort']) ? (string) $validated['sort'] : 'generatedAt',
                 'direction' => isset($validated['direction']) ? (string) $validated['direction'] : 'desc',
             ],
+            'exportState' => $this->completedExportState($user),
         ]);
+    }
+
+    public function downloadCompleted(Request $request): RedirectResponse
+    {
+        $validated = $request->validate([
+            'search' => ['nullable', 'string', 'max:120'],
+            'sort' => ['nullable', 'string', 'in:uploadedAt,generatedAt,pdfStatus,sourceRowNumber'],
+            'direction' => ['nullable', 'string', 'in:asc,desc'],
+            'rowIds' => ['nullable', 'array', 'min:1'],
+            'rowIds.*' => ['required', 'string', 'uuid'],
+        ]);
+
+        $query = $this->completedRowsQuery(
+            $request->user(),
+            isset($validated['search']) ? (string) $validated['search'] : '',
+            isset($validated['sort']) ? (string) $validated['sort'] : 'generatedAt',
+            isset($validated['direction']) ? (string) $validated['direction'] : 'desc',
+        );
+
+        $rowUuids = collect($validated['rowIds'] ?? [])
+            ->filter(static fn (mixed $id): bool => is_string($id) && $id !== '')
+            ->unique()
+            ->values()
+            ->all();
+
+        if ($this->completedExportIsBusy($request->user())) {
+            return to_route('forms.1702-ex.completed.index', $this->completedRouteParameters($request))
+                ->with('error', 'A completed files export is already processing.');
+        }
+
+        if (! $query->when($rowUuids !== [], fn ($rowsQuery) => $rowsQuery->whereIn('uuid', $rowUuids))->exists()) {
+            return to_route('forms.1702-ex.completed.index', $this->completedRouteParameters($request))
+                ->with('error', 'No completed files matched this export request.');
+        }
+
+        $this->form1702ExCompletedExportService->forgetState((int) $request->user()->getKey());
+        $this->form1702ExCompletedExportService->putState((int) $request->user()->getKey(), [
+            'status' => Form1702ExCompletedExportService::STATUS_QUEUED,
+            'error' => null,
+            'rowCount' => null,
+            'downloadUrl' => null,
+            'storagePath' => null,
+        ]);
+
+        ProcessForm1702ExCompletedExport::dispatch(
+            (int) $request->user()->getKey(),
+            isset($validated['search']) ? (string) $validated['search'] : '',
+            isset($validated['sort']) ? (string) $validated['sort'] : 'generatedAt',
+            isset($validated['direction']) ? (string) $validated['direction'] : 'desc',
+            $rowUuids,
+        );
+
+        return to_route('forms.1702-ex.completed.index', $this->completedRouteParameters($request))
+            ->with('success', 'Completed files export queued. Your ZIP will be ready shortly.');
+    }
+
+    public function downloadCompletedPrepared(Request $request): BinaryFileResponse
+    {
+        $state = $this->form1702ExCompletedExportService->getState((int) $request->user()->getKey());
+        $cached = cache()->get($this->form1702ExCompletedExportService->cacheKey((int) $request->user()->getKey()));
+
+        abort_unless(
+            $state['status'] === Form1702ExCompletedExportService::STATUS_READY
+                && is_array($cached)
+                && is_string($cached['storagePath'] ?? null)
+                && Storage::disk('local')->exists($cached['storagePath']),
+            404,
+        );
+
+        $storagePath = (string) $cached['storagePath'];
+        $downloadName = '1702-ex-completed-files.zip';
+
+        return response()->download(
+            Storage::disk('local')->path($storagePath),
+            $downloadName,
+            ['Content-Type' => 'application/zip'],
+        )->deleteFileAfterSend(true);
+    }
+
+    public function downloadRowsList(Request $request): RedirectResponse
+    {
+        $validated = $request->validate([
+            'search' => ['nullable', 'string', 'max:120'],
+            'sort' => ['nullable', 'string', 'in:uploadedAt,generatedAt,pdfStatus,sourceRowNumber'],
+            'direction' => ['nullable', 'string', 'in:asc,desc'],
+        ]);
+
+        $query = $this->unmatchedRowsQuery(
+            $request->user(),
+            isset($validated['search']) ? (string) $validated['search'] : '',
+            isset($validated['sort']) ? (string) $validated['sort'] : 'uploadedAt',
+            isset($validated['direction']) ? (string) $validated['direction'] : 'desc',
+        );
+
+        if ($this->rowsExportIsBusy($request->user())) {
+            return to_route('forms.1702-ex.index', $this->indexRouteParameters($request))
+                ->with('error', 'An imported rows export is already processing.');
+        }
+
+        if (! $query->exists()) {
+            return to_route('forms.1702-ex.index', $this->indexRouteParameters($request))
+                ->with('error', 'No imported rows matched this export request.');
+        }
+
+        $userId = (int) $request->user()->getKey();
+        $this->form1702ExRowsExportService->forgetState($userId);
+        $this->form1702ExRowsExportService->putState($userId, [
+            'status' => Form1702ExRowsExportService::STATUS_QUEUED,
+            'error' => null,
+            'rowCount' => null,
+            'downloadUrl' => null,
+            'storagePath' => null,
+        ]);
+
+        ProcessForm1702ExRowsExport::dispatch(
+            $userId,
+            isset($validated['search']) ? (string) $validated['search'] : '',
+            isset($validated['sort']) ? (string) $validated['sort'] : 'uploadedAt',
+            isset($validated['direction']) ? (string) $validated['direction'] : 'desc',
+        );
+
+        return to_route('forms.1702-ex.index', $this->indexRouteParameters($request))
+            ->with('success', 'Imported rows export queued. Your Excel file will be ready shortly.');
+    }
+
+    public function downloadRowsListPrepared(Request $request): BinaryFileResponse
+    {
+        $state = $this->form1702ExRowsExportService->getState((int) $request->user()->getKey());
+        $cached = cache()->get($this->form1702ExRowsExportService->cacheKey((int) $request->user()->getKey()));
+
+        abort_unless(
+            $state['status'] === Form1702ExRowsExportService::STATUS_READY
+                && is_array($cached)
+                && is_string($cached['storagePath'] ?? null)
+                && Storage::disk('local')->exists($cached['storagePath']),
+            404,
+        );
+
+        return response()->download(
+            Storage::disk('local')->path((string) $cached['storagePath']),
+            '1702-ex-unmatched-rows.xlsx',
+            ['Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+        )->deleteFileAfterSend(true);
     }
 
     public function show(Request $request, Form1702ExBatch $form1702ExBatch): Response
@@ -255,57 +418,26 @@ class Form1702ExController extends Controller
             'receipt_acceptance_start_date' => Carbon::parse((string) $validated['receiptAcceptanceStartDate'])->toDateString(),
         ])->save();
 
-        $basePayload = $this->form1702ExService->batchPayloadDefaults();
-        $basePayload['file_name_prefix'] = $batch->file_name_prefix;
-        $basePayload['footer_source_path'] = $batch->footer_source_path;
-        $basePayload['footer_printed_date'] = $batch->footer_printed_date;
-
         try {
-            $import = $this->form1702ExImportService->import(
-                $spreadsheet,
-                $basePayload,
+            $extension = Str::lower($spreadsheet->getClientOriginalExtension() ?: $spreadsheet->extension() ?: 'upload');
+            $storedPath = $spreadsheet->storeAs(
+                'tmp/form-1702-ex-imports',
+                Str::uuid().($extension !== '' ? ".{$extension}" : ''),
+                'local',
             );
 
-            $rows = $this->form1702ExBatchService->storeImport(
-                $batch,
-                $import,
-                false,
-            );
-            $processableRows = $rows->filter(fn (Form1702ExBatchRow $row): bool => ! $row->isSkippedDuplicate())->values();
-            $skippedCount = $rows->filter(fn (Form1702ExBatchRow $row): bool => $row->isSkippedDuplicate())->count();
+            $batch->forceFill([
+                'import_status' => Form1702ExBatch::IMPORT_STATUS_QUEUED,
+                'import_error' => null,
+                'import_source_path' => $storedPath,
+                'import_source_name' => $spreadsheet->getClientOriginalName(),
+                'import_completed_at' => null,
+            ])->save();
 
-            if ($rows->isEmpty()) {
-                $batch->delete();
-
-                return to_route('forms.1702-ex.index', $this->indexRouteParameters($request))
-                    ->with('error', 'The uploaded file does not contain any importable rows.');
-            }
-
-            if ($processableRows->isNotEmpty()) {
-                ProcessForm1702ExBatchRows::dispatch(
-                    $processableRows
-                        ->pluck('id')
-                        ->map(static fn (mixed $id): int => (int) $id)
-                        ->all(),
-                );
-            }
-
-            $successMessage = "Imported {$processableRows->count()} row(s) from {$import['sourceName']}.";
-
-            if ($processableRows->isNotEmpty()) {
-                $successMessage .= ' PDFs are being generated.';
-            }
-
-            if ($skippedCount > 0) {
-                $successMessage .= " Skipped {$skippedCount} duplicate TIN row(s) because a receipt already exists.";
-            }
-
-            if ($processableRows->isEmpty() && $skippedCount > 0) {
-                $successMessage = "Skipped {$skippedCount} duplicate TIN row(s) from {$import['sourceName']} because a receipt already exists.";
-            }
+            ProcessForm1702ExBatchImport::dispatch($batch->id);
 
             return to_route('forms.1702-ex.index', $this->indexRouteParameters($request))
-                ->with('success', $successMessage);
+                ->with('success', 'Upload received. Import is processing.');
         } catch (ValidationException $exception) {
             $batch->delete();
 
@@ -437,6 +569,31 @@ class Form1702ExController extends Controller
         }
     }
 
+    public function updateRecipient(
+        Request $request,
+        Form1702ExBatchRow $form1702ExBatchRow,
+    ): RedirectResponse {
+        $this->ensureAccessibleStandaloneRow($request, $form1702ExBatchRow);
+
+        $recipientEmailInput = trim((string) $request->input('recipientEmail', ''));
+        $validated = Validator::make([
+            'recipientEmail' => $recipientEmailInput !== '' ? $recipientEmailInput : null,
+        ], [
+            'recipientEmail' => ['nullable', 'email', 'max:254'],
+        ])->validate();
+
+        $recipientEmail = $this->normalizeOptionalRecipientEmail($validated['recipientEmail'] ?? null);
+
+        $form1702ExBatchRow->forceFill([
+            'completed_email_recipient' => $recipientEmail,
+        ])->save();
+
+        return back()->with(
+            'success',
+            $recipientEmail !== null ? 'Recipient email saved.' : 'Recipient email cleared.',
+        );
+    }
+
     public function sendCompletedEmailsBulk(Request $request): RedirectResponse
     {
         $validated = $request->validate([
@@ -496,6 +653,92 @@ class Form1702ExController extends Controller
 
         return to_route('forms.1702-ex.completed.index', $this->completedRouteParameters($request))
             ->with('success', "Queued {$sent} completed email(s). Skipped {$skipped} row(s).");
+    }
+
+    public function cancelCompleted(
+        Request $request,
+        Form1702ExBatchRow $form1702ExBatchRow,
+        BirReceiptAutoMatchService $birReceiptAutoMatchService,
+    ): RedirectResponse {
+        $this->ensureAccessibleStandaloneRow($request, $form1702ExBatchRow);
+
+        if ($form1702ExBatchRow->isProcessing()) {
+            return to_route('forms.1702-ex.completed.index', $this->completedRouteParameters($request))
+                ->with('error', 'Wait for this row PDF to finish generating before cancelling it.');
+        }
+
+        if ($form1702ExBatchRow->receiptJobIsBusy()) {
+            return to_route('forms.1702-ex.completed.index', $this->completedRouteParameters($request))
+                ->with('error', 'A receipt update is already queued for this row.');
+        }
+
+        if (! $this->form1702ExCompletedEmailService->isCompleted($form1702ExBatchRow)) {
+            return to_route('forms.1702-ex.completed.index', $this->completedRouteParameters($request))
+                ->with('error', 'Only completed rows can be cancelled from this page.');
+        }
+
+        try {
+            $this->cancelCompletedRow($form1702ExBatchRow, $birReceiptAutoMatchService);
+
+            return to_route('forms.1702-ex.completed.index', $this->completedRouteParameters($request))
+                ->with('success', 'Completed file cancelled and removed.');
+        } catch (\Throwable $exception) {
+            report($exception);
+
+            return to_route('forms.1702-ex.completed.index', $this->completedRouteParameters($request))
+                ->with('error', 'The completed file could not be cancelled right now. Please try again.');
+        }
+    }
+
+    public function cancelCompletedBulk(
+        Request $request,
+        BirReceiptAutoMatchService $birReceiptAutoMatchService,
+    ): RedirectResponse {
+        $validated = $request->validate([
+            'rowIds' => ['required', 'array', 'min:1'],
+            'rowIds.*' => ['required', 'string', 'uuid'],
+        ]);
+
+        $rowUuids = collect($validated['rowIds'])
+            ->filter(static fn (mixed $id): bool => is_string($id) && $id !== '')
+            ->unique()
+            ->values();
+
+        $rows = $this->rowOwnershipQuery($request)
+            ->with('batch')
+            ->whereIn('uuid', $rowUuids)
+            ->get();
+
+        if ($rows->isEmpty()) {
+            return to_route('forms.1702-ex.completed.index', $this->completedRouteParameters($request))
+                ->with('error', 'Select at least one completed row to cancel.');
+        }
+
+        $cancelled = 0;
+        $skipped = 0;
+
+        foreach ($rows as $row) {
+            try {
+                if (! $this->cancelCompletedRow($row, $birReceiptAutoMatchService)) {
+                    $skipped++;
+
+                    continue;
+                }
+
+                $cancelled++;
+            } catch (\Throwable $exception) {
+                report($exception);
+                $skipped++;
+            }
+        }
+
+        if ($cancelled === 0) {
+            return to_route('forms.1702-ex.completed.index', $this->completedRouteParameters($request))
+                ->with('error', "No completed files were cancelled. Skipped {$skipped} row(s).");
+        }
+
+        return to_route('forms.1702-ex.completed.index', $this->completedRouteParameters($request))
+            ->with('success', "Cancelled {$cancelled} completed file(s). Skipped {$skipped} row(s).");
     }
 
     public function storeBatch(Request $request): RedirectResponse
@@ -1273,6 +1516,7 @@ class Form1702ExController extends Controller
                     ->orWhere('payload->client_name', 'like', $like)
                     ->orWhere('payload->tin', 'like', $like)
                     ->orWhere('payload->email_address', 'like', $like)
+                    ->orWhere('completed_email_recipient', 'like', $like)
                     ->orWhere('receipt_file_name', 'like', $like)
                     ->orWhere('receipt_job_status', 'like', $like)
                     ->orWhere('receipt_job_error', 'like', $like)
@@ -1326,6 +1570,16 @@ class Form1702ExController extends Controller
 
     private function userHasActiveJobs($user): bool
     {
+        if (Form1702ExBatch::query()
+            ->whereBelongsTo($user)
+            ->whereIn('import_status', [
+                Form1702ExBatch::IMPORT_STATUS_QUEUED,
+                Form1702ExBatch::IMPORT_STATUS_PROCESSING,
+            ])
+            ->exists()) {
+            return true;
+        }
+
         return Form1702ExBatchRow::query()
             ->whereHas('batch', fn ($batchQuery) => $batchQuery->whereBelongsTo($user))
             ->whereNull('duplicate_resolution_status')
@@ -1341,6 +1595,42 @@ class Form1702ExController extends Controller
                     ]);
             })
             ->exists();
+    }
+
+    private function indexImportStatus($user): ?string
+    {
+        return $this->latestImportBatch($user)?->import_status;
+    }
+
+    private function indexImportError($user): ?string
+    {
+        $batch = $this->latestImportBatch($user);
+
+        return is_string($batch?->import_error) && $batch->import_error !== ''
+            ? $batch->import_error
+            : null;
+    }
+
+    private function indexImportSourceName($user): ?string
+    {
+        $batch = $this->latestImportBatch($user);
+
+        return is_string($batch?->import_source_name) && $batch->import_source_name !== ''
+            ? $batch->import_source_name
+            : null;
+    }
+
+    private function latestImportBatch($user): ?Form1702ExBatch
+    {
+        return Form1702ExBatch::query()
+            ->whereBelongsTo($user)
+            ->where(function ($query): void {
+                $query
+                    ->whereNotNull('import_status')
+                    ->orWhereNotNull('import_error');
+            })
+            ->orderByDesc('updated_at')
+            ->first();
     }
 
     private function applyVisibleRowScope($query): void
@@ -1426,6 +1716,7 @@ class Form1702ExController extends Controller
      *     autoReceiptStatus: string|null,
      *     autoReceiptError: string|null,
      *     recipientEmail: string|null,
+     *     updateRecipientUrl: string,
      *     sendEmailUrl: string|null,
      *     footerSourcePath: string,
      *     footerPrintedDate: string
@@ -1537,8 +1828,16 @@ class Form1702ExController extends Controller
             'autoReceiptStatus' => $row->auto_receipt_status,
             'autoReceiptError' => $row->auto_receipt_error,
             'recipientEmail' => $this->form1702ExCompletedEmailService->recipientEmail($row),
+            'updateRecipientUrl' => route('forms.1702-ex.rows.recipient.update', [
+                'form1702ExBatchRow' => $row,
+            ]),
             'sendEmailUrl' => $this->form1702ExCompletedEmailService->isCompleted($row)
                 ? route('forms.1702-ex.completed.send', [
+                    'form1702ExBatchRow' => $row,
+                ])
+                : null,
+            'cancelUrl' => $this->form1702ExCompletedEmailService->isCompleted($row)
+                ? route('forms.1702-ex.completed.cancel', [
                     'form1702ExBatchRow' => $row,
                 ])
                 : null,
@@ -1577,11 +1876,337 @@ class Form1702ExController extends Controller
         });
     }
 
+    private function unmatchedRowsQuery($user, string $search, string $sort, string $direction)
+    {
+        return $this->filteredRowsQuery($user, $search, $sort, $direction, false);
+    }
+
+    private function completedRowsQuery($user, string $search, string $sort, string $direction)
+    {
+        return $this->filteredRowsQuery($user, $search, $sort, $direction, true);
+    }
+
+    private function filteredRowsQuery($user, string $search, string $sort, string $direction, bool $completed)
+    {
+        $query = Form1702ExBatchRow::query()
+            ->with(['batch', 'client', 'company'])
+            ->whereHas('batch', fn ($batchQuery) => $batchQuery->whereBelongsTo($user));
+
+        $this->applyVisibleRowScope($query);
+        $this->applyCompletedScope($query, $completed);
+
+        $search = trim($search);
+
+        if ($search !== '') {
+            $query->where(function ($searchQuery) use ($search): void {
+                $like = '%'.$search.'%';
+
+                $searchQuery
+                    ->where('generated_pdf_file_name', 'like', $like)
+                    ->orWhere('source_name', 'like', $like)
+                    ->orWhere('pdf_status', 'like', $like)
+                    ->orWhere('payload->taxpayer_name', 'like', $like)
+                    ->orWhere('payload->registered_name', 'like', $like)
+                    ->orWhere('payload->client_name', 'like', $like)
+                    ->orWhere('payload->tin', 'like', $like)
+                    ->orWhere('payload->email_address', 'like', $like)
+                    ->orWhere('completed_email_recipient', 'like', $like)
+                    ->orWhere('receipt_file_name', 'like', $like)
+                    ->orWhere('receipt_job_status', 'like', $like)
+                    ->orWhere('receipt_job_error', 'like', $like)
+                    ->orWhere('pdf_error', 'like', $like)
+                    ->orWhereHas('client', fn ($clientQuery) => $clientQuery->where('name', 'like', $like))
+                    ->orWhereHas('company', function ($companyQuery) use ($like): void {
+                        $companyQuery
+                            ->where('name', 'like', $like)
+                            ->orWhere('tin', 'like', $like);
+                    });
+            });
+        }
+
+        $sortColumn = match ($sort) {
+            'generatedAt' => 'generated_at',
+            'pdfStatus' => 'pdf_status',
+            'sourceRowNumber' => 'source_row_number',
+            default => 'uploaded_at',
+        };
+        $direction = $direction === 'asc' ? 'asc' : 'desc';
+
+        return $query
+            ->orderBy($sortColumn, $direction)
+            ->orderByDesc('id');
+    }
+
+    /**
+     * @param  Collection<int, Form1702ExBatchRow>  $rows
+     * @return array<int, array<int, string>>
+     */
+    private function buildUnmatchedExportRows(Collection $rows): array
+    {
+        return $rows
+            ->map(function (Form1702ExBatchRow $row): array {
+                /** @var Form1702ExBatch $batch */
+                $batch = $row->batch;
+                $transformed = $this->transformRow($batch, $row, true);
+                $payload = is_array($row->payload) ? $row->payload : [];
+
+                return [
+                    (string) $transformed['fileName'],
+                    (string) $transformed['taxpayerName'],
+                    (string) $transformed['tin'],
+                    (string) $transformed['sourceName'],
+                    trim((string) ($payload['email_address'] ?? '')),
+                    (string) ($transformed['recipientEmail'] ?? ''),
+                    $this->exportDateTimeValue($transformed['uploadedAt']),
+                    $this->exportDateValue($transformed['receiptAcceptanceStartDate']),
+                ];
+            })
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @param  array<int, string>  $headers
+     * @param  array<int, array<int, string>>  $rows
+     */
+    private function writeSimpleXlsx(string $filePath, array $headers, array $rows): void
+    {
+        $archive = new ZipArchive;
+
+        if ($archive->open($filePath, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
+            abort(500, 'The unmatched rows Excel file could not be created.');
+        }
+
+        $archive->addFromString('[Content_Types].xml', $this->xlsxContentTypesXml());
+        $archive->addFromString('_rels/.rels', $this->xlsxRootRelsXml());
+        $archive->addFromString('xl/workbook.xml', $this->xlsxWorkbookXml());
+        $archive->addFromString('xl/_rels/workbook.xml.rels', $this->xlsxWorkbookRelsXml());
+        $archive->addFromString('xl/styles.xml', $this->xlsxStylesXml());
+        $archive->addFromString('xl/worksheets/sheet1.xml', $this->xlsxWorksheetXml($headers, $rows));
+        $archive->close();
+    }
+
+    /**
+     * @param  array<int, string>  $headers
+     * @param  array<int, array<int, string>>  $rows
+     */
+    private function xlsxWorksheetXml(array $headers, array $rows): string
+    {
+        $sheetRows = [$this->xlsxRowXml(1, $headers, true)];
+
+        foreach ($rows as $index => $row) {
+            $sheetRows[] = $this->xlsxRowXml($index + 2, $row, false);
+        }
+
+        return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            .'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+            .'<sheetData>'.implode('', $sheetRows).'</sheetData>'
+            .'</worksheet>';
+    }
+
+    /**
+     * @param  array<int, string>  $values
+     */
+    private function xlsxRowXml(int $rowNumber, array $values, bool $header): string
+    {
+        $cells = [];
+
+        foreach (array_values($values) as $index => $value) {
+            $reference = $this->xlsxColumnName($index + 1).$rowNumber;
+            $style = $header ? ' s="1"' : '';
+
+            $cells[] = sprintf(
+                '<c r="%s" t="inlineStr"%s><is><t xml:space="preserve">%s</t></is></c>',
+                $reference,
+                $style,
+                $this->escapeXml((string) $value),
+            );
+        }
+
+        return sprintf('<row r="%d">%s</row>', $rowNumber, implode('', $cells));
+    }
+
+    private function xlsxColumnName(int $index): string
+    {
+        $name = '';
+
+        while ($index > 0) {
+            $remainder = ($index - 1) % 26;
+            $name = chr(65 + $remainder).$name;
+            $index = intdiv($index - 1, 26);
+        }
+
+        return $name;
+    }
+
+    private function xlsxContentTypesXml(): string
+    {
+        return <<<'XML'
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+    <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+    <Default Extension="xml" ContentType="application/xml"/>
+    <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+    <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+    <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+</Types>
+XML;
+    }
+
+    private function xlsxRootRelsXml(): string
+    {
+        return <<<'XML'
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+    <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>
+XML;
+    }
+
+    private function xlsxWorkbookXml(): string
+    {
+        return <<<'XML'
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+    <sheets>
+        <sheet name="Unmatched Rows" sheetId="1" r:id="rId1"/>
+    </sheets>
+</workbook>
+XML;
+    }
+
+    private function xlsxWorkbookRelsXml(): string
+    {
+        return <<<'XML'
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+    <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+    <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+</Relationships>
+XML;
+    }
+
+    private function xlsxStylesXml(): string
+    {
+        return <<<'XML'
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+    <fonts count="2">
+        <font>
+            <sz val="11"/>
+            <name val="Aptos"/>
+        </font>
+        <font>
+            <b/>
+            <sz val="11"/>
+            <name val="Aptos"/>
+        </font>
+    </fonts>
+    <fills count="1">
+        <fill>
+            <patternFill patternType="none"/>
+        </fill>
+    </fills>
+    <borders count="1">
+        <border>
+            <left/>
+            <right/>
+            <top/>
+            <bottom/>
+            <diagonal/>
+        </border>
+    </borders>
+    <cellStyleXfs count="1">
+        <xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>
+    </cellStyleXfs>
+    <cellXfs count="2">
+        <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+        <xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>
+    </cellXfs>
+    <cellStyles count="1">
+        <cellStyle name="Normal" xfId="0" builtinId="0"/>
+    </cellStyles>
+</styleSheet>
+XML;
+    }
+
+    /**
+     * @param  mixed  $value
+     */
+    private function exportDateTimeValue($value): string
+    {
+        if (! is_string($value) || trim($value) === '') {
+            return '';
+        }
+
+        try {
+            return Carbon::parse($value)->format('M j, Y g:i A');
+        } catch (\Throwable) {
+            return $value;
+        }
+    }
+
+    /**
+     * @param  mixed  $value
+     */
+    private function exportDateValue($value): string
+    {
+        if (! is_string($value) || trim($value) === '') {
+            return '';
+        }
+
+        try {
+            return Carbon::parse($value)->format('M j, Y');
+        } catch (\Throwable) {
+            return $value;
+        }
+    }
+
+    private function escapeXml(string $value): string
+    {
+        return htmlspecialchars($value, ENT_XML1 | ENT_COMPAT, 'UTF-8');
+    }
+
+    private function cancelCompletedRow(
+        Form1702ExBatchRow $row,
+        BirReceiptAutoMatchService $birReceiptAutoMatchService,
+    ): bool {
+        if ($row->isProcessing() || $row->receiptJobIsBusy()) {
+            return false;
+        }
+
+        if (! $this->form1702ExCompletedEmailService->isCompleted($row)) {
+            return false;
+        }
+
+        $linkedEmail = null;
+
+        if ($row->auto_receipt_synced_email_id !== null) {
+            $linkedEmail = SyncedEmail::query()
+                ->find($row->auto_receipt_synced_email_id);
+        }
+
+        if ($linkedEmail instanceof SyncedEmail) {
+            $birReceiptAutoMatchService->resetMatchedReceiptEmail($linkedEmail);
+        }
+
+        $row->delete();
+
+        return true;
+    }
+
     private function normalizeOptionalText(mixed $value): ?string
     {
         $normalized = trim((string) $value);
 
         return $normalized !== '' ? $normalized : null;
+    }
+
+    private function normalizeOptionalRecipientEmail(mixed $value): ?string
+    {
+        return $this->recipientEmailNormalizer->normalize(
+            is_scalar($value) || $value === null ? (string) $value : null,
+        );
     }
 
     private function safeAttachmentFilename(string $fileName, string $fallbackBaseName): string
@@ -1605,5 +2230,51 @@ class Form1702ExController extends Controller
         return $extension !== ''
             ? "{$baseName}.{$extension}"
             : $baseName;
+    }
+
+    /**
+     * @return array{
+     *     status: 'queued'|'processing'|'failed'|'ready'|null,
+     *     error: string|null,
+     *     rowCount: int|null,
+     *     downloadUrl: string|null
+     * }
+     */
+    private function completedExportState($user): array
+    {
+        return $this->form1702ExCompletedExportService->getState((int) $user->getKey());
+    }
+
+    private function completedExportIsBusy($user): bool
+    {
+        $state = $this->completedExportState($user);
+
+        return in_array($state['status'], [
+            Form1702ExCompletedExportService::STATUS_QUEUED,
+            Form1702ExCompletedExportService::STATUS_PROCESSING,
+        ], true);
+    }
+
+    /**
+     * @return array{
+     *     status: 'queued'|'processing'|'failed'|'ready'|null,
+     *     error: string|null,
+     *     rowCount: int|null,
+     *     downloadUrl: string|null
+     * }
+     */
+    private function rowsExportState($user): array
+    {
+        return $this->form1702ExRowsExportService->getState((int) $user->getKey());
+    }
+
+    private function rowsExportIsBusy($user): bool
+    {
+        $state = $this->rowsExportState($user);
+
+        return in_array($state['status'], [
+            Form1702ExRowsExportService::STATUS_QUEUED,
+            Form1702ExRowsExportService::STATUS_PROCESSING,
+        ], true);
     }
 }

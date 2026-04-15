@@ -6,11 +6,13 @@ namespace Tests\Feature;
 
 use App\Enums\UserRole;
 use App\Jobs\ProcessForm1702ExBatchRows;
+use App\Jobs\ProcessForm1702ExRowsExport;
 use App\Models\Form1702ExBatch;
 use App\Models\Form1702ExBatchRow;
 use App\Models\SyncedEmail;
 use App\Models\User;
 use App\Services\EmailSync\BirReceiptAutoMatchService;
+use App\Services\Form1702ExRowsExportService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
@@ -18,6 +20,7 @@ use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Inertia\Testing\AssertableInertia as Assert;
 use Tests\TestCase;
+use ZipArchive;
 
 class Form1702ExTest extends TestCase
 {
@@ -49,11 +52,13 @@ class Form1702ExTest extends TestCase
                 ->where('indexUrl', route('forms.1702-ex.index'))
                 ->where('importUrl', route('forms.1702-ex.import.store'))
                 ->where('bulkDeleteUrl', route('forms.1702-ex.rows.destroy'))
+                ->where('rowsExportUrl', route('forms.1702-ex.rows.export'))
                 ->where('settingsUpdateUrl', route('forms.1702-ex.settings.update'))
                 ->where('filters.search', '')
                 ->where('filters.sort', 'uploadedAt')
                 ->where('filters.direction', 'desc')
                 ->where('pagination.total', 0)
+                ->where('rowsExportState.status', null)
                 ->has('rows', 0)
                 ->missing('batches'),
             );
@@ -535,6 +540,183 @@ class Form1702ExTest extends TestCase
                 'form1702ExBatchRow' => $row,
             ]))
             ->assertNotFound();
+    }
+
+    public function test_unmatched_rows_export_is_queued_with_the_current_filters(): void
+    {
+        Queue::fake();
+        $this->withoutVite();
+
+        $staff = User::factory()->create();
+        $batch = Form1702ExBatch::query()->create([
+            'user_id' => $staff->id,
+            'name' => 'Queued Export Batch',
+        ]);
+
+        $this->createBatchRow($batch, [
+            'source_name' => 'import-alpha.csv',
+            'payload' => $this->validPayload([
+                'taxpayer_name' => 'Alpha Export Foundation',
+                'registered_name' => 'Alpha Export Foundation',
+            ]),
+            'pdf_status' => Form1702ExBatchRow::PDF_STATUS_FAILED,
+        ]);
+
+        $this->actingAs($staff)
+            ->get(route('forms.1702-ex.rows.export', [
+                'search' => 'Alpha Export',
+                'sort' => 'pdfStatus',
+                'direction' => 'asc',
+            ]))
+            ->assertRedirect(route('forms.1702-ex.index', [
+                'search' => 'Alpha Export',
+                'sort' => 'pdfStatus',
+                'direction' => 'asc',
+            ]))
+            ->assertSessionHas('success', 'Imported rows export queued. Your Excel file will be ready shortly.');
+
+        Queue::assertPushed(ProcessForm1702ExRowsExport::class, function (ProcessForm1702ExRowsExport $job) use ($staff): bool {
+            return $job->userId === $staff->id
+                && $job->search === 'Alpha Export'
+                && $job->sort === 'pdfStatus'
+                && $job->direction === 'asc';
+        });
+
+        $this->actingAs($staff)
+            ->get(route('forms.1702-ex.index'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('forms/1702-ex/Index')
+                ->where('rowsExportState.status', 'queued'),
+            );
+    }
+
+    public function test_unmatched_rows_export_prepared_download_uses_current_filters_and_excludes_completed_rows(): void
+    {
+        Storage::fake('local');
+
+        $staff = User::factory()->create();
+        $batch = Form1702ExBatch::query()->create([
+            'user_id' => $staff->id,
+            'name' => 'Export Batch',
+            'receipt_acceptance_start_date' => '2026-04-10',
+        ]);
+
+        $pendingRow = $this->createBatchRow($batch, [
+            'source_name' => 'import-alpha.csv',
+            'payload' => $this->validPayload([
+                'taxpayer_name' => 'Alpha Export Foundation',
+                'registered_name' => 'Alpha Export Foundation',
+                'tin' => '001111111111',
+            ]),
+            'pdf_status' => Form1702ExBatchRow::PDF_STATUS_FAILED,
+            'pdf_error' => 'PDF build failed.',
+            'receipt_job_status' => Form1702ExBatchRow::RECEIPT_JOB_STATUS_FAILED,
+            'receipt_job_error' => 'Receipt parse failed.',
+            'auto_receipt_status' => 'failed',
+            'auto_receipt_error' => 'Email match failed.',
+        ]);
+
+        $this->createBatchRow($batch, [
+            'source_name' => 'import-bravo.csv',
+            'payload' => $this->validPayload([
+                'taxpayer_name' => 'Bravo Export Foundation',
+                'registered_name' => 'Bravo Export Foundation',
+                'tin' => '002222222222',
+            ]),
+        ]);
+
+        $completedPath = 'forms/'.$staff->id.'/1702-ex/batches/'.$batch->id.'/completed-export.pdf';
+        Storage::disk('local')->put($completedPath, 'completed pdf');
+
+        $this->createBatchRow($batch, [
+            'source_name' => 'import-completed.csv',
+            'payload' => $this->validPayload([
+                'taxpayer_name' => 'Completed Export Foundation',
+                'registered_name' => 'Completed Export Foundation',
+                'tin' => '003333333333',
+            ]),
+            'pdf_status' => Form1702ExBatchRow::PDF_STATUS_GENERATED,
+            'generated_pdf_file_name' => 'completed-export.pdf',
+            'generated_pdf_storage_path' => $completedPath,
+            'generated_pdf_file_size' => Storage::disk('local')->size($completedPath),
+            'generated_at' => Carbon::parse('2026-04-12 09:15:00'),
+            'receipt_file_name' => 'completed-receipt.pdf',
+            'receipt_storage_path' => 'forms/'.$staff->id.'/1702-ex/receipts/'.$batch->id.'/completed-receipt.pdf',
+            'receipt_file_size' => 1234,
+        ]);
+
+        $job = new ProcessForm1702ExRowsExport(
+            $staff->id,
+            'Alpha Export',
+            'pdfStatus',
+            'asc',
+        );
+        $job->handle(app(Form1702ExRowsExportService::class));
+
+        $response = $this->actingAs($staff)
+            ->get(route('forms.1702-ex.rows.export.file'));
+
+        $response->assertOk();
+        $response->assertDownload('1702-ex-unmatched-rows.xlsx');
+        $response->assertHeader('content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+
+        $downloadedXlsxPath = $response->baseResponse->getFile()->getPathname();
+        $archive = new ZipArchive;
+        $result = $archive->open($downloadedXlsxPath);
+        $this->assertTrue($result === true, 'Expected the unmatched XLSX archive to open successfully.');
+
+        $sheetXml = $archive->getFromName('xl/worksheets/sheet1.xml');
+        $this->assertIsString($sheetXml);
+        $archive->close();
+
+        $this->assertStringContainsString('Alpha Export Foundation', $sheetXml);
+        $this->assertStringNotContainsString('Bravo Export Foundation', $sheetXml);
+        $this->assertStringNotContainsString('Completed Export Foundation', $sheetXml);
+        $this->assertSame(Form1702ExBatchRow::PDF_STATUS_FAILED, $pendingRow->fresh()?->pdf_status);
+    }
+
+    public function test_unmatched_rows_export_does_not_queue_when_the_current_staff_user_has_no_matching_rows(): void
+    {
+        Queue::fake();
+
+        $owner = User::factory()->create();
+        $otherStaff = User::factory()->create();
+        $batch = Form1702ExBatch::query()->create([
+            'user_id' => $owner->id,
+            'name' => 'Owner Export Batch',
+        ]);
+
+        $this->createBatchRow($batch, [
+            'payload' => $this->validPayload([
+                'taxpayer_name' => 'Private Export Foundation',
+            ]),
+        ]);
+
+        $this->actingAs($otherStaff)
+            ->get(route('forms.1702-ex.rows.export'))
+            ->assertRedirect(route('forms.1702-ex.index'))
+            ->assertSessionHas('error', 'No imported rows matched this export request.');
+
+        Queue::assertNothingPushed();
+    }
+
+    public function test_unmatched_rows_export_returns_an_error_when_no_rows_match(): void
+    {
+        Queue::fake();
+
+        $staff = User::factory()->create();
+
+        $this->actingAs($staff)
+            ->get(route('forms.1702-ex.rows.export', [
+                'search' => 'nothing-to-export',
+            ]))
+            ->assertRedirect(route('forms.1702-ex.index', [
+                'search' => 'nothing-to-export',
+            ]))
+            ->assertSessionHas('error', 'No imported rows matched this export request.');
+
+        Queue::assertNothingPushed();
     }
 
     public function test_superadmins_are_redirected_to_users_from_the_staff_only_page(): void

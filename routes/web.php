@@ -98,15 +98,22 @@ Route::middleware(['auth', 'verified'])->group(function () {
                         Route::post('settings', 'updateSettings')->name('settings.update');
                         Route::post('import', 'storeImportDirect')->name('import.store');
                         Route::delete('rows', 'destroyRowsDirect')->name('rows.destroy');
+                        Route::get('rows/export', 'downloadRowsList')->name('rows.export');
+                        Route::get('rows/export/file', 'downloadRowsListPrepared')->name('rows.export.file');
                         Route::get('rows/{form1702ExBatchRow}/preview', 'previewRowDirect')->name('rows.preview');
                         Route::get('rows/{form1702ExBatchRow}/download', 'downloadRowDirect')->name('rows.download');
+                        Route::patch('rows/{form1702ExBatchRow}/recipient', 'updateRecipient')->name('rows.recipient.update');
                         Route::post('rows/{form1702ExBatchRow}/receipt', 'storeReceiptDirect')->name('rows.receipt.store');
                         Route::delete('rows/{form1702ExBatchRow}/receipt', 'destroyReceiptDirect')->name('rows.receipt.destroy');
                         Route::get('rows/{form1702ExBatchRow}/receipt', 'downloadReceiptDirect')->name('rows.receipt.download');
                         Route::post('rows/{form1702ExBatchRow}/regenerate', 'regenerateRowDirect')->name('rows.regenerate');
                         Route::get('completed', 'completed')->name('completed.index');
+                        Route::get('completed/download', 'downloadCompleted')->name('completed.download');
+                        Route::get('completed/download/file', 'downloadCompletedPrepared')->name('completed.download.file');
+                        Route::delete('completed', 'cancelCompletedBulk')->name('completed.cancel.bulk');
                         Route::post('completed/send', 'sendCompletedEmailsBulk')->name('completed.send.bulk');
                         Route::post('completed/{form1702ExBatchRow}/send', 'sendCompletedEmail')->name('completed.send');
+                        Route::delete('completed/{form1702ExBatchRow}', 'cancelCompleted')->name('completed.cancel');
                         Route::post('batches', 'storeBatch')->name('batches.store');
 
                         Route::prefix('batches/{form1702ExBatch}')

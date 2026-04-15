@@ -39,6 +39,7 @@ use Illuminate\Support\Str;
     'duplicate_resolved_at',
     'completed_email_auto_hash',
     'completed_email_auto_recipient',
+    'completed_email_recipient',
     'completed_email_auto_queued_at',
 ])]
 class Form1702ExBatchRow extends Model

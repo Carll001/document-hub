@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { router } from '@inertiajs/vue3';
 import {
+    Ban,
     ChevronLeft,
     ChevronRight,
     Download,
+    Pencil,
     Eye,
     Mail,
     MoreHorizontal,
@@ -40,6 +42,8 @@ import { formatDateTime } from '@/components/form-1702-ex-components/utils';
 const props = withDefaults(
     defineProps<{
         bulkSendProcessing?: boolean;
+        cancelProcessing?: boolean;
+        downloadProcessing?: boolean;
         filters: Form1702ExRowFilters;
         pageUrl: string;
         pagination: Form1702ExRowPagination;
@@ -48,12 +52,18 @@ const props = withDefaults(
     }>(),
     {
         bulkSendProcessing: false,
+        cancelProcessing: false,
+        downloadProcessing: false,
         singleSendProcessing: false,
     },
 );
 
 const emit = defineEmits<{
+    cancelRow: [row: Form1702ExBatchRow];
+    openRecipientEditor: [row: Form1702ExBatchRow];
     openSendEmail: [row: Form1702ExBatchRow];
+    requestBulkCancel: [rowIds: string[]];
+    requestBulkDownload: [rowIds: string[]];
     requestBulkSend: [rowIds: string[]];
 }>();
 
@@ -89,6 +99,9 @@ const paginationItems = computed<PaginationItem[]>(() => {
 const canBulkSend = computed(
     () => selectedRowIds.value.length > 0 && !props.bulkSendProcessing,
 );
+
+const canBulkDownload = computed(() => selectedRowIds.value.length > 0 && !props.downloadProcessing);
+const canBulkCancel = computed(() => selectedRowIds.value.length > 0 && !props.cancelProcessing);
 
 const selectAllState = computed<boolean | 'indeterminate'>(() => {
     if (props.rows.length === 0) {
@@ -236,6 +249,34 @@ function requestBulkSend(): void {
 
     emit('requestBulkSend', uniqueRowIds);
 }
+
+function requestBulkDownload(): void {
+    const uniqueRowIds = Array.from(new Set(selectedRowIds.value.filter((rowId) => rowId !== '')));
+
+    if (uniqueRowIds.length === 0) {
+        return;
+    }
+
+    emit('requestBulkDownload', uniqueRowIds);
+}
+
+function requestBulkCancel(): void {
+    const uniqueRowIds = Array.from(new Set(selectedRowIds.value.filter((rowId) => rowId !== '')));
+
+    if (uniqueRowIds.length === 0) {
+        return;
+    }
+
+    emit('requestBulkCancel', uniqueRowIds);
+}
+
+function requestCancel(row: Form1702ExBatchRow): void {
+    if (!row.cancelUrl || props.cancelProcessing) {
+        return;
+    }
+
+    emit('cancelRow', row);
+}
 </script>
 
 <template>
@@ -248,25 +289,59 @@ function requestBulkSend(): void {
                 <Input
                     v-model="searchValue"
                     type="search"
-                    placeholder="Search taxpayer, TIN, email, or file"
+                    placeholder="Search taxpayer, TIN, recipient, or file"
                     class="pl-10"
                 />
             </div>
 
-            <Button
-                type="button"
-                size="sm"
-                class="gap-2 self-end md:self-auto"
-                :disabled="!canBulkSend"
-                @click="requestBulkSend"
-            >
-                <Send class="size-4" />
-                {{
-                    selectedRowIds.length > 0
-                        ? `Bulk send (${selectedRowIds.length})`
-                        : 'Bulk send'
-                }}
-            </Button>
+            <div class="flex flex-wrap gap-2 self-end md:self-auto">
+                <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    class="gap-2"
+                    :disabled="!canBulkDownload"
+                    @click="requestBulkDownload"
+                >
+                    <Download class="size-4" />
+                    {{
+                        selectedRowIds.length > 0
+                            ? `Download selected (${selectedRowIds.length})`
+                            : 'Download selected'
+                    }}
+                </Button>
+
+                <Button
+                    type="button"
+                    size="sm"
+                    variant="destructive"
+                    class="gap-2"
+                    :disabled="!canBulkCancel"
+                    @click="requestBulkCancel"
+                >
+                    <Ban class="size-4" />
+                    {{
+                        selectedRowIds.length > 0
+                            ? `Cancel selected (${selectedRowIds.length})`
+                            : 'Cancel selected'
+                    }}
+                </Button>
+
+                <Button
+                    type="button"
+                    size="sm"
+                    class="gap-2"
+                    :disabled="!canBulkSend"
+                    @click="requestBulkSend"
+                >
+                    <Send class="size-4" />
+                    {{
+                        selectedRowIds.length > 0
+                            ? `Bulk send (${selectedRowIds.length})`
+                            : 'Bulk send'
+                    }}
+                </Button>
+            </div>
         </div>
 
         <div class="overflow-hidden rounded-2xl border bg-background">
@@ -403,11 +478,25 @@ function requestBulkSend(): void {
                                                 </a>
                                             </DropdownMenuItem>
                                             <DropdownMenuItem
+                                                @select="emit('openRecipientEditor', row)"
+                                            >
+                                                <Pencil class="size-4" />
+                                                {{ row.recipientEmail ? 'Edit recipient' : 'Add recipient' }}
+                                            </DropdownMenuItem>
+                                            <DropdownMenuItem
                                                 :disabled="!row.recipientEmail || !row.sendEmailUrl || props.singleSendProcessing"
                                                 @select="emit('openSendEmail', row)"
                                             >
                                                 <Mail class="size-4" />
                                                 Send email
+                                            </DropdownMenuItem>
+                                            <DropdownMenuItem
+                                                :disabled="!row.cancelUrl || props.cancelProcessing"
+                                                class="text-destructive focus:text-destructive"
+                                                @select="requestCancel(row)"
+                                            >
+                                                <Ban class="size-4" />
+                                                Cancel
                                             </DropdownMenuItem>
                                         </DropdownMenuContent>
                                     </DropdownMenu>

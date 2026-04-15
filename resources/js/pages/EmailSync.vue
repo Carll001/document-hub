@@ -35,6 +35,7 @@ const selectedSyncAccountIds = ref(
     props.syncAccounts.options.map((account) => account.id),
 );
 const searchTimeoutId = ref<number | null>(null);
+const pollTimeoutId = ref<number | null>(null);
 const startDate = ref('');
 const syncForm = useForm<{
     accountIds: number[];
@@ -50,6 +51,23 @@ const backfillForm = useForm<{
 });
 
 const canBackfill = computed(() => props.stats.totalStored > 0 || props.connection.hasActiveAccounts);
+const isSyncQueuedOrRunning = computed(
+    () => props.syncState.status === 'queued' || props.syncState.status === 'processing',
+);
+const toolbarRunningActionLabel = computed(() => props.syncState.actionLabel ?? runningActionLabel.value);
+const toolbarRunningAccountLabels = computed(() =>
+    props.syncState.accountLabels.length > 0 ? props.syncState.accountLabels : runningAccountLabels.value,
+);
+const toolbarFlashError = computed(() =>
+    props.syncState.status === 'failed' ? props.syncState.error : props.flash.error,
+);
+const toolbarResultDetails = computed(() => props.syncState.resultDetails ?? props.flash.syncResultDetails);
+const toolbarSyncProcessing = computed(() =>
+    isSyncQueuedOrRunning.value && toolbarRunningActionLabel.value !== 'Import older',
+);
+const toolbarBackfillProcessing = computed(() =>
+    isSyncQueuedOrRunning.value && toolbarRunningActionLabel.value === 'Import older',
+);
 const latestSyncLabel = computed(() =>
     formatDateTime(props.stats.latestSyncedAt, 'No inbox sync yet'),
 );
@@ -163,11 +181,63 @@ watch(
     { immediate: true },
 );
 
+watch(
+    () => props.syncState.status,
+    (status) => {
+        if (status !== 'queued' && status !== 'processing') {
+            clearPollTimeout();
+
+            return;
+        }
+
+        schedulePoll();
+    },
+    { immediate: true },
+);
+
 onBeforeUnmount(() => {
     if (searchTimeoutId.value !== null) {
         window.clearTimeout(searchTimeoutId.value);
     }
+
+    clearPollTimeout();
 });
+
+function clearPollTimeout(): void {
+    if (pollTimeoutId.value !== null) {
+        window.clearTimeout(pollTimeoutId.value);
+        pollTimeoutId.value = null;
+    }
+}
+
+function schedulePoll(): void {
+    if (pollTimeoutId.value !== null) {
+        return;
+    }
+
+    pollTimeoutId.value = window.setTimeout(() => {
+        router.reload({
+            only: [
+                'flash',
+                'stats',
+                'emails',
+                'pagination',
+                'appliedEmails',
+                'appliedPagination',
+                'receiptCounts',
+                'syncState',
+            ],
+            preserveState: true,
+            onFinish: () => {
+                pollTimeoutId.value = null;
+
+                if (props.syncState.status === 'queued' || props.syncState.status === 'processing') {
+                    schedulePoll();
+                }
+            },
+        });
+    }, 3000);
+}
 
 function submitSyncAll(): void {
     hasSubmittedSyncAction.value = true;
@@ -243,13 +313,13 @@ function submitImportSelected(): void {
                         :open="isSyncDialogOpen"
                         :start-date="startDate"
                         :selected-account-ids="selectedSyncAccountIds"
-                        :running-action-label="runningActionLabel"
-                        :running-account-labels="runningAccountLabels"
+                        :running-action-label="toolbarRunningActionLabel"
+                        :running-account-labels="toolbarRunningAccountLabels"
                         :account-options="props.syncAccounts.options"
-                        :sync-processing="syncForm.processing"
-                        :backfill-processing="backfillForm.processing"
-                        :flash-error="props.flash.error"
-                        :sync-result-details="props.flash.syncResultDetails"
+                        :sync-processing="toolbarSyncProcessing"
+                        :backfill-processing="toolbarBackfillProcessing"
+                        :flash-error="toolbarFlashError"
+                        :sync-result-details="toolbarResultDetails"
                         :errors="{
                             accountIds: syncForm.errors.accountIds ?? backfillForm.errors.accountIds,
                             startDate: backfillForm.errors.startDate,

@@ -64,6 +64,14 @@ export type SyncResultDetails = {
     }>;
 };
 
+export type EmailSyncState = {
+    status: 'queued' | 'processing' | 'failed' | null;
+    actionLabel: string | null;
+    accountLabels: string[];
+    error: string | null;
+    resultDetails: SyncResultDetails | null;
+};
+
 export type ConnectionState = {
     accountCount: number;
     hasActiveAccounts: boolean;
@@ -95,6 +103,7 @@ export type EmailSyncAccountOption = {
 export type EmailSyncPageProps = {
     connection: ConnectionState;
     flash: FlashState;
+    syncState: EmailSyncState;
     stats: StatsState;
     emails: EmailRecord[];
     pagination: {
@@ -133,6 +142,7 @@ export type EmailSyncPageProps = {
 export type AllEmailSyncPageProps = {
     connection: ConnectionState;
     flash: FlashState;
+    syncState: EmailSyncState;
     stats: StatsState;
     emails: EmailRecord[];
     hasMoreEmails: boolean;

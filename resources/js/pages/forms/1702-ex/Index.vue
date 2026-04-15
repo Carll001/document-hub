@@ -4,22 +4,20 @@ import { LoaderCircle, Settings2, Upload } from 'lucide-vue-next';
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { toast } from 'vue-sonner';
 import InputError from '@/components/InputError.vue';
+import Form1702ExRecipientDialog from '@/components/form-1702-ex-components/Form1702ExRecipientDialog.vue';
 import Form1702ExReceiptDialog from '@/components/form-1702-ex-components/Form1702ExReceiptDialog.vue';
 import Form1702ExRemoveReceiptDialog from '@/components/form-1702-ex-components/Form1702ExRemoveReceiptDialog.vue';
 import PaginatedRowsTable from '@/components/form-1702-ex-components/PaginatedRowsTable.vue';
 import type {
-    FlashState,
     Form1702ExBatchRow,
-    Form1702ExReceiptTemplateState,
-    Form1702ExRowFilters,
-    Form1702ExRowPagination,
-    Form1702ExSettings,
+    Form1702ExIndexPageProps,
 } from '@/components/form-1702-ex-components/types';
 import {
     formatFileSize,
     pdfFileNamePreview,
     receiptJobIsActive,
 } from '@/components/form-1702-ex-components/utils';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import {
     Card,
@@ -56,23 +54,7 @@ import AppLayout from '@/layouts/AppLayout.vue';
 import forms from '@/routes/forms';
 import type { BreadcrumbItem } from '@/types';
 
-const props = defineProps<{
-    flash: FlashState;
-    indexUrl: string;
-    completedFilesUrl: string;
-    completedCount: number;
-    importUrl: string;
-    bulkDeleteUrl: string;
-    settingsUpdateUrl: string;
-    templateSpreadsheetUrl: string;
-    receiptTemplateUrl: string;
-    receiptTemplate: Form1702ExReceiptTemplateState;
-    settings: Form1702ExSettings;
-    rows: Form1702ExBatchRow[];
-    pagination: Form1702ExRowPagination;
-    filters: Form1702ExRowFilters;
-    hasActiveJobs: boolean;
-}>();
+const props = defineProps<Form1702ExIndexPageProps>();
 
 const breadcrumbs: BreadcrumbItem[] = [
     {
@@ -88,23 +70,22 @@ const importForm = useForm<{
     spreadsheet: null,
     receiptAcceptanceStartDate: '',
 });
-const settingsForm = useForm<Form1702ExSettings>({
+const settingsForm = useForm<{
+    fileNamePrefix: string;
+}>({
     fileNamePrefix: props.settings.fileNamePrefix,
-    footerSourcePath: props.settings.footerSourcePath,
-    footerPrintedDate: props.settings.footerPrintedDate,
 });
 const deleteRowsForm = useForm<{
     rowIds: string[];
 }>({
     rowIds: [],
 });
-const regenerateForm = useForm<{
-    footerSourcePath: string;
-    footerPrintedDate: string;
+const recipientForm = useForm<{
+    recipientEmail: string;
 }>({
-    footerSourcePath: '',
-    footerPrintedDate: '',
+    recipientEmail: '',
 });
+const regenerateForm = useForm<Record<string, never>>({});
 const receiptForm = useForm<{
     values: Record<string, string>;
 }>({
@@ -116,8 +97,10 @@ const isSettingsDialogOpen = ref(false);
 const isDeleteDialogOpen = ref(false);
 const isRegenerateDialogOpen = ref(false);
 const isReceiptDialogOpen = ref(false);
+const isRecipientDialogOpen = ref(false);
 const isRemoveReceiptDialogOpen = ref(false);
 const pendingDeleteRowIds = ref<string[]>([]);
+const pendingRecipientRow = ref<Form1702ExBatchRow | null>(null);
 const pendingRegenerateRow = ref<Form1702ExBatchRow | null>(null);
 const pendingReceiptRow = ref<Form1702ExBatchRow | null>(null);
 const pendingReceiptRemovalRow = ref<Form1702ExBatchRow | null>(null);
@@ -128,6 +111,9 @@ const canSubmitImport = computed(
     () => importForm.spreadsheet instanceof File && !importForm.processing,
 );
 const canSubmitSettings = computed(() => !settingsForm.processing);
+const canSubmitRecipient = computed(
+    () => pendingRecipientRow.value !== null && !recipientForm.processing,
+);
 const canSubmitRegenerate = computed(
     () => pendingRegenerateRow.value !== null && !regenerateForm.processing,
 );
@@ -186,20 +172,24 @@ const receiptValueErrors = computed<Record<string, string | undefined>>(() =>
         ]),
     ),
 );
+const isRowsExportBusy = computed(
+    () =>
+        props.rowsExportState.status === 'queued'
+        || props.rowsExportState.status === 'processing',
+);
+const shouldPoll = computed(
+    () => props.hasActiveJobs || isRowsExportBusy.value,
+);
 
 watch(
     () => props.settings,
     (settings) => {
         settingsForm.defaults({
             fileNamePrefix: settings.fileNamePrefix,
-            footerSourcePath: settings.footerSourcePath,
-            footerPrintedDate: settings.footerPrintedDate,
         });
 
         if (!isSettingsDialogOpen.value) {
             settingsForm.fileNamePrefix = settings.fileNamePrefix;
-            settingsForm.footerSourcePath = settings.footerSourcePath;
-            settingsForm.footerPrintedDate = settings.footerPrintedDate;
         }
     },
     { deep: true },
@@ -214,13 +204,17 @@ watch(
             isDeleteDialogOpen.value = false;
             isRegenerateDialogOpen.value = false;
             isReceiptDialogOpen.value = false;
+            isRecipientDialogOpen.value = false;
             isRemoveReceiptDialogOpen.value = false;
             pendingDeleteRowIds.value = [];
+            pendingRecipientRow.value = null;
             pendingRegenerateRow.value = null;
             pendingReceiptRow.value = null;
             pendingReceiptRemovalRow.value = null;
             deleteRowsForm.reset();
             deleteRowsForm.clearErrors();
+            recipientForm.reset();
+            recipientForm.clearErrors();
             regenerateForm.reset();
             regenerateForm.clearErrors();
             receiptForm.reset();
@@ -238,9 +232,9 @@ watch(
 );
 
 watch(
-    () => props.hasActiveJobs,
-    (hasActiveJobs) => {
-        if (!hasActiveJobs) {
+    () => shouldPoll.value,
+    (polling) => {
+        if (!polling) {
             clearPollTimeout();
 
             return;
@@ -278,12 +272,12 @@ function schedulePoll(): void {
 
     pollTimeoutId.value = window.setTimeout(() => {
         router.reload({
-            only: ['rows', 'pagination', 'filters', 'hasActiveJobs', 'settings', 'flash'],
+            only: ['rows', 'pagination', 'filters', 'hasActiveJobs', 'settings', 'flash', 'importStatus', 'importError', 'importSourceName', 'rowsExportState'],
             preserveState: true,
             onFinish: () => {
                 pollTimeoutId.value = null;
 
-                if (props.hasActiveJobs) {
+                if (shouldPoll.value) {
                     schedulePoll();
                 }
             },
@@ -330,8 +324,6 @@ function submitImport(): void {
 
 function openSettingsDialog(): void {
     settingsForm.fileNamePrefix = props.settings.fileNamePrefix;
-    settingsForm.footerSourcePath = props.settings.footerSourcePath;
-    settingsForm.footerPrintedDate = props.settings.footerPrintedDate;
     settingsForm.clearErrors();
     isSettingsDialogOpen.value = true;
 }
@@ -360,10 +352,15 @@ function submitDeleteRows(): void {
 
 function regenerateRow(row: Form1702ExBatchRow): void {
     pendingRegenerateRow.value = row;
-    regenerateForm.footerSourcePath = row.footerSourcePath;
-    regenerateForm.footerPrintedDate = row.footerPrintedDate;
     regenerateForm.clearErrors();
     isRegenerateDialogOpen.value = true;
+}
+
+function openRecipientEditor(row: Form1702ExBatchRow): void {
+    pendingRecipientRow.value = row;
+    recipientForm.recipientEmail = row.recipientEmail ?? '';
+    recipientForm.clearErrors();
+    isRecipientDialogOpen.value = true;
 }
 
 function submitRegenerate(): void {
@@ -372,6 +369,16 @@ function submitRegenerate(): void {
     }
 
     regenerateForm.post(pendingRegenerateRow.value.regenerateUrl, {
+        preserveScroll: true,
+    });
+}
+
+function submitRecipient(): void {
+    if (!pendingRecipientRow.value?.updateRecipientUrl) {
+        return;
+    }
+
+    recipientForm.patch(pendingRecipientRow.value.updateRecipientUrl, {
         preserveScroll: true,
     });
 }
@@ -689,6 +696,18 @@ function submitRemoveReceipt(): void {
             @update:value="updateReceiptValue"
         />
 
+        <Form1702ExRecipientDialog
+            :can-submit="canSubmitRecipient"
+            :errors="recipientForm.errors"
+            :open="isRecipientDialogOpen"
+            :processing="recipientForm.processing"
+            :recipient-email="recipientForm.recipientEmail"
+            :row="pendingRecipientRow"
+            @submit="submitRecipient"
+            @update:open="isRecipientDialogOpen = $event"
+            @update:recipient-email="recipientForm.recipientEmail = $event"
+        />
+
         <div class="flex flex-1 flex-col gap-6 p-4 md:p-6">
             <Card class="rounded-3xl">
                 <CardContent class="flex flex-col gap-5 p-6 md:flex-row md:items-center md:justify-between md:p-8">
@@ -724,6 +743,62 @@ function submitRemoveReceipt(): void {
                     </div>
                 </CardContent>
             </Card>
+
+            <Alert v-if="props.importStatus === 'queued' || props.importStatus === 'processing'">
+                <LoaderCircle class="size-4 animate-spin" />
+                <AlertTitle>Spreadsheet Import In Progress</AlertTitle>
+                <AlertDescription>
+                    {{
+                        props.importSourceName
+                            ? `Importing ${props.importSourceName}. Rows will appear here once the background import finishes.`
+                            : 'Your spreadsheet is being imported in the background. Rows will appear here once it finishes.'
+                    }}
+                </AlertDescription>
+            </Alert>
+
+            <Alert v-if="props.importStatus === 'failed' && props.importError" variant="destructive">
+                <AlertTitle>Spreadsheet Import Failed</AlertTitle>
+                <AlertDescription>
+                    {{ props.importError }}
+                </AlertDescription>
+            </Alert>
+
+            <Alert v-if="isRowsExportBusy">
+                <LoaderCircle class="size-4 animate-spin" />
+                <AlertTitle>Rows Export In Progress</AlertTitle>
+                <AlertDescription>
+                    {{
+                        props.rowsExportState.status === 'queued'
+                            ? 'Your Excel export is queued and will start shortly.'
+                            : 'Your Excel export is being prepared in the background.'
+                    }}
+                </AlertDescription>
+            </Alert>
+
+            <Alert v-if="props.rowsExportState.status === 'ready' && props.rowsExportState.downloadUrl">
+                <AlertTitle>Rows Export Ready</AlertTitle>
+                <AlertDescription class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <span>
+                        {{
+                            props.rowsExportState.rowCount !== null
+                                ? `Your Excel export is ready with ${props.rowsExportState.rowCount} row${props.rowsExportState.rowCount === 1 ? '' : 's'}.`
+                                : 'Your Excel export is ready to download.'
+                        }}
+                    </span>
+                    <Button as-child size="sm" class="self-start sm:self-auto">
+                        <a :href="props.rowsExportState.downloadUrl">
+                            Download ready
+                        </a>
+                    </Button>
+                </AlertDescription>
+            </Alert>
+
+            <Alert v-if="props.rowsExportState.status === 'failed' && props.rowsExportState.error" variant="destructive">
+                <AlertTitle>Rows Export Failed</AlertTitle>
+                <AlertDescription>
+                    {{ props.rowsExportState.error }}
+                </AlertDescription>
+            </Alert>
 
             <Card class="rounded-3xl">
                 <CardHeader>
@@ -768,12 +843,15 @@ function submitRemoveReceipt(): void {
                     </div>
 
                     <PaginatedRowsTable
+                        :export-url="props.rowsExportUrl"
                         :filters="props.filters"
                         :is-busy="props.hasActiveJobs"
                         :is-delete-processing="deleteRowsForm.processing"
                         :page-url="props.indexUrl"
                         :pagination="props.pagination"
                         :rows="props.rows"
+                        :rows-export-state="props.rowsExportState"
+                        @open-recipient-editor="openRecipientEditor"
                         @open-receipt="openReceiptDialog"
                         @open-remove-receipt="openRemoveReceiptDialog"
                         @regenerate="regenerateRow"

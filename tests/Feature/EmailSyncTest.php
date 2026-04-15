@@ -2,11 +2,15 @@
 
 namespace Tests\Feature;
 
+use App\Jobs\ProcessEmailSyncAccounts;
+use App\Models\EmailSyncAccount;
 use App\Models\SyncedEmail;
 use App\Models\SyncedEmailAttachment;
 use App\Models\User;
 use App\Services\EmailSync\EmailSyncRunner;
+use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Inertia\Testing\AssertableInertia as Assert;
 use Tests\TestCase;
@@ -68,7 +72,8 @@ class EmailSyncTest extends TestCase
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->component('EmailSync')
-                ->where('connection.imapConfigured', false)
+                ->where('connection.accountCount', 0)
+                ->where('connection.hasActiveAccounts', false)
                 ->where('connection.smtpConfigured', false)
                 ->where('stats.totalStored', 1)
                 ->where('pagination.currentPage', 1)
@@ -85,6 +90,7 @@ class EmailSyncTest extends TestCase
                 ->where('emails.0.parsedBirReceiptDetails.timeReceived', '9:30 AM')
                 ->where('filters.formType', '')
                 ->where('filters.formTypeOptions.0', '1702EXV2018C')
+                ->where('syncState.status', null)
                 ->has('appliedEmails', 0),
             );
     }
@@ -288,77 +294,213 @@ class EmailSyncTest extends TestCase
 
     public function test_authenticated_users_can_trigger_an_email_sync()
     {
-        $user = User::factory()->create();
+        Queue::fake();
 
-        $this->mock(EmailSyncRunner::class, function ($mock): void {
-            $mock->shouldReceive('sync')
-                ->once()
-                ->andReturn([
-                    'fetched' => 2,
-                    'created' => 2,
-                    'updated' => 0,
-                    'mailbox' => 'INBOX',
-                ]);
-        });
+        $user = User::factory()->create();
+        $account = $this->createActiveSyncAccount();
 
         $this->actingAs($user)
+            ->from(route('email-sync.index'))
             ->post(route('email-sync.sync'))
             ->assertRedirect(route('email-sync.index'))
-            ->assertSessionHas('success', 'Inbox sync completed successfully.')
-            ->assertSessionHas('syncResult', [
-                'fetched' => 2,
-                'created' => 2,
-                'updated' => 0,
-                'mailbox' => 'INBOX',
-            ]);
+            ->assertSessionHas('success', 'Email sync queued. Results will refresh automatically.');
+
+        Queue::assertPushed(ProcessEmailSyncAccounts::class, function (ProcessEmailSyncAccounts $job) use ($account): bool {
+            return $job->accountIds === [$account->id]
+                && $job->actionLabel === 'Sync'
+                && $job->startDate === null;
+        });
+
+        $account->refresh();
+
+        $this->assertSame(EmailSyncAccount::PROCESSING_STATUS_QUEUED, $account->processing_status);
+        $this->assertSame('Sync', $account->processing_action);
+        $this->assertNotNull($account->processing_run_uuid);
+        $this->assertNotNull($account->processing_started_at);
     }
 
-    public function test_sync_errors_are_sent_back_to_the_page()
+    public function test_sync_requests_are_rejected_when_selected_accounts_are_already_busy()
     {
-        $user = User::factory()->create();
+        Queue::fake();
 
-        $this->mock(EmailSyncRunner::class, function ($mock): void {
-            $mock->shouldReceive('sync')
-                ->once()
-                ->andThrow(new \RuntimeException('Email sync is not configured yet. Set your Gmail address in MAIL_USERNAME first.'));
-        });
+        $user = User::factory()->create();
+        $account = $this->createActiveSyncAccount([
+            'display_name' => 'Accounting Inbox',
+            'processing_status' => EmailSyncAccount::PROCESSING_STATUS_PROCESSING,
+            'processing_action' => 'Sync',
+            'processing_started_at' => now(),
+        ]);
 
         $this->actingAs($user)
-            ->post(route('email-sync.sync'))
+            ->from(route('email-sync.index'))
+            ->post(route('email-sync.sync'), [
+                'accountIds' => [$account->id],
+            ])
             ->assertRedirect(route('email-sync.index'))
-            ->assertSessionHas('error', 'Email sync is not configured yet. Set your Gmail address in MAIL_USERNAME first.');
+            ->assertSessionHas('error', 'Accounting Inbox is currently syncing. Please wait for the current queue to finish, then try again.');
+
+        Queue::assertNothingPushed();
     }
 
     public function test_authenticated_users_can_import_older_mail_from_a_selected_start_date()
     {
-        $user = User::factory()->create();
+        Queue::fake();
 
-        $this->mock(EmailSyncRunner::class, function ($mock): void {
-            $mock->shouldReceive('backfill')
-                ->once()
-                ->with(
-                    \Mockery::on(fn ($candidate): bool => $candidate instanceof \Carbon\CarbonImmutable && $candidate->format('Y-m-d') === '2026-01-01'),
-                )
-                ->andReturn([
-                    'fetched' => 20,
-                    'created' => 20,
-                    'updated' => 0,
-                    'mailbox' => 'INBOX',
-                ]);
-        });
+        $user = User::factory()->create();
+        $account = $this->createActiveSyncAccount();
 
         $this->actingAs($user)
+            ->from(route('email-sync.index'))
             ->post(route('email-sync.backfill'), [
                 'startDate' => '2026-01-01',
             ])
             ->assertRedirect(route('email-sync.index'))
-            ->assertSessionHas('success', 'Older email import completed successfully.')
-            ->assertSessionHas('syncResult', [
-                'fetched' => 20,
-                'created' => 20,
-                'updated' => 0,
-                'mailbox' => 'INBOX',
+            ->assertSessionHas('success', 'Older email import queued. Results will refresh automatically.');
+
+        Queue::assertPushed(ProcessEmailSyncAccounts::class, function (ProcessEmailSyncAccounts $job) use ($account): bool {
+            return $job->accountIds === [$account->id]
+                && $job->actionLabel === 'Import older'
+                && $job->startDate === '2026-01-01';
+        });
+    }
+
+    public function test_email_sync_job_updates_account_status_and_result_counts_after_a_successful_run(): void
+    {
+        $account = $this->createActiveSyncAccount([
+            'processing_status' => EmailSyncAccount::PROCESSING_STATUS_QUEUED,
+            'processing_action' => 'Sync',
+            'processing_run_uuid' => 'run-123',
+            'processing_started_at' => now(),
+        ]);
+
+        $runner = \Mockery::mock(EmailSyncRunner::class);
+        $runner->shouldReceive('sync')
+            ->once()
+            ->with([$account->id])
+            ->andReturn([
+                'results' => [[
+                    'accountId' => $account->id,
+                    'accountLabel' => $account->label(),
+                    'fetched' => 5,
+                    'created' => 3,
+                    'updated' => 2,
+                    'mailbox' => $account->mailbox,
+                    'skipped' => false,
+                    'emailIds' => [],
+                ]],
+                'busyAccounts' => [],
             ]);
+
+        $job = new ProcessEmailSyncAccounts([$account->id], 'Sync', 'run-123');
+        $job->handle($runner);
+
+        $account->refresh();
+
+        $this->assertNull($account->processing_status);
+        $this->assertNull($account->processing_action);
+        $this->assertNull($account->processing_run_uuid);
+        $this->assertNull($account->processing_error);
+        $this->assertNull($account->processing_started_at);
+        $this->assertSame('run-123', $account->last_sync_run_uuid);
+        $this->assertSame('Sync', $account->last_sync_action);
+        $this->assertSame(5, $account->last_sync_fetched_count);
+        $this->assertSame(3, $account->last_sync_created_count);
+        $this->assertSame(2, $account->last_sync_updated_count);
+        $this->assertNotNull($account->last_sync_completed_at);
+    }
+
+    public function test_email_sync_job_uses_the_selected_backfill_start_date(): void
+    {
+        $account = $this->createActiveSyncAccount([
+            'processing_status' => EmailSyncAccount::PROCESSING_STATUS_QUEUED,
+            'processing_action' => 'Import older',
+            'processing_run_uuid' => 'run-backfill',
+            'processing_started_at' => now(),
+        ]);
+
+        $runner = \Mockery::mock(EmailSyncRunner::class);
+        $runner->shouldReceive('backfill')
+            ->once()
+            ->with(
+                \Mockery::on(fn (mixed $candidate): bool => $candidate instanceof CarbonImmutable && $candidate->format('Y-m-d') === '2026-01-01'),
+                [$account->id],
+            )
+            ->andReturn([
+                'results' => [[
+                    'accountId' => $account->id,
+                    'accountLabel' => $account->label(),
+                    'fetched' => 8,
+                    'created' => 8,
+                    'updated' => 0,
+                    'mailbox' => $account->mailbox,
+                    'skipped' => false,
+                    'emailIds' => [],
+                ]],
+                'busyAccounts' => [],
+            ]);
+
+        $job = new ProcessEmailSyncAccounts([$account->id], 'Import older', 'run-backfill', '2026-01-01');
+        $job->handle($runner);
+
+        $account->refresh();
+
+        $this->assertNull($account->processing_status);
+        $this->assertSame('Import older', $account->last_sync_action);
+        $this->assertSame(8, $account->last_sync_fetched_count);
+    }
+
+    public function test_email_sync_job_marks_accounts_as_failed_when_the_runner_throws(): void
+    {
+        $account = $this->createActiveSyncAccount([
+            'processing_status' => EmailSyncAccount::PROCESSING_STATUS_QUEUED,
+            'processing_action' => 'Sync',
+            'processing_run_uuid' => 'run-failed',
+            'processing_started_at' => now(),
+        ]);
+
+        $runner = \Mockery::mock(EmailSyncRunner::class);
+        $runner->shouldReceive('sync')
+            ->once()
+            ->with([$account->id])
+            ->andThrow(new \RuntimeException('Mailbox connection timed out.'));
+
+        $job = new ProcessEmailSyncAccounts([$account->id], 'Sync', 'run-failed');
+
+        try {
+            $job->handle($runner);
+            $this->fail('The queued sync job should rethrow runner exceptions.');
+        } catch (\RuntimeException $exception) {
+            $this->assertSame('Mailbox connection timed out.', $exception->getMessage());
+        }
+
+        $account->refresh();
+
+        $this->assertSame(EmailSyncAccount::PROCESSING_STATUS_FAILED, $account->processing_status);
+        $this->assertSame('Mailbox connection timed out.', $account->processing_error);
+    }
+
+    public function test_email_sync_page_exposes_queued_sync_state(): void
+    {
+        $this->withoutVite();
+
+        $user = User::factory()->create();
+        $account = $this->createActiveSyncAccount([
+            'display_name' => 'Main Inbox',
+            'processing_status' => EmailSyncAccount::PROCESSING_STATUS_QUEUED,
+            'processing_action' => 'Sync',
+            'processing_run_uuid' => 'run-queued',
+            'processing_started_at' => now(),
+        ]);
+
+        $this->actingAs($user)
+            ->get(route('email-sync.index'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('EmailSync')
+                ->where('syncState.status', EmailSyncAccount::PROCESSING_STATUS_QUEUED)
+                ->where('syncState.actionLabel', 'Sync')
+                ->where('syncState.accountLabels.0', $account->label()),
+            );
     }
 
     public function test_start_date_is_required_for_backfill()
@@ -699,5 +841,20 @@ class EmailSyncTest extends TestCase
             ]))
             ->assertOk()
             ->assertDownload('shared-report.txt');
+    }
+
+    private function createActiveSyncAccount(array $overrides = []): EmailSyncAccount
+    {
+        return EmailSyncAccount::query()->create(array_merge([
+            'display_name' => 'Shared Inbox',
+            'username' => 'shared@example.com',
+            'password' => 'secret',
+            'host' => 'imap.example.com',
+            'port' => 993,
+            'encryption' => 'ssl',
+            'mailbox' => 'INBOX',
+            'validate_certificate' => true,
+            'is_active' => true,
+        ], $overrides));
     }
 }

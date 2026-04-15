@@ -49,7 +49,9 @@ export type Form1702ExBatchRow = {
         | null;
     autoReceiptError: string | null;
     recipientEmail: string | null;
+    updateRecipientUrl: string;
     sendEmailUrl: string | null;
+    cancelUrl: string | null;
     footerSourcePath: string;
     footerPrintedDate: string;
 };
@@ -63,6 +65,45 @@ export type Form1702ExSettings = {
     footerSourcePath: string;
     footerPrintedDate: string;
     receiptAcceptanceStartDate: string | null;
+};
+
+export type Form1702ExImportStatus = 'queued' | 'processing' | 'failed' | null;
+
+export type Form1702ExCompletedExportStatus =
+    | 'queued'
+    | 'processing'
+    | 'failed'
+    | 'ready'
+    | null;
+
+export type Form1702ExCompletedExportState = {
+    status: Form1702ExCompletedExportStatus;
+    error: string | null;
+    rowCount: number | null;
+    downloadUrl: string | null;
+};
+
+export type Form1702ExIndexPageProps = {
+    flash: FlashState;
+    indexUrl: string;
+    completedFilesUrl: string;
+    completedCount: number;
+    importUrl: string;
+    bulkDeleteUrl: string;
+    rowsExportUrl: string;
+    settingsUpdateUrl: string;
+    templateSpreadsheetUrl: string;
+    receiptTemplateUrl: string;
+    receiptTemplate: Form1702ExReceiptTemplateState;
+    settings: Form1702ExSettings;
+    rows: Form1702ExBatchRow[];
+    pagination: Form1702ExRowPagination;
+    filters: Form1702ExRowFilters;
+    importStatus: Form1702ExImportStatus;
+    importError: string | null;
+    importSourceName: string | null;
+    rowsExportState: Form1702ExCompletedExportState;
+    hasActiveJobs: boolean;
 };
 
 export type Form1702ExRowPagination = {
@@ -84,10 +125,12 @@ export type Form1702ExCompletedPageProps = {
     flash: FlashState;
     indexUrl: string;
     completedFilesUrl: string;
+    completedBulkCancelUrl: string;
     completedBulkSendUrl: string;
     rows: Form1702ExBatchRow[];
     pagination: Form1702ExRowPagination;
     filters: Form1702ExRowFilters;
+    exportState: Form1702ExCompletedExportState;
 };
 
 export type Form1702ExBatchDetail = {

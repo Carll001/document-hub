@@ -13,6 +13,7 @@ import {
     Eye,
     FileText,
     MoreHorizontal,
+    Pencil,
     RotateCcw,
     Search,
     Trash2,
@@ -61,6 +62,7 @@ const props = withDefaults(
 );
 
 const emit = defineEmits<{
+    openRecipientEditor: [row: Form1702ExBatchRow];
     openReceipt: [row: Form1702ExBatchRow];
     openRemoveReceipt: [row: Form1702ExBatchRow];
     regenerate: [row: Form1702ExBatchRow];
@@ -151,6 +153,7 @@ const table = useVueTable({
             row.original.receiptFileName ?? '',
             row.original.receiptJobStatus ?? '',
             row.original.receiptJobError ?? '',
+            row.original.recipientEmail ?? '',
         ].some((value) => value.toLowerCase().includes(search));
     },
 });
@@ -335,7 +338,7 @@ function emptyMessage(): string {
                 <Input
                     :model-value="globalFilter"
                     type="search"
-                    placeholder="Search taxpayer, TIN, or status"
+                    placeholder="Search taxpayer, TIN, recipient, or status"
                     class="pl-10"
                     @update:model-value="globalFilter = String($event)"
                 />
@@ -639,6 +642,21 @@ function emptyMessage(): string {
                                                     </a>
                                                 </DropdownMenuItem>
                                                 <DropdownMenuItem
+                                                    @select="
+                                                        emit(
+                                                            'openRecipientEditor',
+                                                            row.original,
+                                                        )
+                                                    "
+                                                >
+                                                    <Pencil class="size-4" />
+                                                    {{
+                                                        row.original.recipientEmail
+                                                            ? 'Edit recipient'
+                                                            : 'Add recipient'
+                                                    }}
+                                                </DropdownMenuItem>
+                                                <DropdownMenuItem
                                                     :disabled="
                                                         receiptMutationDisabled(
                                                             row.original,
@@ -713,7 +731,7 @@ function emptyMessage(): string {
                                                     "
                                                 >
                                                     <RotateCcw class="size-4" />
-                                                    Edit Footer / Regenerate
+                                                    Regenerate
                                                 </DropdownMenuItem>
                                                 <DropdownMenuSeparator />
                                                 <DropdownMenuItem

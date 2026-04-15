@@ -71,8 +71,8 @@ const selectedLabel = computed(() => {
     return `${selectedCount.value} account${selectedCount.value === 1 ? '' : 's'} selected`;
 });
 
-function toggleAccount(accountId: number, checked: boolean | 'indeterminate'): void {
-    if (checked === true) {
+function toggleAccount(accountId: number): void {
+    if (!props.selectedAccountIds.includes(accountId)) {
         emit('update:selectedAccountIds', Array.from(new Set([...props.selectedAccountIds, accountId])));
 
         return;
@@ -202,8 +202,8 @@ function clearSelection(): void {
                                 <DropdownMenuCheckboxItem
                                     v-for="account in props.accountOptions"
                                     :key="account.id"
-                                    :checked="props.selectedAccountIds.includes(account.id)"
-                                    @update:checked="toggleAccount(account.id, $event)"
+                                    :model-value="props.selectedAccountIds.includes(account.id)"
+                                    @select.prevent="toggleAccount(account.id)"
                                 >
                                     <div class="flex flex-col">
                                         <span>{{ account.label }}</span>

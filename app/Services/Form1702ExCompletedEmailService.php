@@ -8,6 +8,7 @@ use App\Mail\Form1702ExCompletedRowsEmail;
 use App\Models\Client;
 use App\Mail\Form1702ExCompletedRowEmail;
 use App\Models\Form1702ExBatchRow;
+use App\Support\Form1702ExRecipientEmailNormalizer;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Storage;
@@ -19,6 +20,11 @@ class Form1702ExCompletedEmailService
     private const DEFAULT_EMAIL_FOOTER =
         'Please do not reply to this message. If you have any concerns, please contact:';
 
+    public function __construct(
+        private readonly Form1702ExRecipientEmailNormalizer $recipientEmailNormalizer,
+    ) {
+    }
+
     public function isCompleted(Form1702ExBatchRow $row): bool
     {
         return $row->pdf_status === Form1702ExBatchRow::PDF_STATUS_GENERATED
@@ -29,10 +35,7 @@ class Form1702ExCompletedEmailService
 
     public function recipientEmail(Form1702ExBatchRow $row): ?string
     {
-        $payload = is_array($row->payload) ? $row->payload : [];
-        $email = $this->normalizeRecipientEmail((string) ($payload['email_address'] ?? ''));
-
-        return $email !== '' ? $email : null;
+        return $this->recipientEmailNormalizer->normalize($row->completed_email_recipient);
     }
 
     public function queueManual(
@@ -214,11 +217,6 @@ class Form1702ExCompletedEmailService
             'receipt_file_name' => (string) ($row->receipt_file_name ?? ''),
             'receipt_file_size' => (int) ($row->receipt_file_size ?? 0),
         ], JSON_THROW_ON_ERROR));
-    }
-
-    private function normalizeRecipientEmail(string $value): string
-    {
-        return mb_strtolower(trim($value));
     }
 
     private function companyName(Form1702ExBatchRow $row): string

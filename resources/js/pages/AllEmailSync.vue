@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Head, router, useForm } from '@inertiajs/vue3';
 import { Bug, FileSearch, RefreshCcw } from 'lucide-vue-next';
-import { computed, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { toast } from 'vue-sonner';
 import EmailDetailPanel from '@/components/email-sync-components/EmailDetailPanel.vue';
 import EmailList from '@/components/email-sync-components/EmailList.vue';
@@ -62,6 +62,7 @@ const backfillForm = useForm<{
     startDate: '',
     accountIds: [],
 });
+const pollTimeoutId = ref<number | null>(null);
 
 const {
     emptyDetailMessage,
@@ -82,6 +83,23 @@ const {
 
 const latestSyncLabel = computed(() =>
     formatDateTime(props.stats.latestSyncedAt, 'No inbox sync yet'),
+);
+const isSyncQueuedOrRunning = computed(
+    () => props.syncState.status === 'queued' || props.syncState.status === 'processing',
+);
+const toolbarRunningActionLabel = computed(() => props.syncState.actionLabel ?? runningActionLabel.value);
+const toolbarRunningAccountLabels = computed(() =>
+    props.syncState.accountLabels.length > 0 ? props.syncState.accountLabels : runningAccountLabels.value,
+);
+const toolbarFlashError = computed(() =>
+    props.syncState.status === 'failed' ? props.syncState.error : props.flash.error,
+);
+const toolbarResultDetails = computed(() => props.syncState.resultDetails ?? props.flash.syncResultDetails);
+const toolbarSyncProcessing = computed(() =>
+    isSyncQueuedOrRunning.value && toolbarRunningActionLabel.value !== 'Import older',
+);
+const toolbarBackfillProcessing = computed(() =>
+    isSyncQueuedOrRunning.value && toolbarRunningActionLabel.value === 'Import older',
 );
 const syncResultSummary = computed(() => {
     if (!props.flash.syncResult || props.flash.syncResult.length === 0) {
@@ -148,6 +166,51 @@ watch(
     { immediate: true },
 );
 
+watch(
+    () => props.syncState.status,
+    (status) => {
+        if (status !== 'queued' && status !== 'processing') {
+            clearPollTimeout();
+
+            return;
+        }
+
+        schedulePoll();
+    },
+    { immediate: true },
+);
+
+onBeforeUnmount(() => {
+    clearPollTimeout();
+});
+
+function clearPollTimeout(): void {
+    if (pollTimeoutId.value !== null) {
+        window.clearTimeout(pollTimeoutId.value);
+        pollTimeoutId.value = null;
+    }
+}
+
+function schedulePoll(): void {
+    if (pollTimeoutId.value !== null) {
+        return;
+    }
+
+    pollTimeoutId.value = window.setTimeout(() => {
+        router.reload({
+            only: ['flash', 'stats', 'emails', 'hasMoreEmails', 'nextEmailsCursor', 'syncState'],
+            preserveState: true,
+            onFinish: () => {
+                pollTimeoutId.value = null;
+
+                if (props.syncState.status === 'queued' || props.syncState.status === 'processing') {
+                    schedulePoll();
+                }
+            },
+        });
+    }, 3000);
+}
+
 function applyAccountFilters(value: number[]): void {
     router.get(
         emailSync.allEmails.url({
@@ -164,8 +227,8 @@ function applyAccountFilters(value: number[]): void {
     );
 }
 
-function toggleAccountFilter(accountId: number, checked: boolean | 'indeterminate'): void {
-    if (checked === true) {
+function toggleAccountFilter(accountId: number): void {
+    if (!accountFilterIds.value.includes(accountId)) {
         accountFilterIds.value = Array.from(new Set([...accountFilterIds.value, accountId]));
     } else {
         accountFilterIds.value = accountFilterIds.value.filter((id) => id !== accountId);
@@ -319,13 +382,13 @@ async function copyBirDetails(): Promise<void> {
                         :open="isSyncDialogOpen"
                         :start-date="startDate"
                         :selected-account-ids="selectedSyncAccountIds"
-                        :running-action-label="runningActionLabel"
-                        :running-account-labels="runningAccountLabels"
+                        :running-action-label="toolbarRunningActionLabel"
+                        :running-account-labels="toolbarRunningAccountLabels"
                         :account-options="props.syncAccounts.options"
-                        :sync-processing="syncForm.processing"
-                        :backfill-processing="backfillForm.processing"
-                        :flash-error="props.flash.error"
-                        :sync-result-details="props.flash.syncResultDetails"
+                        :sync-processing="toolbarSyncProcessing"
+                        :backfill-processing="toolbarBackfillProcessing"
+                        :flash-error="toolbarFlashError"
+                        :sync-result-details="toolbarResultDetails"
                         :errors="{
                             accountIds: syncForm.errors.accountIds ?? backfillForm.errors.accountIds,
                             startDate: backfillForm.errors.startDate,
@@ -372,8 +435,8 @@ async function copyBirDetails(): Promise<void> {
                                 <DropdownMenuCheckboxItem
                                     v-for="account in props.filters.accountOptions"
                                     :key="account.id"
-                                    :checked="accountFilterIds.includes(account.id)"
-                                    @update:checked="toggleAccountFilter(account.id, $event)"
+                                    :model-value="accountFilterIds.includes(account.id)"
+                                    @select.prevent="toggleAccountFilter(account.id)"
                                 >
                                     <div class="flex flex-col">
                                         <span>{{ account.label }}</span>
@@ -402,7 +465,7 @@ async function copyBirDetails(): Promise<void> {
 
         <div class="p-2 md:p-4">
             <div class="overflow-hidden rounded-[28px] border bg-background shadow-sm">
-                <div class="grid min-h-[calc(100vh-10rem)] lg:grid-cols-[360px_minmax(0,1fr)]">
+                <div class="grid min-h-[calc(100vh-10rem)] lg:h-[calc(100vh-10rem)] lg:min-h-0 lg:grid-cols-[360px_minmax(0,1fr)]">
                     <EmailList
                         :emails="filteredEmails"
                         :empty-list-message="emptyListMessage"

@@ -2,12 +2,12 @@
 
 namespace App\Http\Controllers;
 
+use App\Jobs\ProcessEmailSyncAccounts;
 use App\Models\EmailSyncAccount;
 use App\Models\SyncedEmail;
 use App\Models\SyncedEmailAttachment;
 use App\Services\EmailSync\BirReceiptAutoMatchService;
 use App\Services\EmailSync\EmailHtmlRenderer;
-use App\Services\EmailSync\EmailSyncRunner;
 use Carbon\CarbonImmutable;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Http\JsonResponse;
@@ -16,10 +16,10 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Response as HttpResponse;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Inertia\Inertia;
 use Inertia\Response;
-use RuntimeException;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class EmailSyncController extends Controller
@@ -101,6 +101,7 @@ class EmailSyncController extends Controller
             'syncAccounts' => [
                 'options' => $this->syncAccountOptions(),
             ],
+            'syncState' => $this->syncState(),
         ]);
     }
 
@@ -167,6 +168,7 @@ class EmailSyncController extends Controller
             'syncAccounts' => [
                 'options' => $this->syncAccountOptions(),
             ],
+            'syncState' => $this->syncState(),
         ]);
     }
 
@@ -248,46 +250,52 @@ class EmailSyncController extends Controller
         );
     }
 
-    public function sync(Request $request, EmailSyncRunner $runner): RedirectResponse
+    public function sync(Request $request): RedirectResponse
     {
         $validated = $request->validate([
             'accountIds' => ['nullable', 'array'],
             'accountIds.*' => ['integer', Rule::exists('email_sync_accounts', 'id')],
         ]);
 
-        try {
-            $result = $runner->sync($this->normalizedAccountIds($validated['accountIds'] ?? []));
+        $accounts = $this->selectedSyncAccounts($this->normalizedAccountIds($validated['accountIds'] ?? []));
 
-            if ($result['busyAccounts'] !== []) {
-                return back()
-                    ->with('error', $this->busyAccountMessage(
-                        $result['busyAccounts'],
-                        'syncing',
-                        'Sync',
-                        $result['results'],
-                    ))
-                    ->with('syncResult', $result['results'])
-                    ->with('syncResultDetails', $this->manualSyncResultDetails('Sync', $result['results']));
-            }
-
-            return back()
-                ->with('success', 'Inbox sync completed successfully.')
-                ->with('syncResult', $result['results'])
-                ->with('syncResultDetails', $this->manualSyncResultDetails('Sync', $result['results']));
-        } catch (RuntimeException $exception) {
-            report($exception);
-
-            return back()
-                ->with('error', $exception->getMessage());
-        } catch (\Throwable $exception) {
-            report($exception);
-
-            return back()
-                ->with('error', 'Email sync failed. Check the configured IMAP accounts, then try again.');
+        if ($accounts->isEmpty()) {
+            return back()->with('error', 'No active mailbox accounts are configured.');
         }
+
+        $busyAccounts = $accounts
+            ->filter(fn (EmailSyncAccount $account): bool => $account->isBusy())
+            ->map(fn (EmailSyncAccount $account): string => $account->label())
+            ->values()
+            ->all();
+
+        if ($busyAccounts !== []) {
+            return back()->with('error', $this->busyAccountMessage(
+                $busyAccounts,
+                'syncing',
+                'Sync',
+            ));
+        }
+
+        $runUuid = (string) Str::uuid();
+        $startedAt = now();
+
+        EmailSyncAccount::query()
+            ->whereIn('id', $accounts->modelKeys())
+            ->update([
+                'processing_status' => EmailSyncAccount::PROCESSING_STATUS_QUEUED,
+                'processing_action' => 'Sync',
+                'processing_run_uuid' => $runUuid,
+                'processing_error' => null,
+                'processing_started_at' => $startedAt,
+            ]);
+
+        ProcessEmailSyncAccounts::dispatch($accounts->modelKeys(), 'Sync', $runUuid);
+
+        return back()->with('success', 'Email sync queued. Results will refresh automatically.');
     }
 
-    public function backfill(Request $request, EmailSyncRunner $runner): RedirectResponse
+    public function backfill(Request $request): RedirectResponse
     {
         $validated = $request->validate([
             'startDate' => ['required', 'date_format:Y-m-d'],
@@ -295,39 +303,47 @@ class EmailSyncController extends Controller
             'accountIds.*' => ['integer', Rule::exists('email_sync_accounts', 'id')],
         ]);
 
-        try {
-            $result = $runner->backfill(
-                CarbonImmutable::createFromFormat('Y-m-d', $validated['startDate'])->startOfDay(),
-                $this->normalizedAccountIds($validated['accountIds'] ?? []),
-            );
+        $accounts = $this->selectedSyncAccounts($this->normalizedAccountIds($validated['accountIds'] ?? []));
 
-            if ($result['busyAccounts'] !== []) {
-                return back()
-                    ->with('error', $this->busyAccountMessage(
-                        $result['busyAccounts'],
-                        'syncing',
-                        'Import older',
-                        $result['results'],
-                    ))
-                    ->with('syncResult', $result['results'])
-                    ->with('syncResultDetails', $this->manualSyncResultDetails('Import older', $result['results']));
-            }
-
-            return back()
-                ->with('success', 'Older email import completed successfully.')
-                ->with('syncResult', $result['results'])
-                ->with('syncResultDetails', $this->manualSyncResultDetails('Import older', $result['results']));
-        } catch (RuntimeException $exception) {
-            report($exception);
-
-            return back()
-                ->with('error', $exception->getMessage());
-        } catch (\Throwable $exception) {
-            report($exception);
-
-            return back()
-                ->with('error', 'Older email import failed. Check the configured IMAP accounts, then try again.');
+        if ($accounts->isEmpty()) {
+            return back()->with('error', 'No active mailbox accounts are configured.');
         }
+
+        $busyAccounts = $accounts
+            ->filter(fn (EmailSyncAccount $account): bool => $account->isBusy())
+            ->map(fn (EmailSyncAccount $account): string => $account->label())
+            ->values()
+            ->all();
+
+        if ($busyAccounts !== []) {
+            return back()->with('error', $this->busyAccountMessage(
+                $busyAccounts,
+                'syncing',
+                'Import older',
+            ));
+        }
+
+        $runUuid = (string) Str::uuid();
+        $startedAt = now();
+
+        EmailSyncAccount::query()
+            ->whereIn('id', $accounts->modelKeys())
+            ->update([
+                'processing_status' => EmailSyncAccount::PROCESSING_STATUS_QUEUED,
+                'processing_action' => 'Import older',
+                'processing_run_uuid' => $runUuid,
+                'processing_error' => null,
+                'processing_started_at' => $startedAt,
+            ]);
+
+        ProcessEmailSyncAccounts::dispatch(
+            $accounts->modelKeys(),
+            'Import older',
+            $runUuid,
+            $validated['startDate'],
+        );
+
+        return back()->with('success', 'Older email import queued. Results will refresh automatically.');
     }
 
     private function emailPage($user, int $page, array $accountIds = []): LengthAwarePaginator
@@ -475,9 +491,136 @@ class EmailSyncController extends Controller
                 'id' => $account->id,
                 'label' => $account->label(),
                 'username' => $account->username,
+                'isActive' => (bool) $account->is_active,
             ])
             ->values()
             ->all();
+    }
+
+    /**
+     * @param  list<int>  $accountIds
+     * @return Collection<int, EmailSyncAccount>
+     */
+    private function selectedSyncAccounts(array $accountIds): Collection
+    {
+        $query = EmailSyncAccount::query()
+            ->where('is_active', true)
+            ->orderBy('display_name')
+            ->orderBy('username');
+
+        if ($accountIds !== []) {
+            $query->whereIn('id', $accountIds);
+        }
+
+        return $query->get();
+    }
+
+    /**
+     * @return array{
+     *     status: 'queued'|'processing'|'failed'|null,
+     *     actionLabel: string|null,
+     *     accountLabels: list<string>,
+     *     error: string|null,
+     *     resultDetails: array{
+     *         actionLabel: string,
+     *         accountResults: list<array{
+     *             accountId: int,
+     *             accountLabel: string,
+     *             fetched: int,
+     *             created: int,
+     *             updated: int,
+     *             mailbox: string
+     *         }>
+     *     }|null
+     * }
+     */
+    private function syncState(): array
+    {
+        $runningAccounts = EmailSyncAccount::query()
+            ->where('is_active', true)
+            ->whereIn('processing_status', [
+                EmailSyncAccount::PROCESSING_STATUS_QUEUED,
+                EmailSyncAccount::PROCESSING_STATUS_PROCESSING,
+            ])
+            ->orderBy('display_name')
+            ->orderBy('username')
+            ->get();
+
+        if ($runningAccounts->isNotEmpty()) {
+            $status = $runningAccounts->contains(
+                fn (EmailSyncAccount $account): bool => $account->processing_status === EmailSyncAccount::PROCESSING_STATUS_PROCESSING,
+            ) ? EmailSyncAccount::PROCESSING_STATUS_PROCESSING : EmailSyncAccount::PROCESSING_STATUS_QUEUED;
+
+            return [
+                'status' => $status,
+                'actionLabel' => $runningAccounts->first()?->processing_action ?? 'Sync',
+                'accountLabels' => $runningAccounts->map(fn (EmailSyncAccount $account): string => $account->label())->values()->all(),
+                'error' => null,
+                'resultDetails' => null,
+            ];
+        }
+
+        $failedAccounts = EmailSyncAccount::query()
+            ->where('is_active', true)
+            ->where('processing_status', EmailSyncAccount::PROCESSING_STATUS_FAILED)
+            ->orderByDesc('processing_started_at')
+            ->orderBy('display_name')
+            ->orderBy('username')
+            ->get();
+
+        if ($failedAccounts->isNotEmpty()) {
+            return [
+                'status' => EmailSyncAccount::PROCESSING_STATUS_FAILED,
+                'actionLabel' => $failedAccounts->first()?->processing_action,
+                'accountLabels' => $failedAccounts->map(fn (EmailSyncAccount $account): string => $account->label())->values()->all(),
+                'error' => $failedAccounts->pluck('processing_error')->filter()->implode(' '),
+                'resultDetails' => null,
+            ];
+        }
+
+        $latestCompletedRunUuid = EmailSyncAccount::query()
+            ->where('is_active', true)
+            ->whereNotNull('last_sync_run_uuid')
+            ->orderByDesc('last_sync_completed_at')
+            ->value('last_sync_run_uuid');
+
+        if (! is_string($latestCompletedRunUuid) || $latestCompletedRunUuid === '') {
+            return [
+                'status' => null,
+                'actionLabel' => null,
+                'accountLabels' => [],
+                'error' => null,
+                'resultDetails' => null,
+            ];
+        }
+
+        $latestRunAccounts = EmailSyncAccount::query()
+            ->where('is_active', true)
+            ->where('last_sync_run_uuid', $latestCompletedRunUuid)
+            ->orderBy('display_name')
+            ->orderBy('username')
+            ->get();
+
+        return [
+            'status' => null,
+            'actionLabel' => null,
+            'accountLabels' => [],
+            'error' => null,
+            'resultDetails' => [
+                'actionLabel' => $latestRunAccounts->first()?->last_sync_action ?? 'Sync',
+                'accountResults' => $latestRunAccounts
+                    ->map(fn (EmailSyncAccount $account): array => [
+                        'accountId' => (int) $account->getKey(),
+                        'accountLabel' => $account->label(),
+                        'fetched' => (int) ($account->last_sync_fetched_count ?? 0),
+                        'created' => (int) ($account->last_sync_created_count ?? 0),
+                        'updated' => (int) ($account->last_sync_updated_count ?? 0),
+                        'mailbox' => (string) $account->mailbox,
+                    ])
+                    ->values()
+                    ->all(),
+            ],
+        ];
     }
 
     private function legacyEmailPagePayload(LengthAwarePaginator $emailPage): array
@@ -597,39 +740,6 @@ class EmailSyncController extends Controller
             ->unique()
             ->values()
             ->all();
-    }
-
-    /**
-     * @param  list<array{accountId: int, accountLabel: string, fetched: int, created: int, updated: int, mailbox: string, skipped: bool, emailIds: list<int>}>  $results
-     * @return array{
-     *     actionLabel: string,
-     *     accountResults: list<array{
-     *         accountId: int,
-     *         accountLabel: string,
-     *         fetched: int,
-     *         created: int,
-     *         updated: int,
-     *         mailbox: string
-     *     }>
-     * }
-     */
-    private function manualSyncResultDetails(string $actionLabel, array $results): array
-    {
-        return [
-            'actionLabel' => $actionLabel,
-            'accountResults' => collect($results)
-                ->map(function (array $result): array {
-                    return [
-                        'accountId' => $result['accountId'],
-                        'accountLabel' => $result['accountLabel'],
-                        'fetched' => $result['fetched'],
-                        'created' => $result['created'],
-                        'updated' => $result['updated'],
-                        'mailbox' => $result['mailbox'],
-                    ];
-                })
-                ->all(),
-        ];
     }
 
     /**

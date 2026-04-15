@@ -222,6 +222,19 @@ class BirReceiptAutoMatchService
         ])->save();
     }
 
+    public function resetMatchedReceiptEmail(SyncedEmail $email): void
+    {
+        $email->forceFill([
+            'matched_form_1702_ex_batch_row_id' => null,
+            'bir_receipt_match_status' => self::MATCH_STATUS_UNMATCHED,
+            'bir_receipt_queued_at' => null,
+            'bir_receipt_applied_at' => null,
+            'bir_receipt_match_error' => null,
+            'claimed_by_user_id' => null,
+            'claimed_at' => null,
+        ])->save();
+    }
+
     /**
      * @param  array{
      *     file_name: string|null,

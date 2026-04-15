@@ -7,6 +7,7 @@ import {
     Eye,
     FileText,
     MoreHorizontal,
+    Pencil,
     RotateCcw,
     Search,
     Trash2,
@@ -34,6 +35,7 @@ import {
 } from '@/components/ui/table';
 import type {
     Form1702ExBatchRow,
+    Form1702ExCompletedExportState,
     Form1702ExRowFilters,
     Form1702ExRowPagination,
 } from '@/components/form-1702-ex-components/types';
@@ -47,12 +49,14 @@ import {
 
 const props = withDefaults(
     defineProps<{
+        exportUrl: string;
         filters: Form1702ExRowFilters;
         isBusy?: boolean;
         isDeleteProcessing?: boolean;
         pageUrl: string;
         pagination: Form1702ExRowPagination;
         rows: Form1702ExBatchRow[];
+        rowsExportState: Form1702ExCompletedExportState;
     }>(),
     {
         isBusy: false,
@@ -61,6 +65,7 @@ const props = withDefaults(
 );
 
 const emit = defineEmits<{
+    openRecipientEditor: [row: Form1702ExBatchRow];
     openReceipt: [row: Form1702ExBatchRow];
     openRemoveReceipt: [row: Form1702ExBatchRow];
     regenerate: [row: Form1702ExBatchRow];
@@ -101,6 +106,14 @@ const canBulkDelete = computed(
         selectedRowIds.value.length > 0
         && !props.isBusy
         && !props.isDeleteProcessing,
+);
+const isRowsExportBusy = computed(
+    () =>
+        props.rowsExportState.status === 'queued'
+        || props.rowsExportState.status === 'processing',
+);
+const canExportList = computed(
+    () => props.pagination.total > 0 && !isRowsExportBusy.value,
 );
 const selectAllState = computed<boolean | 'indeterminate'>(() => {
     if (props.rows.length === 0) {
@@ -249,6 +262,21 @@ function requestDelete(rowIds: string[]): void {
     emit('requestDelete', uniqueRowIds);
 }
 
+function exportList(): void {
+    if (!canExportList.value) {
+        return;
+    }
+
+    router.get(
+        props.exportUrl,
+        {},
+        {
+            preserveScroll: true,
+            preserveState: true,
+        },
+    );
+}
+
 function deleteDisabled(row: Form1702ExBatchRow): boolean {
     return (
         props.isBusy
@@ -304,26 +332,44 @@ function autoReceiptLabel(row: Form1702ExBatchRow): string | null {
                 <Input
                     v-model="searchValue"
                     type="search"
-                    placeholder="Search taxpayer, TIN, or status"
+                    placeholder="Search taxpayer, TIN, recipient, or status"
                     class="pl-10"
                 />
             </div>
 
-            <Button
-                type="button"
-                variant="destructive"
-                size="sm"
-                class="gap-2 self-end md:self-auto"
-                :disabled="!canBulkDelete"
-                @click="requestDelete(selectedRowIds)"
-            >
-                <Trash2 class="size-4" />
-                {{
-                    selectedRowIds.length > 0
-                        ? `Delete selected (${selectedRowIds.length})`
-                        : 'Delete selected'
-                }}
-            </Button>
+            <div class="flex flex-wrap gap-2 self-end md:self-auto">
+                <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    class="gap-2"
+                    :disabled="!canExportList"
+                    @click="exportList"
+                >
+                    <Download class="size-4" />
+                    {{
+                        isRowsExportBusy
+                            ? 'Preparing export...'
+                            : 'Export list'
+                    }}
+                </Button>
+
+                <Button
+                    type="button"
+                    variant="destructive"
+                    size="sm"
+                    class="gap-2"
+                    :disabled="!canBulkDelete"
+                    @click="requestDelete(selectedRowIds)"
+                >
+                    <Trash2 class="size-4" />
+                    {{
+                        selectedRowIds.length > 0
+                            ? `Delete selected (${selectedRowIds.length})`
+                            : 'Delete selected'
+                    }}
+                </Button>
+            </div>
         </div>
 
         <div class="overflow-hidden rounded-2xl border bg-background">
@@ -533,6 +579,12 @@ function autoReceiptLabel(row: Form1702ExBatchRow): string | null {
                                                 </a>
                                             </DropdownMenuItem>
                                             <DropdownMenuItem
+                                                @select="emit('openRecipientEditor', row)"
+                                            >
+                                                <Pencil class="size-4" />
+                                                {{ row.recipientEmail ? 'Edit recipient' : 'Add recipient' }}
+                                            </DropdownMenuItem>
+                                            <DropdownMenuItem
                                                 :disabled="receiptMutationDisabled(row)"
                                                 @select="emit('openReceipt', row)"
                                             >
@@ -563,10 +615,10 @@ function autoReceiptLabel(row: Form1702ExBatchRow): string | null {
                                             <DropdownMenuItem
                                                 :disabled="regenerateDisabled(row)"
                                                 @select="emit('regenerate', row)"
-                                            >
-                                                <RotateCcw class="size-4" />
-                                                Edit Footer / Regenerate
-                                            </DropdownMenuItem>
+                                                >
+                                                    <RotateCcw class="size-4" />
+                                                    Regenerate
+                                                </DropdownMenuItem>
                                             <DropdownMenuSeparator />
                                             <DropdownMenuItem
                                                 variant="destructive"

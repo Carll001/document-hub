@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
 #[Fillable([
@@ -18,10 +19,21 @@ use Illuminate\Support\Str;
     'footer_source_path',
     'footer_printed_date',
     'receipt_acceptance_start_date',
+    'import_status',
+    'import_error',
+    'import_source_path',
+    'import_source_name',
+    'import_completed_at',
 ])]
 class Form1702ExBatch extends Model
 {
     protected $table = 'form_1702_ex_batches';
+
+    public const IMPORT_STATUS_QUEUED = 'queued';
+
+    public const IMPORT_STATUS_PROCESSING = 'processing';
+
+    public const IMPORT_STATUS_FAILED = 'failed';
 
     /**
      * @return array<string, string>
@@ -33,6 +45,9 @@ class Form1702ExBatch extends Model
             'footer_source_path' => 'string',
             'footer_printed_date' => 'string',
             'receipt_acceptance_start_date' => 'date',
+            'import_source_path' => 'string',
+            'import_source_name' => 'string',
+            'import_completed_at' => 'datetime',
         ];
     }
 
@@ -46,6 +61,10 @@ class Form1702ExBatch extends Model
 
         static::deleting(function (self $batch): void {
             $batch->rows()->get()->each->delete();
+
+            if (filled($batch->import_source_path)) {
+                Storage::disk('local')->delete((string) $batch->import_source_path);
+            }
         });
     }
 
@@ -82,5 +101,13 @@ class Form1702ExBatch extends Model
                 Form1702ExBatchRow::RECEIPT_JOB_STATUS_PROCESSING,
             ])
             ->exists();
+    }
+
+    public function isImportBusy(): bool
+    {
+        return in_array($this->import_status, [
+            self::IMPORT_STATUS_QUEUED,
+            self::IMPORT_STATUS_PROCESSING,
+        ], true);
     }
 }

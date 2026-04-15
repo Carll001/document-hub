@@ -10,6 +10,7 @@ use App\Models\Form1702ExBatch;
 use App\Models\Form1702ExBatchRow;
 use App\Models\User;
 use App\Services\EmailSync\BirReceiptAutoMatchService;
+use App\Support\Form1702ExRecipientEmailNormalizer;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -20,9 +21,11 @@ use RuntimeException;
 class Form1702ExBatchService
 {
     private const UNASSIGNED_CLIENT_NAME = 'Unassigned Client';
+    private const STORE_IMPORT_CHUNK_SIZE = 200;
 
     public function __construct(
         private readonly BirReceiptAutoMatchService $birReceiptAutoMatchService,
+        private readonly Form1702ExRecipientEmailNormalizer $recipientEmailNormalizer,
     ) {
     }
 
@@ -47,7 +50,7 @@ class Form1702ExBatchService
      *     sourceName: string,
      *     sourceType: string,
      *     importedAt: string,
-     *     rows: list<array{rowNumber: int, payload: array<string, mixed>}>
+     *     rows: list<array{rowNumber: int, payload: array<string, mixed>, recipientEmail?: string|null}>
      * }  $import
      * @return Collection<int, Form1702ExBatchRow>
      */
@@ -85,60 +88,68 @@ class Form1702ExBatchService
             /** @var Collection<int, Form1702ExBatchRow> $createdRows */
             $createdRows = collect();
             $tinsToSync = [];
+            $clientCache = [];
+            $companyCache = [];
 
-            foreach ($rows as $row) {
-                $payload = $row['payload'];
-                [$client, $company] = $this->resolveClientAndCompany($batch, $payload);
-                $normalizedTin = $this->normalizeTin($payload['tin'] ?? null);
-                $receiptOwner = $normalizedTin !== null
-                    ? $existingRows->first(fn (Form1702ExBatchRow $existingRow): bool => $this->rowOwnsReceiptForTin($existingRow, $normalizedTin))
-                    : null;
+            foreach ($rows->chunk(self::STORE_IMPORT_CHUNK_SIZE) as $chunk) {
+                foreach ($chunk as $row) {
+                    $payload = $row['payload'];
+                    $recipientEmail = $this->recipientEmailNormalizer->normalize(
+                        is_string($row['recipientEmail'] ?? null) ? $row['recipientEmail'] : null,
+                    );
+                    [$client, $company] = $this->resolveClientAndCompany($batch, $payload, $clientCache, $companyCache);
+                    $normalizedTin = $this->normalizeTin($payload['tin'] ?? null);
+                    $receiptOwner = $normalizedTin !== null
+                        ? $existingRows->first(fn (Form1702ExBatchRow $existingRow): bool => $this->rowOwnsReceiptForTin($existingRow, $normalizedTin))
+                        : null;
 
-                $attributes = [
-                    'form_1702_ex_batch_id' => $batch->id,
-                    'client_id' => $client?->id,
-                    'company_id' => $company?->id,
-                    'source_name' => $sourceName,
-                    'source_type' => $sourceType,
-                    'source_row_number' => (int) ($row['rowNumber'] ?? 0),
-                    'uploaded_at' => $uploadedAt,
-                    'payload' => array_replace($payload, [
-                        'receipt_acceptance_start_date' => $batch->receipt_acceptance_start_date?->toDateString(),
-                    ]),
-                    'generated_pdf_file_name' => null,
-                    'generated_pdf_storage_path' => null,
-                    'generated_pdf_file_size' => null,
-                    'generated_at' => null,
-                    'receipt_file_name' => null,
-                    'receipt_storage_path' => null,
-                    'receipt_file_size' => null,
-                    'receipt_job_status' => null,
-                    'receipt_job_error' => null,
-                ];
+                    $attributes = [
+                        'form_1702_ex_batch_id' => $batch->id,
+                        'client_id' => $client?->id,
+                        'company_id' => $company?->id,
+                        'source_name' => $sourceName,
+                        'source_type' => $sourceType,
+                        'source_row_number' => (int) ($row['rowNumber'] ?? 0),
+                        'uploaded_at' => $uploadedAt,
+                        'payload' => array_replace($payload, [
+                            'receipt_acceptance_start_date' => $batch->receipt_acceptance_start_date?->toDateString(),
+                        ]),
+                        'completed_email_recipient' => $recipientEmail,
+                        'generated_pdf_file_name' => null,
+                        'generated_pdf_storage_path' => null,
+                        'generated_pdf_file_size' => null,
+                        'generated_at' => null,
+                        'receipt_file_name' => null,
+                        'receipt_storage_path' => null,
+                        'receipt_file_size' => null,
+                        'receipt_job_status' => null,
+                        'receipt_job_error' => null,
+                    ];
 
-                if ($receiptOwner instanceof Form1702ExBatchRow) {
-                    $attributes = array_replace($attributes, [
-                        'pdf_status' => Form1702ExBatchRow::PDF_STATUS_FAILED,
-                        'pdf_error' => 'Skipped duplicate TIN because an earlier row already has a receipt.',
-                        'duplicate_resolution_status' => Form1702ExBatchRow::DUPLICATE_RESOLUTION_SKIPPED,
-                        'duplicate_of_form_1702_ex_batch_row_id' => $receiptOwner->id,
-                        'duplicate_resolved_at' => now(),
-                    ]);
-                } else {
-                    $attributes = array_replace($attributes, [
-                        'pdf_status' => Form1702ExBatchRow::PDF_STATUS_QUEUED,
-                        'pdf_error' => null,
-                    ]);
-                }
+                    if ($receiptOwner instanceof Form1702ExBatchRow) {
+                        $attributes = array_replace($attributes, [
+                            'pdf_status' => Form1702ExBatchRow::PDF_STATUS_FAILED,
+                            'pdf_error' => 'Skipped duplicate TIN because an earlier row already has a receipt.',
+                            'duplicate_resolution_status' => Form1702ExBatchRow::DUPLICATE_RESOLUTION_SKIPPED,
+                            'duplicate_of_form_1702_ex_batch_row_id' => $receiptOwner->id,
+                            'duplicate_resolved_at' => now(),
+                        ]);
+                    } else {
+                        $attributes = array_replace($attributes, [
+                            'pdf_status' => Form1702ExBatchRow::PDF_STATUS_QUEUED,
+                            'pdf_error' => null,
+                        ]);
+                    }
 
-                $createdRows->push(
-                    Form1702ExBatchRow::query()->create($attributes),
-                );
+                    $createdRows->push(
+                        Form1702ExBatchRow::query()->create($attributes),
+                    );
 
-                $existingRows->push($createdRows->last());
+                    $existingRows->push($createdRows->last());
 
-                if ($normalizedTin !== null && ! ($receiptOwner instanceof Form1702ExBatchRow)) {
-                    $tinsToSync[] = $normalizedTin;
+                    if ($normalizedTin !== null && ! ($receiptOwner instanceof Form1702ExBatchRow)) {
+                        $tinsToSync[] = $normalizedTin;
+                    }
                 }
             }
 
@@ -165,18 +176,31 @@ class Form1702ExBatchService
      * @param  array<string, mixed>  $payload
      * @return array{0: Client|null, 1: Company|null}
      */
-    private function resolveClientAndCompany(Form1702ExBatch $batch, array $payload): array
+    private function resolveClientAndCompany(
+        Form1702ExBatch $batch,
+        array $payload,
+        array &$clientCache,
+        array &$companyCache,
+    ): array
     {
         $clientName = $this->normalizeName($payload['client_name'] ?? null) ?? self::UNASSIGNED_CLIENT_NAME;
-        $client = Client::query()->firstOrCreate(
-            [
-                'user_id' => $batch->user_id,
-                'name_normalized' => $this->normalizeNameKey($clientName),
-            ],
-            [
-                'name' => $clientName,
-            ],
-        );
+        $clientNameKey = $this->normalizeNameKey($clientName);
+
+        if (isset($clientCache[$clientNameKey]) && $clientCache[$clientNameKey] instanceof Client) {
+            $client = $clientCache[$clientNameKey];
+        } else {
+            $client = Client::query()->firstOrCreate(
+                [
+                    'user_id' => $batch->user_id,
+                    'name_normalized' => $clientNameKey,
+                ],
+                [
+                    'name' => $clientName,
+                ],
+            );
+
+            $clientCache[$clientNameKey] = $client;
+        }
 
         $companyTin = $this->normalizeTin($payload['tin'] ?? null);
         $companyName = $this->normalizeName($payload['taxpayer_name'] ?? $payload['registered_name'] ?? null);
@@ -185,10 +209,15 @@ class Form1702ExBatchService
             return [$client, null];
         }
 
-        $company = Company::query()
-            ->where('user_id', $batch->user_id)
-            ->where('tin_normalized', $companyTin)
-            ->first();
+        if (isset($companyCache[$companyTin]) && $companyCache[$companyTin] instanceof Company) {
+            $company = $companyCache[$companyTin];
+        } else {
+            $company = Company::query()
+                ->where('user_id', $batch->user_id)
+                ->where('tin_normalized', $companyTin)
+                ->first();
+            $companyCache[$companyTin] = $company;
+        }
 
         if (! $company instanceof Company) {
             $company = Company::query()->create([
@@ -199,6 +228,7 @@ class Form1702ExBatchService
                 'tin' => $companyTin,
                 'tin_normalized' => $companyTin,
             ]);
+            $companyCache[$companyTin] = $company;
 
             return [$client, $company];
         }
@@ -213,7 +243,9 @@ class Form1702ExBatchService
                     'name_normalized' => $this->normalizeNameKey($companyName),
                 ])->save();
 
-                return [$client, $company->fresh() ?? $company];
+                $companyCache[$companyTin] = $company->fresh() ?? $company;
+
+                return [$client, $companyCache[$companyTin]];
             }
 
             throw ValidationException::withMessages([
@@ -231,6 +263,8 @@ class Form1702ExBatchService
                 'name_normalized' => $this->normalizeNameKey($companyName),
             ])->save();
         }
+
+        $companyCache[$companyTin] = $company;
 
         return [$client, $company];
     }

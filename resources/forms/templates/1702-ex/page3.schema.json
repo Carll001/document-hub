@@ -824,36 +824,6 @@
       "fontSize": 6,
       "align": "right",
       "formatter": "currency"
-    },
-    {
-      "section": "Footer",
-      "key": "footer_source_path",
-      "label": "Footer Source Path",
-      "type": "text",
-      "x": 0.0900,
-      "y": 0.9850,
-      "width": 0.7700,
-      "height": 0.0120,
-      "fontSize": 12,
-      "fontFamily": "Times New Roman",
-      "fontWeight": 500,
-      "align": "left",
-      "formatter": null
-    },
-    {
-      "section": "Footer",
-      "key": "footer_printed_date",
-      "label": "Footer Printed Date",
-      "type": "text",
-      "x": 0.7700,
-      "y": 0.9850,
-      "width": 0.1500,
-      "height": 0.0120,
-      "fontSize": 12,
-      "fontFamily": "Times New Roman",
-      "fontWeight": 500,
-      "align": "right",
-      "formatter": null
     }
   ]
 }

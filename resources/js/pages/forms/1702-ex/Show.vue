@@ -5,6 +5,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { toast } from 'vue-sonner';
 import InputError from '@/components/InputError.vue';
 import BatchRowsTable from '@/components/form-1702-ex-components/BatchRowsTable.vue';
+import Form1702ExRecipientDialog from '@/components/form-1702-ex-components/Form1702ExRecipientDialog.vue';
 import Form1702ExReceiptDialog from '@/components/form-1702-ex-components/Form1702ExReceiptDialog.vue';
 import Form1702ExRemoveReceiptDialog from '@/components/form-1702-ex-components/Form1702ExRemoveReceiptDialog.vue';
 import type {
@@ -82,25 +83,17 @@ const deleteRowsForm = useForm<{
 }>({
     rowIds: [],
 });
+const recipientForm = useForm<{
+    recipientEmail: string;
+}>({
+    recipientEmail: '',
+});
 const prefixForm = useForm<{
     fileNamePrefix: string;
 }>({
     fileNamePrefix: props.batch.fileNamePrefix,
 });
-const footerForm = useForm<{
-    footerSourcePath: string;
-    footerPrintedDate: string;
-}>({
-    footerSourcePath: props.batch.footerSourcePath,
-    footerPrintedDate: props.batch.footerPrintedDate,
-});
-const regenerateForm = useForm<{
-    footerSourcePath: string;
-    footerPrintedDate: string;
-}>({
-    footerSourcePath: '',
-    footerPrintedDate: '',
-});
+const regenerateForm = useForm<Record<string, never>>({});
 const receiptForm = useForm<{
     values: Record<string, string>;
 }>({
@@ -109,12 +102,13 @@ const receiptForm = useForm<{
 const removeReceiptForm = useForm<Record<string, never>>({});
 const isUploadDialogOpen = ref(false);
 const isPrefixDialogOpen = ref(false);
-const isFooterDialogOpen = ref(false);
 const isDeleteDialogOpen = ref(false);
 const isRegenerateDialogOpen = ref(false);
 const isReceiptDialogOpen = ref(false);
+const isRecipientDialogOpen = ref(false);
 const isRemoveReceiptDialogOpen = ref(false);
 const pendingDeleteRowIds = ref<string[]>([]);
+const pendingRecipientRow = ref<Form1702ExBatchRow | null>(null);
 const pendingRegenerateRow = ref<Form1702ExBatchRow | null>(null);
 const pendingReceiptRow = ref<Form1702ExBatchRow | null>(null);
 const pendingReceiptRemovalRow = ref<Form1702ExBatchRow | null>(null);
@@ -133,8 +127,8 @@ const canSubmitImport = computed(
 const canSubmitPrefix = computed(
     () => !prefixForm.processing && !props.batch.isProcessing,
 );
-const canSubmitFooter = computed(
-    () => !footerForm.processing && !props.batch.isProcessing,
+const canSubmitRecipient = computed(
+    () => pendingRecipientRow.value !== null && !recipientForm.processing,
 );
 const canSubmitRegenerate = computed(
     () =>
@@ -206,12 +200,13 @@ watch(
         if (success) {
             isUploadDialogOpen.value = false;
             isPrefixDialogOpen.value = false;
-            isFooterDialogOpen.value = false;
             isDeleteDialogOpen.value = false;
             isRegenerateDialogOpen.value = false;
             isReceiptDialogOpen.value = false;
+            isRecipientDialogOpen.value = false;
             isRemoveReceiptDialogOpen.value = false;
             pendingDeleteRowIds.value = [];
+            pendingRecipientRow.value = null;
             pendingRegenerateRow.value = null;
             pendingReceiptRow.value = null;
             pendingReceiptRemovalRow.value = null;
@@ -221,7 +216,8 @@ watch(
                 fileNamePrefix: prefixForm.fileNamePrefix,
             });
             prefixForm.clearErrors();
-            footerForm.clearErrors();
+            recipientForm.reset();
+            recipientForm.clearErrors();
             regenerateForm.reset();
             regenerateForm.clearErrors();
             receiptForm.reset();
@@ -356,19 +352,6 @@ function submitPrefix(): void {
     });
 }
 
-function openFooterDialog(): void {
-    footerForm.footerSourcePath = props.batch.footerSourcePath;
-    footerForm.footerPrintedDate = props.batch.footerPrintedDate;
-    footerForm.clearErrors();
-    isFooterDialogOpen.value = true;
-}
-
-function submitFooter(): void {
-    footerForm.patch(props.batch.footerUpdateUrl, {
-        preserveScroll: true,
-    });
-}
-
 function handleReceiptDialogOpenChange(open: boolean): void {
     if (receiptForm.processing) {
         return;
@@ -398,10 +381,15 @@ function handleRemoveReceiptDialogOpenChange(open: boolean): void {
 
 function regenerateRow(row: Form1702ExBatchRow): void {
     pendingRegenerateRow.value = row;
-    regenerateForm.footerSourcePath = row.footerSourcePath;
-    regenerateForm.footerPrintedDate = row.footerPrintedDate;
     regenerateForm.clearErrors();
     isRegenerateDialogOpen.value = true;
+}
+
+function openRecipientEditor(row: Form1702ExBatchRow): void {
+    pendingRecipientRow.value = row;
+    recipientForm.recipientEmail = row.recipientEmail ?? '';
+    recipientForm.clearErrors();
+    isRecipientDialogOpen.value = true;
 }
 
 function submitRegenerate(): void {
@@ -410,6 +398,16 @@ function submitRegenerate(): void {
     }
 
     regenerateForm.post(pendingRegenerateRow.value.regenerateUrl, {
+        preserveScroll: true,
+    });
+}
+
+function submitRecipient(): void {
+    if (!pendingRecipientRow.value?.updateRecipientUrl) {
+        return;
+    }
+
+    recipientForm.patch(pendingRecipientRow.value.updateRecipientUrl, {
         preserveScroll: true,
     });
 }
@@ -900,6 +898,18 @@ function submitDeleteRows(): void {
             </DialogContent>
         </Dialog>
 
+        <Form1702ExRecipientDialog
+            :can-submit="canSubmitRecipient"
+            :errors="recipientForm.errors"
+            :open="isRecipientDialogOpen"
+            :processing="recipientForm.processing"
+            :recipient-email="recipientForm.recipientEmail"
+            :row="pendingRecipientRow"
+            @submit="submitRecipient"
+            @update:open="isRecipientDialogOpen = $event"
+            @update:recipient-email="recipientForm.recipientEmail = $event"
+        />
+
         <div class="flex flex-1 flex-col gap-6 p-4 md:p-6">
             <div
                 class="flex flex-col gap-4 rounded-3xl border bg-background p-6 shadow-sm md:flex-row md:items-start md:justify-between"
@@ -990,6 +1000,7 @@ function submitDeleteRows(): void {
                         :rows="props.batch.rows"
                         :is-batch-busy="props.batch.isProcessing"
                         :is-delete-processing="deleteRowsForm.processing"
+                        @open-recipient-editor="openRecipientEditor"
                         @open-receipt="openReceiptDialog"
                         @open-remove-receipt="openRemoveReceiptDialog"
                         @regenerate="regenerateRow"

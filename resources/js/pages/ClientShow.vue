@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { Head, Link, useForm } from '@inertiajs/vue3';
-import { Ellipsis, Eye, FolderKanban, Send } from 'lucide-vue-next';
-import { computed, watch } from 'vue';
+import { Head, Link, router, useForm } from '@inertiajs/vue3';
+import { ChevronLeft, ChevronRight, Ellipsis, Eye, FolderKanban, Send } from 'lucide-vue-next';
+import { computed, nextTick, ref, watch } from 'vue';
 import { toast } from 'vue-sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -48,12 +48,24 @@ type ClientCompanyGroup = {
     files: ClientCompanyFile[];
 };
 
+type ClientPagination = {
+    currentPage: number;
+    lastPage: number;
+    perPage: number;
+    total: number;
+    from: number | null;
+    to: number | null;
+};
+
+type PaginationItem = number | 'ellipsis-start' | 'ellipsis-end';
+
 const props = defineProps<{
     flash: {
         success?: string | null;
         error?: string | null;
     };
     clientsUrl: string;
+    pageUrl: string;
     client: {
         id: string;
         name: string;
@@ -68,6 +80,7 @@ const props = defineProps<{
             warning: string | null;
         };
         companies: ClientCompanyGroup[];
+        pagination: ClientPagination;
     };
 }>();
 
@@ -83,12 +96,34 @@ const breadcrumbs: BreadcrumbItem[] = [
 ];
 
 const sendForm = useForm<Record<string, never>>({});
+const paginationControls = ref<HTMLElement | null>(null);
 
 const companyLabel = computed(() =>
     `${props.client.folder.companyCount} compan${
         props.client.folder.companyCount === 1 ? 'y' : 'ies'
     }`,
 );
+const paginationItems = computed<PaginationItem[]>(() => {
+    const { currentPage, lastPage } = props.client.pagination;
+
+    if (lastPage <= 1) {
+        return [1];
+    }
+
+    if (lastPage <= 7) {
+        return Array.from({ length: lastPage }, (_, index) => index + 1);
+    }
+
+    if (currentPage <= 4) {
+        return [1, 2, 3, 4, 5, 'ellipsis-end', lastPage];
+    }
+
+    if (currentPage >= lastPage - 3) {
+        return [1, 'ellipsis-start', lastPage - 4, lastPage - 3, lastPage - 2, lastPage - 1, lastPage];
+    }
+
+    return [1, 'ellipsis-start', currentPage - 1, currentPage, currentPage + 1, 'ellipsis-end', lastPage];
+});
 
 watch(
     () => [props.flash.success, props.flash.error] as const,
@@ -108,6 +143,28 @@ function submitBulkSend(): void {
     sendForm.post(props.client.folder.sendUrl, {
         preserveScroll: true,
     });
+}
+
+function visitPage(page: number): void {
+    if (page === props.client.pagination.currentPage) {
+        return;
+    }
+
+    router.get(
+        props.pageUrl,
+        { page },
+        {
+            preserveScroll: true,
+            preserveState: true,
+            onSuccess: () => {
+                void nextTick(() => {
+                    paginationControls.value?.scrollIntoView({
+                        block: 'end',
+                    });
+                });
+            },
+        },
+    );
 }
 
 function formatDateTime(value: string | null): string {
@@ -326,6 +383,56 @@ function formatDateTime(value: string | null): string {
                                 </TableRow>
                             </TableBody>
                         </Table>
+                    </div>
+
+                    <div
+                        v-if="props.client.pagination.lastPage > 1"
+                        ref="paginationControls"
+                        class="flex flex-wrap items-center justify-center gap-2 pt-4"
+                    >
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            class="gap-2"
+                            :disabled="props.client.pagination.currentPage <= 1"
+                            @click="visitPage(props.client.pagination.currentPage - 1)"
+                        >
+                            <ChevronLeft class="size-4" />
+                            Previous
+                        </Button>
+
+                        <template v-for="item in paginationItems" :key="String(item)">
+                            <Button
+                                v-if="typeof item === 'number'"
+                                type="button"
+                                size="sm"
+                                :variant="item === props.client.pagination.currentPage ? 'default' : 'outline'"
+                                :aria-current="item === props.client.pagination.currentPage ? 'page' : undefined"
+                                @click="visitPage(item)"
+                            >
+                                {{ item }}
+                            </Button>
+                            <span
+                                v-else
+                                class="px-1 text-sm text-muted-foreground"
+                                aria-hidden="true"
+                            >
+                                ...
+                            </span>
+                        </template>
+
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            class="gap-2"
+                            :disabled="props.client.pagination.currentPage >= props.client.pagination.lastPage"
+                            @click="visitPage(props.client.pagination.currentPage + 1)"
+                        >
+                            Next
+                            <ChevronRight class="size-4" />
+                        </Button>
                     </div>
                 </CardContent>
             </Card>
