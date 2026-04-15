@@ -657,6 +657,7 @@ function emptyMessage(): string {
                                                     }}
                                                 </DropdownMenuItem>
                                                 <DropdownMenuItem
+                                                    v-if="row.original.hasReceipt"
                                                     :disabled="
                                                         receiptMutationDisabled(
                                                             row.original,
@@ -670,11 +671,7 @@ function emptyMessage(): string {
                                                     "
                                                 >
                                                     <FileText class="size-4" />
-                                                    {{
-                                                        row.original.hasReceipt
-                                                            ? 'Replace receipt'
-                                                            : 'Add receipt'
-                                                    }}
+                                                    Replace receipt
                                                 </DropdownMenuItem>
                                                 <DropdownMenuItem
                                                     v-if="

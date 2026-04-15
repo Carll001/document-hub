@@ -585,11 +585,12 @@ function autoReceiptLabel(row: Form1702ExBatchRow): string | null {
                                                 {{ row.recipientEmail ? 'Edit recipient' : 'Add recipient' }}
                                             </DropdownMenuItem>
                                             <DropdownMenuItem
+                                                v-if="row.hasReceipt"
                                                 :disabled="receiptMutationDisabled(row)"
                                                 @select="emit('openReceipt', row)"
                                             >
                                                 <FileText class="size-4" />
-                                                {{ row.hasReceipt ? 'Replace receipt' : 'Add receipt' }}
+                                                Replace receipt
                                             </DropdownMenuItem>
                                             <DropdownMenuItem
                                                 v-if="row.receiptDownloadUrl"
