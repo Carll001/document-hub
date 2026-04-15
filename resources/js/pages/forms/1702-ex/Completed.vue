@@ -29,7 +29,7 @@ const props = defineProps<Form1702ExCompletedPageProps>();
 const breadcrumbs: BreadcrumbItem[] = [
     {
         title: '1702-EX',
-        href: forms.form1702Ex.index(),
+        href: forms.form1702ex.index(),
     },
     {
         title: 'Completed Files',
@@ -85,7 +85,7 @@ const isExportBusy = computed(
     () => props.exportState.status === 'queued' || props.exportState.status === 'processing',
 );
 const readyExportDownloadUrl = computed(
-    () => props.exportState.downloadUrl ?? forms.form1702Ex.completed.download.file().url,
+    () => props.exportState.downloadUrl ?? forms.form1702ex.completed.download.file().url,
 );
 
 watch(
@@ -215,7 +215,7 @@ function requestBulkSend(rowIds: string[]): void {
 
 function requestBulkDownload(rowIds: string[]): void {
     router.get(
-        forms.form1702Ex.completed.download().url,
+        forms.form1702ex.completed.download().url,
         {
             page: props.pagination.currentPage,
             search: props.filters.search || undefined,

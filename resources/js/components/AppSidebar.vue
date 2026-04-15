@@ -67,7 +67,7 @@ const mainNavItems = computed<NavItem[]>(() => {
         },
         {
             title: 'Company Name',
-            href: forms.form1702Ex.index(),
+            href: forms.form1702ex.index(),
             icon: FileSpreadsheet,
         },
         {

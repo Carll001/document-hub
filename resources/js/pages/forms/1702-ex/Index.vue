@@ -59,7 +59,7 @@ const props = defineProps<Form1702ExIndexPageProps>();
 const breadcrumbs: BreadcrumbItem[] = [
     {
         title: '1702-EX',
-        href: forms.form1702Ex.index(),
+        href: forms.form1702ex.index(),
     },
 ];
 

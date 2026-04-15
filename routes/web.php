@@ -28,7 +28,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
             ->group(function () {
                 Route::get('/', 'index')->name('index');
                 Route::get('{client}', 'show')->name('show');
-                Route::post('{client}/forms/1702-ex/send', 'send1702Ex')->name('forms.1702-ex.send');
+                Route::post('{client}/forms/1702-ex/send', 'send1702Ex')->name('forms.form1702ex.send');
             });
         Route::controller(DocMergeController::class)
             ->prefix('doc-merge')
@@ -135,7 +135,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
                 Route::controller(Form1702ExReceiptTemplateController::class)
                     ->prefix('1702-ex/receipt-template')
-                    ->name('form1702-ex.receipt-template.')
+                    ->name('form1702ex.receipt-template.')
                     ->group(function () {
                         Route::get('/', 'show')->name('show');
                         Route::post('/', 'generate')->name('generate');
@@ -145,7 +145,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
                 Route::controller(Form1702ExPage1TemplateController::class)
                     ->prefix('1702-ex/page-1-template')
-                    ->name('form1702-ex.page-1-template.')
+                    ->name('form1702ex.page-1-template.')
                     ->group(function () {
                         Route::get('/', 'show')->name('show');
                         Route::post('/', 'generate')->name('generate');
@@ -155,7 +155,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
                 Route::controller(Form1702ExPage2TemplateController::class)
                     ->prefix('1702-ex/page-2-template')
-                    ->name('form1702-ex.page-2-template.')
+                    ->name('form1702ex.page-2-template.')
                     ->group(function () {
                         Route::get('/', 'show')->name('show');
                         Route::post('/', 'generate')->name('generate');
@@ -165,7 +165,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
                 Route::controller(Form1702ExPage3TemplateController::class)
                     ->prefix('1702-ex/page-3-template')
-                    ->name('form1702-ex.page-3-template.')
+                    ->name('form1702ex.page-3-template.')
                     ->group(function () {
                         Route::get('/', 'show')->name('show');
                         Route::post('/', 'generate')->name('generate');

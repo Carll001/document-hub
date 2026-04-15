@@ -29,7 +29,7 @@ class Form1702ExPage1TemplateController extends Controller
             'flash' => $this->flash($request),
             'fields' => $fields,
             'latestExport' => $latestExport,
-            'mockExportUrl' => route('forms.1702-ex.page-1-template.generate'),
+            'mockExportUrl' => route('forms.form1702ex.page-1-template.generate'),
             'payload' => $payload,
             'schema' => $schema,
             'templatePdfUrl' => asset('form-assets/1702-ex/template-page1.pdf'),
@@ -42,12 +42,12 @@ class Form1702ExPage1TemplateController extends Controller
         try {
             $this->form1702ExService->generatePage1TemplatePdf((int) $request->user()->id);
 
-            return to_route('forms.1702-ex.page-1-template.show')
+            return to_route('forms.form1702ex.page-1-template.show')
                 ->with('success', 'The 1702-EX page 1 PDF was generated.');
         } catch (\Throwable $exception) {
             report($exception);
 
-            return to_route('forms.1702-ex.page-1-template.show')
+            return to_route('forms.form1702ex.page-1-template.show')
                 ->with('error', 'The 1702-EX page 1 PDF could not be generated right now.');
         }
     }
@@ -112,10 +112,10 @@ class Form1702ExPage1TemplateController extends Controller
             return null;
         }
 
-        $latestExport['previewUrl'] = route('forms.1702-ex.page-1-template.preview', [
+        $latestExport['previewUrl'] = route('forms.form1702ex.page-1-template.preview', [
             'v' => $latestExport['version'],
         ]);
-        $latestExport['downloadUrl'] = route('forms.1702-ex.page-1-template.download');
+        $latestExport['downloadUrl'] = route('forms.form1702ex.page-1-template.download');
 
         return $latestExport;
     }

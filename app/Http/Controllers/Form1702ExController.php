@@ -20,7 +20,6 @@ use App\Services\Form1702ExImportService;
 use App\Services\Form1702ExRowReceiptService;
 use App\Services\Form1702ExRowsExportService;
 use App\Services\Form1702ExService;
-use App\Services\Form1702ExTemporaryConfirmationService;
 use App\Support\Form1702ExRecipientEmailNormalizer;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Http\RedirectResponse;
@@ -49,7 +48,6 @@ class Form1702ExController extends Controller
         private readonly Form1702ExImportService $form1702ExImportService,
         private readonly Form1702ExRowsExportService $form1702ExRowsExportService,
         private readonly Form1702ExService $form1702ExService,
-        private readonly Form1702ExTemporaryConfirmationService $form1702ExTemporaryConfirmationService,
         private readonly Form1702ExRecipientEmailNormalizer $recipientEmailNormalizer,
     ) {
     }
@@ -73,15 +71,15 @@ class Form1702ExController extends Controller
 
         return Inertia::render('forms/1702-ex/Index', [
             'flash' => $this->flash($request),
-            'indexUrl' => route('forms.1702-ex.index'),
-            'completedFilesUrl' => route('forms.1702-ex.completed.index'),
+            'indexUrl' => route('forms.form1702ex.index'),
+            'completedFilesUrl' => route('forms.form1702ex.completed.index'),
             'completedCount' => $this->completedCount($user),
-            'importUrl' => route('forms.1702-ex.import.store'),
-            'bulkDeleteUrl' => route('forms.1702-ex.rows.destroy'),
-            'rowsExportUrl' => route('forms.1702-ex.rows.export', $this->indexRouteParameters($request)),
-            'settingsUpdateUrl' => route('forms.1702-ex.settings.update'),
+            'importUrl' => route('forms.form1702ex.import.store'),
+            'bulkDeleteUrl' => route('forms.form1702ex.rows.destroy'),
+            'rowsExportUrl' => route('forms.form1702ex.rows.export', $this->indexRouteParameters($request)),
+            'settingsUpdateUrl' => route('forms.form1702ex.settings.update'),
             'templateSpreadsheetUrl' => asset('form-assets/1702-ex/1702-ex-import-template.xlsx'),
-            'receiptTemplateUrl' => route('forms.1702-ex.receipt-template.show'),
+            'receiptTemplateUrl' => route('forms.form1702ex.receipt-template.show'),
             'receiptTemplate' => [
                 'fields' => $this->form1702ExService->receiptInputFields(),
             ],
@@ -139,10 +137,10 @@ class Form1702ExController extends Controller
 
         return Inertia::render('forms/1702-ex/Completed', [
             'flash' => $this->flash($request),
-            'indexUrl' => route('forms.1702-ex.index'),
-            'completedFilesUrl' => route('forms.1702-ex.completed.index'),
-            'completedBulkCancelUrl' => route('forms.1702-ex.completed.cancel.bulk'),
-            'completedBulkSendUrl' => route('forms.1702-ex.completed.send.bulk'),
+            'indexUrl' => route('forms.form1702ex.index'),
+            'completedFilesUrl' => route('forms.form1702ex.completed.index'),
+            'completedBulkCancelUrl' => route('forms.form1702ex.completed.cancel.bulk'),
+            'completedBulkSendUrl' => route('forms.form1702ex.completed.send.bulk'),
             'rows' => $this->transformRows(collect($rowPage->items()), true),
             'pagination' => [
                 'currentPage' => $rowPage->currentPage(),
@@ -185,12 +183,12 @@ class Form1702ExController extends Controller
             ->all();
 
         if ($this->completedExportIsBusy($request->user())) {
-            return to_route('forms.1702-ex.completed.index', $this->completedRouteParameters($request))
+            return to_route('forms.form1702ex.completed.index', $this->completedRouteParameters($request))
                 ->with('error', 'A completed files export is already processing.');
         }
 
         if (! $query->when($rowUuids !== [], fn ($rowsQuery) => $rowsQuery->whereIn('uuid', $rowUuids))->exists()) {
-            return to_route('forms.1702-ex.completed.index', $this->completedRouteParameters($request))
+            return to_route('forms.form1702ex.completed.index', $this->completedRouteParameters($request))
                 ->with('error', 'No completed files matched this export request.');
         }
 
@@ -211,7 +209,7 @@ class Form1702ExController extends Controller
             $rowUuids,
         );
 
-        return to_route('forms.1702-ex.completed.index', $this->completedRouteParameters($request))
+        return to_route('forms.form1702ex.completed.index', $this->completedRouteParameters($request))
             ->with('success', 'Completed files export queued. Your ZIP will be ready shortly.');
     }
 
@@ -229,7 +227,7 @@ class Form1702ExController extends Controller
         );
 
         $storagePath = (string) $cached['storagePath'];
-        $downloadName = '1702-ex-completed-files.zip';
+        $downloadName = 'form1702ex-completed-files.zip';
 
         return response()->download(
             Storage::disk('local')->path($storagePath),
@@ -254,12 +252,12 @@ class Form1702ExController extends Controller
         );
 
         if ($this->rowsExportIsBusy($request->user())) {
-            return to_route('forms.1702-ex.index', $this->indexRouteParameters($request))
+            return to_route('forms.form1702ex.index', $this->indexRouteParameters($request))
                 ->with('error', 'An imported rows export is already processing.');
         }
 
         if (! $query->exists()) {
-            return to_route('forms.1702-ex.index', $this->indexRouteParameters($request))
+            return to_route('forms.form1702ex.index', $this->indexRouteParameters($request))
                 ->with('error', 'No imported rows matched this export request.');
         }
 
@@ -280,7 +278,7 @@ class Form1702ExController extends Controller
             isset($validated['direction']) ? (string) $validated['direction'] : 'desc',
         );
 
-        return to_route('forms.1702-ex.index', $this->indexRouteParameters($request))
+        return to_route('forms.form1702ex.index', $this->indexRouteParameters($request))
             ->with('success', 'Imported rows export queued. Your Excel file will be ready shortly.');
     }
 
@@ -299,7 +297,7 @@ class Form1702ExController extends Controller
 
         return response()->download(
             Storage::disk('local')->path((string) $cached['storagePath']),
-            '1702-ex-unmatched-rows.xlsx',
+            'form1702ex-unmatched-rows.xlsx',
             ['Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
         )->deleteFileAfterSend(true);
     }
@@ -319,22 +317,22 @@ class Form1702ExController extends Controller
             'batch' => [
                 'id' => $form1702ExBatch->uuid,
                 'name' => $form1702ExBatch->name,
-                'showUrl' => route('forms.1702-ex.batches.show', [
+                'showUrl' => route('forms.form1702ex.batches.show', [
                     'form1702ExBatch' => $form1702ExBatch,
                 ]),
-                'importUrl' => route('forms.1702-ex.batches.import.store', [
+                'importUrl' => route('forms.form1702ex.batches.import.store', [
                     'form1702ExBatch' => $form1702ExBatch,
                 ]),
-                'bulkDeleteUrl' => route('forms.1702-ex.batches.rows.destroy', [
+                'bulkDeleteUrl' => route('forms.form1702ex.batches.rows.destroy', [
                     'form1702ExBatch' => $form1702ExBatch,
                 ]),
-                'prefixUpdateUrl' => route('forms.1702-ex.batches.prefix.update', [
+                'prefixUpdateUrl' => route('forms.form1702ex.batches.prefix.update', [
                     'form1702ExBatch' => $form1702ExBatch,
                 ]),
-                'footerUpdateUrl' => route('forms.1702-ex.batches.footer.update', [
+                'footerUpdateUrl' => route('forms.form1702ex.batches.footer.update', [
                     'form1702ExBatch' => $form1702ExBatch,
                 ]),
-                'receiptTemplateUrl' => route('forms.1702-ex.receipt-template.show'),
+                'receiptTemplateUrl' => route('forms.form1702ex.receipt-template.show'),
                 'receiptTemplate' => [
                     'fields' => $this->form1702ExService->receiptInputFields(),
                 ],
@@ -360,13 +358,13 @@ class Form1702ExController extends Controller
                     fn (Form1702ExBatchRow $row): bool => $row->receiptJobIsBusy(),
                 ),
             ],
-            'indexUrl' => route('forms.1702-ex.index'),
+            'indexUrl' => route('forms.form1702ex.index'),
         ]);
     }
 
     public function alignment(): RedirectResponse
     {
-        return to_route('forms.1702-ex.index');
+        return to_route('forms.form1702ex.index');
     }
 
     public function updateSettings(Request $request): RedirectResponse
@@ -389,8 +387,8 @@ class Form1702ExController extends Controller
             ),
         ])->save();
 
-        return to_route('forms.1702-ex.index', $this->indexRouteParameters($request))
-            ->with('success', '1702-EX defaults updated.');
+        return to_route('forms.form1702ex.index', $this->indexRouteParameters($request))
+            ->with('success', 'form1702ex defaults updated.');
     }
 
     public function storeImportDirect(Request $request): RedirectResponse
@@ -423,7 +421,7 @@ class Form1702ExController extends Controller
         try {
             $extension = Str::lower($spreadsheet->getClientOriginalExtension() ?: $spreadsheet->extension() ?: 'upload');
             $storedPath = $spreadsheet->storeAs(
-                'tmp/form-1702-ex-imports',
+                'tmp/form-form1702ex-imports',
                 Str::uuid().($extension !== '' ? ".{$extension}" : ''),
                 'local',
             );
@@ -438,7 +436,7 @@ class Form1702ExController extends Controller
 
             ProcessForm1702ExBatchImport::dispatch($batch->id);
 
-            return to_route('forms.1702-ex.index', $this->indexRouteParameters($request))
+            return to_route('forms.form1702ex.index', $this->indexRouteParameters($request))
                 ->with('success', 'Upload received. Import is processing.');
         } catch (ValidationException $exception) {
             $batch->delete();
@@ -448,8 +446,8 @@ class Form1702ExController extends Controller
             report($exception);
             $batch->delete();
 
-            return to_route('forms.1702-ex.index', $this->indexRouteParameters($request))
-                ->with('error', 'The bulk 1702-EX file could not be imported right now.');
+            return to_route('forms.form1702ex.index', $this->indexRouteParameters($request))
+                ->with('error', 'The bulk form1702ex file could not be imported right now.');
         }
     }
 
@@ -470,12 +468,12 @@ class Form1702ExController extends Controller
             ->get();
 
         if ($rows->isEmpty()) {
-            return to_route('forms.1702-ex.index', $this->indexRouteParameters($request))
+            return to_route('forms.form1702ex.index', $this->indexRouteParameters($request))
                 ->with('error', 'Select at least one imported row to delete.');
         }
 
         if ($rows->contains(fn (Form1702ExBatchRow $row): bool => $row->isProcessing() || $row->receiptJobIsBusy())) {
-            return to_route('forms.1702-ex.index', $this->indexRouteParameters($request))
+            return to_route('forms.form1702ex.index', $this->indexRouteParameters($request))
                 ->with('error', 'Wait for queued or processing rows to finish before deleting them.');
         }
 
@@ -486,7 +484,7 @@ class Form1702ExController extends Controller
             $deletedCount++;
         }
 
-        return to_route('forms.1702-ex.index', $this->indexRouteParameters($request))
+        return to_route('forms.form1702ex.index', $this->indexRouteParameters($request))
             ->with('success', "Deleted {$deletedCount} imported row(s).");
     }
 
@@ -497,7 +495,7 @@ class Form1702ExController extends Controller
         $this->ensureAccessibleStandaloneRow($request, $form1702ExBatchRow);
 
         if (! $this->form1702ExCompletedEmailService->isCompleted($form1702ExBatchRow)) {
-            return to_route('forms.1702-ex.completed.index', $this->completedRouteParameters($request))
+            return to_route('forms.form1702ex.completed.index', $this->completedRouteParameters($request))
                 ->with('error', 'Only completed rows can be emailed from this page.');
         }
 
@@ -510,7 +508,7 @@ class Form1702ExController extends Controller
         $recipientEmail = $this->form1702ExCompletedEmailService->recipientEmail($form1702ExBatchRow);
 
         if ($recipientEmail === null) {
-            return to_route('forms.1702-ex.completed.index', $this->completedRouteParameters($request))
+            return to_route('forms.form1702ex.completed.index', $this->completedRouteParameters($request))
                 ->with('error', 'This completed row has no recipients.');
         }
 
@@ -541,7 +539,7 @@ class Form1702ExController extends Controller
             );
 
             if ($stored === false || ! $disk->exists($extraAttachmentStoragePath)) {
-                return to_route('forms.1702-ex.completed.index', $this->completedRouteParameters($request))
+                return to_route('forms.form1702ex.completed.index', $this->completedRouteParameters($request))
                     ->with('error', 'The extra email attachment could not be stored.');
             }
         }
@@ -557,16 +555,16 @@ class Form1702ExController extends Controller
             );
 
             if ($queuedRecipient === null) {
-                return to_route('forms.1702-ex.completed.index', $this->completedRouteParameters($request))
+                return to_route('forms.form1702ex.completed.index', $this->completedRouteParameters($request))
                     ->with('error', 'The final completed PDF is no longer available.');
             }
 
-            return to_route('forms.1702-ex.completed.index', $this->completedRouteParameters($request))
+            return to_route('forms.form1702ex.completed.index', $this->completedRouteParameters($request))
                 ->with('success', "Email queued to {$queuedRecipient}.");
         } catch (\Throwable $exception) {
             report($exception);
 
-            return to_route('forms.1702-ex.completed.index', $this->completedRouteParameters($request))
+            return to_route('forms.form1702ex.completed.index', $this->completedRouteParameters($request))
                 ->with('error', 'The email could not be queued right now. Please verify your mail settings and try again.');
         }
     }
@@ -614,7 +612,7 @@ class Form1702ExController extends Controller
             ->get();
 
         if ($rows->isEmpty()) {
-            return to_route('forms.1702-ex.completed.index', $this->completedRouteParameters($request))
+            return to_route('forms.form1702ex.completed.index', $this->completedRouteParameters($request))
                 ->with('error', 'Select at least one completed row to email.');
         }
 
@@ -649,11 +647,11 @@ class Form1702ExController extends Controller
         }
 
         if ($sent === 0) {
-            return to_route('forms.1702-ex.completed.index', $this->completedRouteParameters($request))
+            return to_route('forms.form1702ex.completed.index', $this->completedRouteParameters($request))
                 ->with('error', "No completed emails were queued. Skipped {$skipped} row(s).");
         }
 
-        return to_route('forms.1702-ex.completed.index', $this->completedRouteParameters($request))
+        return to_route('forms.form1702ex.completed.index', $this->completedRouteParameters($request))
             ->with('success', "Queued {$sent} completed email(s). Skipped {$skipped} row(s).");
     }
 
@@ -665,29 +663,29 @@ class Form1702ExController extends Controller
         $this->ensureAccessibleStandaloneRow($request, $form1702ExBatchRow);
 
         if ($form1702ExBatchRow->isProcessing()) {
-            return to_route('forms.1702-ex.completed.index', $this->completedRouteParameters($request))
+            return to_route('forms.form1702ex.completed.index', $this->completedRouteParameters($request))
                 ->with('error', 'Wait for this row PDF to finish generating before cancelling it.');
         }
 
         if ($form1702ExBatchRow->receiptJobIsBusy()) {
-            return to_route('forms.1702-ex.completed.index', $this->completedRouteParameters($request))
+            return to_route('forms.form1702ex.completed.index', $this->completedRouteParameters($request))
                 ->with('error', 'A receipt update is already queued for this row.');
         }
 
         if (! $this->form1702ExCompletedEmailService->isCompleted($form1702ExBatchRow)) {
-            return to_route('forms.1702-ex.completed.index', $this->completedRouteParameters($request))
+            return to_route('forms.form1702ex.completed.index', $this->completedRouteParameters($request))
                 ->with('error', 'Only completed rows can be cancelled from this page.');
         }
 
         try {
             $this->cancelCompletedRow($form1702ExBatchRow, $birReceiptAutoMatchService);
 
-            return to_route('forms.1702-ex.completed.index', $this->completedRouteParameters($request))
+            return to_route('forms.form1702ex.completed.index', $this->completedRouteParameters($request))
                 ->with('success', 'Completed file cancelled and removed.');
         } catch (\Throwable $exception) {
             report($exception);
 
-            return to_route('forms.1702-ex.completed.index', $this->completedRouteParameters($request))
+            return to_route('forms.form1702ex.completed.index', $this->completedRouteParameters($request))
                 ->with('error', 'The completed file could not be cancelled right now. Please try again.');
         }
     }
@@ -712,7 +710,7 @@ class Form1702ExController extends Controller
             ->get();
 
         if ($rows->isEmpty()) {
-            return to_route('forms.1702-ex.completed.index', $this->completedRouteParameters($request))
+            return to_route('forms.form1702ex.completed.index', $this->completedRouteParameters($request))
                 ->with('error', 'Select at least one completed row to cancel.');
         }
 
@@ -735,11 +733,11 @@ class Form1702ExController extends Controller
         }
 
         if ($cancelled === 0) {
-            return to_route('forms.1702-ex.completed.index', $this->completedRouteParameters($request))
+            return to_route('forms.form1702ex.completed.index', $this->completedRouteParameters($request))
                 ->with('error', "No completed files were cancelled. Skipped {$skipped} row(s).");
         }
 
-        return to_route('forms.1702-ex.completed.index', $this->completedRouteParameters($request))
+        return to_route('forms.form1702ex.completed.index', $this->completedRouteParameters($request))
             ->with('success', "Cancelled {$cancelled} completed file(s). Skipped {$skipped} row(s).");
     }
 
@@ -756,7 +754,7 @@ class Form1702ExController extends Controller
             $validated['name'],
         );
 
-        return to_route('forms.1702-ex.batches.show', [
+        return to_route('forms.form1702ex.batches.show', [
             'form1702ExBatch' => $batch,
         ])->with('success', "Batch {$batch->name} created.");
     }
@@ -766,7 +764,7 @@ class Form1702ExController extends Controller
         $this->ensureAccessibleBatch($request, $form1702ExBatch);
 
         if ($form1702ExBatch->isProcessing()) {
-            return to_route('forms.1702-ex.batches.show', [
+            return to_route('forms.form1702ex.batches.show', [
                 'form1702ExBatch' => $form1702ExBatch,
             ])->with('error', 'Wait for the current batch generation to finish before updating the prefix.');
         }
@@ -781,7 +779,7 @@ class Form1702ExController extends Controller
             ),
         ])->save();
 
-        return to_route('forms.1702-ex.batches.show', [
+        return to_route('forms.form1702ex.batches.show', [
             'form1702ExBatch' => $form1702ExBatch,
         ])->with('success', 'Batch prefix updated.');
     }
@@ -791,7 +789,7 @@ class Form1702ExController extends Controller
         $this->ensureAccessibleBatch($request, $form1702ExBatch);
 
         if ($form1702ExBatch->isProcessing()) {
-            return to_route('forms.1702-ex.batches.show', [
+            return to_route('forms.form1702ex.batches.show', [
                 'form1702ExBatch' => $form1702ExBatch,
             ])->with('error', 'Wait for the current batch generation to finish before updating the footer.');
         }
@@ -810,7 +808,7 @@ class Form1702ExController extends Controller
             ),
         ])->save();
 
-        return to_route('forms.1702-ex.batches.show', [
+        return to_route('forms.form1702ex.batches.show', [
             'form1702ExBatch' => $form1702ExBatch,
         ])->with('success', 'Batch footer updated.');
     }
@@ -820,7 +818,7 @@ class Form1702ExController extends Controller
         $this->ensureAccessibleBatch($request, $form1702ExBatch);
 
         if ($form1702ExBatch->isProcessing()) {
-            return to_route('forms.1702-ex.batches.show', [
+            return to_route('forms.form1702ex.batches.show', [
                 'form1702ExBatch' => $form1702ExBatch,
             ])->with('error', 'Wait for the current batch generation to finish before uploading another file.');
         }
@@ -861,7 +859,7 @@ class Form1702ExController extends Controller
             $skippedCount = $rows->filter(fn (Form1702ExBatchRow $row): bool => $row->isSkippedDuplicate())->count();
 
             if ($rows->isEmpty()) {
-                return to_route('forms.1702-ex.batches.show', [
+                return to_route('forms.form1702ex.batches.show', [
                     'form1702ExBatch' => $form1702ExBatch,
                 ])->with('error', 'The uploaded file does not contain any importable rows.');
             }
@@ -889,7 +887,7 @@ class Form1702ExController extends Controller
                 $successMessage = "Skipped {$skippedCount} duplicate TIN row(s) from {$import['sourceName']} because a receipt already exists.";
             }
 
-            return to_route('forms.1702-ex.batches.show', [
+            return to_route('forms.form1702ex.batches.show', [
                 'form1702ExBatch' => $form1702ExBatch,
             ])->with('success', $successMessage);
         } catch (ValidationException $exception) {
@@ -897,9 +895,9 @@ class Form1702ExController extends Controller
         } catch (\Throwable $exception) {
             report($exception);
 
-            return to_route('forms.1702-ex.batches.show', [
+            return to_route('forms.form1702ex.batches.show', [
                 'form1702ExBatch' => $form1702ExBatch,
-            ])->with('error', 'The bulk 1702-EX file could not be imported right now.');
+            ])->with('error', 'The bulk form1702ex file could not be imported right now.');
         }
     }
 
@@ -908,7 +906,7 @@ class Form1702ExController extends Controller
         $this->ensureAccessibleBatch($request, $form1702ExBatch);
 
         if ($form1702ExBatch->isProcessing()) {
-            return to_route('forms.1702-ex.batches.show', [
+            return to_route('forms.form1702ex.batches.show', [
                 'form1702ExBatch' => $form1702ExBatch,
             ])->with('error', 'Wait for the current batch generation to finish before deleting rows.');
         }
@@ -928,7 +926,7 @@ class Form1702ExController extends Controller
             ->get();
 
         if ($rows->isEmpty()) {
-            return to_route('forms.1702-ex.batches.show', [
+            return to_route('forms.form1702ex.batches.show', [
                 'form1702ExBatch' => $form1702ExBatch,
             ])->with('error', 'Select at least one imported row to delete.');
         }
@@ -940,7 +938,7 @@ class Form1702ExController extends Controller
             $deletedCount++;
         }
 
-        return to_route('forms.1702-ex.batches.show', [
+        return to_route('forms.form1702ex.batches.show', [
             'form1702ExBatch' => $form1702ExBatch,
         ])->with(
             'success',
@@ -958,7 +956,7 @@ class Form1702ExController extends Controller
 
         return Storage::disk('local')->response(
             $form1702ExBatchRow->generated_pdf_storage_path,
-            $form1702ExBatchRow->generated_pdf_file_name ?? '1702-ex.pdf',
+            $form1702ExBatchRow->generated_pdf_file_name ?? 'form1702ex.pdf',
             [
                 'Content-Type' => 'application/pdf',
                 'Cache-Control' => 'private, max-age=3600',
@@ -976,7 +974,7 @@ class Form1702ExController extends Controller
 
         return Storage::disk('local')->response(
             $form1702ExBatchRow->generated_pdf_storage_path,
-            $form1702ExBatchRow->generated_pdf_file_name ?? '1702-ex.pdf',
+            $form1702ExBatchRow->generated_pdf_file_name ?? 'form1702ex.pdf',
             [
                 'Content-Type' => 'application/pdf',
                 'Cache-Control' => 'private, max-age=3600',
@@ -995,7 +993,7 @@ class Form1702ExController extends Controller
 
         return Storage::disk('local')->download(
             $form1702ExBatchRow->generated_pdf_storage_path,
-            $form1702ExBatchRow->generated_pdf_file_name ?? '1702-ex.pdf',
+            $form1702ExBatchRow->generated_pdf_file_name ?? 'form1702ex.pdf',
         );
     }
 
@@ -1008,7 +1006,7 @@ class Form1702ExController extends Controller
 
         return Storage::disk('local')->download(
             $form1702ExBatchRow->generated_pdf_storage_path,
-            $form1702ExBatchRow->generated_pdf_file_name ?? '1702-ex.pdf',
+            $form1702ExBatchRow->generated_pdf_file_name ?? 'form1702ex.pdf',
         );
     }
 
@@ -1020,13 +1018,13 @@ class Form1702ExController extends Controller
         $this->ensureAccessibleRow($request, $form1702ExBatch, $form1702ExBatchRow);
 
         if ($form1702ExBatchRow->isProcessing()) {
-            return to_route('forms.1702-ex.batches.show', [
+            return to_route('forms.form1702ex.batches.show', [
                 'form1702ExBatch' => $form1702ExBatch,
             ])->with('error', 'Wait for this row PDF to finish generating before adding a receipt.');
         }
 
         if ($form1702ExBatchRow->receiptJobIsBusy()) {
-            return to_route('forms.1702-ex.batches.show', [
+            return to_route('forms.form1702ex.batches.show', [
                 'form1702ExBatch' => $form1702ExBatch,
             ])->with('error', 'A receipt update is already queued for this row.');
         }
@@ -1035,9 +1033,9 @@ class Form1702ExController extends Controller
             $form1702ExBatchRow->pdf_status !== Form1702ExBatchRow::PDF_STATUS_GENERATED
             || ! filled($form1702ExBatchRow->generated_pdf_storage_path)
         ) {
-            return to_route('forms.1702-ex.batches.show', [
+            return to_route('forms.form1702ex.batches.show', [
                 'form1702ExBatch' => $form1702ExBatch,
-            ])->with('error', 'Generate the 1702-EX PDF before adding a receipt.');
+            ])->with('error', 'Generate the form1702ex PDF before adding a receipt.');
         }
 
         $validator = Validator::make($request->all(), [
@@ -1098,7 +1096,7 @@ class Form1702ExController extends Controller
                     : [],
             )->afterCommit();
 
-            return to_route('forms.1702-ex.batches.show', [
+            return to_route('forms.form1702ex.batches.show', [
                 'form1702ExBatch' => $form1702ExBatch,
             ])->with('success', 'Receipt queued for the selected row.');
         } catch (\Throwable $exception) {
@@ -1109,7 +1107,7 @@ class Form1702ExController extends Controller
 
             report($exception);
 
-            return to_route('forms.1702-ex.batches.show', [
+            return to_route('forms.form1702ex.batches.show', [
                 'form1702ExBatch' => $form1702ExBatch,
             ])->with('error', 'The receipt could not be queued right now. Please try again.');
         }
@@ -1122,12 +1120,12 @@ class Form1702ExController extends Controller
         $this->ensureAccessibleStandaloneRow($request, $form1702ExBatchRow);
 
         if ($form1702ExBatchRow->isProcessing()) {
-            return to_route('forms.1702-ex.index', $this->indexRouteParameters($request))
+            return to_route('forms.form1702ex.index', $this->indexRouteParameters($request))
                 ->with('error', 'Wait for this row PDF to finish generating before adding a receipt.');
         }
 
         if ($form1702ExBatchRow->receiptJobIsBusy()) {
-            return to_route('forms.1702-ex.index', $this->indexRouteParameters($request))
+            return to_route('forms.form1702ex.index', $this->indexRouteParameters($request))
                 ->with('error', 'A receipt update is already queued for this row.');
         }
 
@@ -1135,8 +1133,8 @@ class Form1702ExController extends Controller
             $form1702ExBatchRow->pdf_status !== Form1702ExBatchRow::PDF_STATUS_GENERATED
             || ! filled($form1702ExBatchRow->generated_pdf_storage_path)
         ) {
-            return to_route('forms.1702-ex.index', $this->indexRouteParameters($request))
-                ->with('error', 'Generate the 1702-EX PDF before adding a receipt.');
+            return to_route('forms.form1702ex.index', $this->indexRouteParameters($request))
+                ->with('error', 'Generate the form1702ex PDF before adding a receipt.');
         }
 
         $validator = Validator::make($request->all(), [
@@ -1197,7 +1195,7 @@ class Form1702ExController extends Controller
                     : [],
             )->afterCommit();
 
-            return to_route('forms.1702-ex.index', $this->indexRouteParameters($request))
+            return to_route('forms.form1702ex.index', $this->indexRouteParameters($request))
                 ->with('success', 'Receipt queued for the selected row.');
         } catch (\Throwable $exception) {
             $form1702ExBatchRow->forceFill([
@@ -1207,7 +1205,7 @@ class Form1702ExController extends Controller
 
             report($exception);
 
-            return to_route('forms.1702-ex.index', $this->indexRouteParameters($request))
+            return to_route('forms.form1702ex.index', $this->indexRouteParameters($request))
                 ->with('error', 'The receipt could not be queued right now. Please try again.');
         }
     }
@@ -1258,19 +1256,19 @@ class Form1702ExController extends Controller
         $this->ensureAccessibleRow($request, $form1702ExBatch, $form1702ExBatchRow);
 
         if ($form1702ExBatchRow->isProcessing()) {
-            return to_route('forms.1702-ex.batches.show', [
+            return to_route('forms.form1702ex.batches.show', [
                 'form1702ExBatch' => $form1702ExBatch,
             ])->with('error', 'Wait for this row PDF to finish generating before removing a receipt.');
         }
 
         if ($form1702ExBatchRow->receiptJobIsBusy()) {
-            return to_route('forms.1702-ex.batches.show', [
+            return to_route('forms.form1702ex.batches.show', [
                 'form1702ExBatch' => $form1702ExBatch,
             ])->with('error', 'A receipt update is already queued for this row.');
         }
 
         if (! filled($form1702ExBatchRow->receipt_storage_path) || ! filled($form1702ExBatchRow->receipt_file_name)) {
-            return to_route('forms.1702-ex.batches.show', [
+            return to_route('forms.form1702ex.batches.show', [
                 'form1702ExBatch' => $form1702ExBatch,
             ])->with('error', 'There is no receipt attached to this row.');
         }
@@ -1278,13 +1276,13 @@ class Form1702ExController extends Controller
         try {
             $form1702ExRowReceiptService->removeReceipt($form1702ExBatchRow);
 
-            return to_route('forms.1702-ex.batches.show', [
+            return to_route('forms.form1702ex.batches.show', [
                 'form1702ExBatch' => $form1702ExBatch,
             ])->with('success', 'Receipt removed from the selected row.');
         } catch (\Throwable $exception) {
             report($exception);
 
-            return to_route('forms.1702-ex.batches.show', [
+            return to_route('forms.form1702ex.batches.show', [
                 'form1702ExBatch' => $form1702ExBatch,
             ])->with('error', 'The receipt could not be removed right now. Please try again.');
         }
@@ -1298,139 +1296,30 @@ class Form1702ExController extends Controller
         $this->ensureAccessibleStandaloneRow($request, $form1702ExBatchRow);
 
         if ($form1702ExBatchRow->isProcessing()) {
-            return to_route('forms.1702-ex.index', $this->indexRouteParameters($request))
+            return to_route('forms.form1702ex.index', $this->indexRouteParameters($request))
                 ->with('error', 'Wait for this row PDF to finish generating before removing a receipt.');
         }
 
         if ($form1702ExBatchRow->receiptJobIsBusy()) {
-            return to_route('forms.1702-ex.index', $this->indexRouteParameters($request))
+            return to_route('forms.form1702ex.index', $this->indexRouteParameters($request))
                 ->with('error', 'A receipt update is already queued for this row.');
         }
 
         if (! filled($form1702ExBatchRow->receipt_storage_path) || ! filled($form1702ExBatchRow->receipt_file_name)) {
-            return to_route('forms.1702-ex.index', $this->indexRouteParameters($request))
+            return to_route('forms.form1702ex.index', $this->indexRouteParameters($request))
                 ->with('error', 'There is no receipt attached to this row.');
         }
 
         try {
             $form1702ExRowReceiptService->removeReceipt($form1702ExBatchRow);
 
-            return to_route('forms.1702-ex.index', $this->indexRouteParameters($request))
+            return to_route('forms.form1702ex.index', $this->indexRouteParameters($request))
                 ->with('success', 'Receipt removed from the selected row.');
         } catch (\Throwable $exception) {
             report($exception);
 
-            return to_route('forms.1702-ex.index', $this->indexRouteParameters($request))
+            return to_route('forms.form1702ex.index', $this->indexRouteParameters($request))
                 ->with('error', 'The receipt could not be removed right now. Please try again.');
-        }
-    }
-
-    public function storeTemporaryConfirmationDirect(
-        Request $request,
-        Form1702ExBatchRow $form1702ExBatchRow,
-    ): RedirectResponse {
-        $this->ensureAccessibleStandaloneRow($request, $form1702ExBatchRow);
-
-        if (! $this->rowCanManageTemporaryConfirmation($form1702ExBatchRow)) {
-            return back()
-                ->with('error', 'Generate the 1702-EX PDF before attaching a temporary confirmation.');
-        }
-
-        if (filled($form1702ExBatchRow->receipt_storage_path) || filled($form1702ExBatchRow->receipt_file_name)) {
-            return back()
-                ->with('error', 'This row already has a real receipt attached.');
-        }
-
-        $validated = $request->validate([
-            'screenshot' => ['required', 'file', 'image', 'max:10240'],
-            'recipientEmail' => ['nullable', 'email', 'max:254'],
-        ]);
-
-        /** @var UploadedFile $screenshot */
-        $screenshot = $validated['screenshot'];
-        $recipientEmail = $this->normalizeOptionalRecipientEmail($validated['recipientEmail'] ?? null);
-
-        try {
-            $this->form1702ExTemporaryConfirmationService->store($form1702ExBatchRow, $screenshot);
-
-            $form1702ExBatchRow->forceFill([
-                'completed_email_recipient' => $recipientEmail,
-            ])->save();
-
-            return back()
-                ->with('success', 'Temporary confirmation attached to the selected row.');
-        } catch (\Throwable $exception) {
-            report($exception);
-
-            return back()
-                ->with('error', 'The temporary confirmation could not be saved right now. Please try again.');
-        }
-    }
-
-    public function destroyTemporaryConfirmationDirect(
-        Request $request,
-        Form1702ExBatchRow $form1702ExBatchRow,
-    ): RedirectResponse {
-        $this->ensureAccessibleStandaloneRow($request, $form1702ExBatchRow);
-
-        if (! $form1702ExBatchRow->hasTemporaryConfirmation()) {
-            return back()
-                ->with('error', 'There is no temporary confirmation attached to this row.');
-        }
-
-        try {
-            $this->form1702ExTemporaryConfirmationService->clear($form1702ExBatchRow);
-
-            return back()
-                ->with('success', 'Temporary confirmation removed from the selected row.');
-        } catch (\Throwable $exception) {
-            report($exception);
-
-            return back()
-                ->with('error', 'The temporary confirmation could not be removed right now. Please try again.');
-        }
-    }
-
-    public function sendTemporaryConfirmationDirect(
-        Request $request,
-        Form1702ExBatchRow $form1702ExBatchRow,
-    ): RedirectResponse {
-        $this->ensureAccessibleStandaloneRow($request, $form1702ExBatchRow);
-
-        if (! $this->rowCanSendTemporaryConfirmation($form1702ExBatchRow)) {
-            return back()
-                ->with('error', 'Only generated rows with a temporary confirmation can be emailed from this page.');
-        }
-
-        $recipientEmail = $this->form1702ExCompletedEmailService->recipientEmail($form1702ExBatchRow);
-
-        if ($recipientEmail === null) {
-            return back()
-                ->with('error', 'Add a recipient email before sending this temporary confirmation.');
-        }
-
-        try {
-            $queuedRecipient = $this->form1702ExCompletedEmailService->queueManual(
-                $form1702ExBatchRow,
-                $this->form1702ExCompletedEmailService->defaultSubject($form1702ExBatchRow),
-                $this->temporaryConfirmationMessage($form1702ExBatchRow),
-                (string) $form1702ExBatchRow->temporary_confirmation_storage_path,
-                (string) $form1702ExBatchRow->temporary_confirmation_file_name,
-                (string) ($form1702ExBatchRow->temporary_confirmation_mime_type ?: 'application/octet-stream'),
-            );
-
-            if ($queuedRecipient === null) {
-                return back()
-                    ->with('error', 'The generated PDF is no longer available for this row.');
-            }
-
-            return back()
-                ->with('success', "Email queued to {$queuedRecipient}.");
-        } catch (\Throwable $exception) {
-            report($exception);
-
-            return back()
-                ->with('error', 'The email could not be queued right now. Please verify your mail settings and try again.');
         }
     }
 
@@ -1442,13 +1331,13 @@ class Form1702ExController extends Controller
         $this->ensureAccessibleRow($request, $form1702ExBatch, $form1702ExBatchRow);
 
         if ($form1702ExBatchRow->isProcessing()) {
-            return to_route('forms.1702-ex.batches.show', [
+            return to_route('forms.form1702ex.batches.show', [
                 'form1702ExBatch' => $form1702ExBatch,
             ])->with('error', 'This row is already queued or processing.');
         }
 
         if ($form1702ExBatchRow->receiptJobIsBusy()) {
-            return to_route('forms.1702-ex.batches.show', [
+            return to_route('forms.form1702ex.batches.show', [
                 'form1702ExBatch' => $form1702ExBatch,
             ])->with('error', 'Wait for the current receipt update to finish before regenerating this row.');
         }
@@ -1490,7 +1379,7 @@ class Form1702ExController extends Controller
 
         ProcessForm1702ExBatchRows::dispatch([$form1702ExBatchRow->id]);
 
-        return to_route('forms.1702-ex.batches.show', [
+        return to_route('forms.form1702ex.batches.show', [
             'form1702ExBatch' => $form1702ExBatch,
         ])->with('success', 'PDF regeneration queued for the selected row.');
     }
@@ -1502,12 +1391,12 @@ class Form1702ExController extends Controller
         $this->ensureAccessibleStandaloneRow($request, $form1702ExBatchRow);
 
         if ($form1702ExBatchRow->isProcessing()) {
-            return to_route('forms.1702-ex.index', $this->indexRouteParameters($request))
+            return to_route('forms.form1702ex.index', $this->indexRouteParameters($request))
                 ->with('error', 'This row is already queued or processing.');
         }
 
         if ($form1702ExBatchRow->receiptJobIsBusy()) {
-            return to_route('forms.1702-ex.index', $this->indexRouteParameters($request))
+            return to_route('forms.form1702ex.index', $this->indexRouteParameters($request))
                 ->with('error', 'Wait for the current receipt update to finish before regenerating this row.');
         }
 
@@ -1549,7 +1438,7 @@ class Form1702ExController extends Controller
 
         ProcessForm1702ExBatchRows::dispatch([$form1702ExBatchRow->id]);
 
-        return to_route('forms.1702-ex.index', $this->indexRouteParameters($request))
+        return to_route('forms.form1702ex.index', $this->indexRouteParameters($request))
             ->with('success', 'PDF regeneration queued for the selected row.');
     }
 
@@ -1841,18 +1730,17 @@ class Form1702ExController extends Controller
         $previewUrl = null;
         $downloadUrl = null;
         $hasReceipt = filled($row->receipt_file_name) && filled($row->receipt_storage_path);
-        $hasTemporaryConfirmation = $row->hasTemporaryConfirmation();
 
         if (
             $row->pdf_status === Form1702ExBatchRow::PDF_STATUS_GENERATED
             && filled($row->generated_pdf_storage_path)
         ) {
             $previewRoute = $useDirectRoutes
-                ? 'forms.1702-ex.rows.preview'
-                : 'forms.1702-ex.batches.rows.preview';
+                ? 'forms.form1702ex.rows.preview'
+                : 'forms.form1702ex.batches.rows.preview';
             $downloadRoute = $useDirectRoutes
-                ? 'forms.1702-ex.rows.download'
-                : 'forms.1702-ex.batches.rows.download';
+                ? 'forms.form1702ex.rows.download'
+                : 'forms.form1702ex.batches.rows.download';
 
             $previewUrl = route($previewRoute, $useDirectRoutes
                 ? [
@@ -1900,7 +1788,7 @@ class Form1702ExController extends Controller
             'receiptFileSize' => $row->receipt_file_size,
             'receiptJobStatus' => $row->receipt_job_status,
             'receiptJobError' => $row->receipt_job_error,
-            'receiptStoreUrl' => route($useDirectRoutes ? 'forms.1702-ex.rows.receipt.store' : 'forms.1702-ex.batches.rows.receipt.store', $useDirectRoutes
+            'receiptStoreUrl' => route($useDirectRoutes ? 'forms.form1702ex.rows.receipt.store' : 'forms.form1702ex.batches.rows.receipt.store', $useDirectRoutes
                 ? [
                     'form1702ExBatchRow' => $row,
                 ]
@@ -1909,7 +1797,7 @@ class Form1702ExController extends Controller
                     'form1702ExBatchRow' => $row,
                 ]),
             'receiptRemoveUrl' => $hasReceipt
-                ? route($useDirectRoutes ? 'forms.1702-ex.rows.receipt.destroy' : 'forms.1702-ex.batches.rows.receipt.destroy', $useDirectRoutes
+                ? route($useDirectRoutes ? 'forms.form1702ex.rows.receipt.destroy' : 'forms.form1702ex.batches.rows.receipt.destroy', $useDirectRoutes
                     ? [
                         'form1702ExBatchRow' => $row,
                     ]
@@ -1919,7 +1807,7 @@ class Form1702ExController extends Controller
                     ])
                 : null,
             'receiptDownloadUrl' => $hasReceipt
-                ? route($useDirectRoutes ? 'forms.1702-ex.rows.receipt.download' : 'forms.1702-ex.batches.rows.receipt.download', $useDirectRoutes
+                ? route($useDirectRoutes ? 'forms.form1702ex.rows.receipt.download' : 'forms.form1702ex.batches.rows.receipt.download', $useDirectRoutes
                     ? [
                         'form1702ExBatchRow' => $row,
                     ]
@@ -1928,7 +1816,7 @@ class Form1702ExController extends Controller
                         'form1702ExBatchRow' => $row,
                     ])
                 : null,
-            'regenerateUrl' => route($useDirectRoutes ? 'forms.1702-ex.rows.regenerate' : 'forms.1702-ex.batches.rows.regenerate', $useDirectRoutes
+            'regenerateUrl' => route($useDirectRoutes ? 'forms.form1702ex.rows.regenerate' : 'forms.form1702ex.batches.rows.regenerate', $useDirectRoutes
                 ? [
                     'form1702ExBatchRow' => $row,
                 ]
@@ -1940,35 +1828,16 @@ class Form1702ExController extends Controller
             'autoReceiptStatus' => $row->auto_receipt_status,
             'autoReceiptError' => $row->auto_receipt_error,
             'recipientEmail' => $this->form1702ExCompletedEmailService->recipientEmail($row),
-            'updateRecipientUrl' => route('forms.1702-ex.rows.recipient.update', [
+            'updateRecipientUrl' => route('forms.form1702ex.rows.recipient.update', [
                 'form1702ExBatchRow' => $row,
             ]),
-            'hasTemporaryConfirmation' => $hasTemporaryConfirmation,
-            'temporaryConfirmationFileName' => $hasTemporaryConfirmation
-                ? (string) $row->temporary_confirmation_file_name
-                : null,
-            'temporaryConfirmationFileSize' => $row->temporary_confirmation_file_size,
-            'temporaryConfirmationAttachedAt' => $row->temporary_confirmation_attached_at?->toIso8601String(),
-            'temporaryConfirmationStoreUrl' => route('forms.1702-ex.rows.temporary-confirmation.store', [
-                'form1702ExBatchRow' => $row,
-            ]),
-            'temporaryConfirmationRemoveUrl' => $hasTemporaryConfirmation
-                ? route('forms.1702-ex.rows.temporary-confirmation.destroy', [
-                    'form1702ExBatchRow' => $row,
-                ])
-                : null,
-            'temporaryConfirmationSendUrl' => $this->rowCanSendTemporaryConfirmation($row)
-                ? route('forms.1702-ex.rows.temporary-confirmation.send', [
-                    'form1702ExBatchRow' => $row,
-                ])
-                : null,
             'sendEmailUrl' => $this->form1702ExCompletedEmailService->isCompleted($row)
-                ? route('forms.1702-ex.completed.send', [
+                ? route('forms.form1702ex.completed.send', [
                     'form1702ExBatchRow' => $row,
                 ])
                 : null,
             'cancelUrl' => $this->form1702ExCompletedEmailService->isCompleted($row)
-                ? route('forms.1702-ex.completed.cancel', [
+                ? route('forms.form1702ex.completed.cancel', [
                     'form1702ExBatchRow' => $row,
                 ])
                 : null,
@@ -2324,44 +2193,6 @@ XML;
         $row->delete();
 
         return true;
-    }
-
-    private function rowCanManageTemporaryConfirmation(Form1702ExBatchRow $row): bool
-    {
-        return $row->pdf_status === Form1702ExBatchRow::PDF_STATUS_GENERATED
-            && filled($row->generated_pdf_storage_path)
-            && ! $row->isSkippedDuplicate()
-            && ! $row->receiptJobIsBusy();
-    }
-
-    private function rowCanSendTemporaryConfirmation(Form1702ExBatchRow $row): bool
-    {
-        return $this->rowCanManageTemporaryConfirmation($row)
-            && ! $this->form1702ExCompletedEmailService->isCompleted($row)
-            && $row->hasTemporaryConfirmation()
-            && filled($row->temporary_confirmation_storage_path)
-            && Storage::disk('local')->exists((string) $row->temporary_confirmation_storage_path)
-            && $this->form1702ExCompletedEmailService->recipientEmail($row) !== null;
-    }
-
-    private function temporaryConfirmationMessage(Form1702ExBatchRow $row): string
-    {
-        return implode("\n", [
-            sprintf(
-                'Good day! Attached is the 1702EX for %s. A temporary confirmation screenshot is also attached while the final confirmation is still pending. Thank you!',
-                $this->companyName($row),
-            ),
-            '',
-            'Please do not reply to this message. If you have any concerns, please contact:',
-        ]);
-    }
-
-    private function companyName(Form1702ExBatchRow $row): string
-    {
-        $payload = is_array($row->payload) ? $row->payload : [];
-        $companyName = trim((string) ($payload['taxpayer_name'] ?? $payload['registered_name'] ?? ''));
-
-        return $companyName !== '' ? $companyName : 'Taxpayer';
     }
 
     private function normalizeOptionalText(mixed $value): ?string

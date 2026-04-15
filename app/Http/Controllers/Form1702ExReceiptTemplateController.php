@@ -29,7 +29,7 @@ class Form1702ExReceiptTemplateController extends Controller
             'flash' => $this->flash($request),
             'fields' => $fields,
             'latestExport' => $latestExport,
-            'mockExportUrl' => route('forms.1702-ex.receipt-template.generate'),
+            'mockExportUrl' => route('forms.form1702ex.receipt-template.generate'),
             'payload' => $payload,
             'schema' => $schema,
             'templatePdfUrl' => asset('form-assets/1702-ex/template-receipt.pdf'),
@@ -42,12 +42,12 @@ class Form1702ExReceiptTemplateController extends Controller
         try {
             $this->form1702ExService->generateReceiptTemplatePdf((int) $request->user()->id);
 
-            return to_route('forms.1702-ex.receipt-template.show')
+            return to_route('forms.form1702ex.receipt-template.show')
                 ->with('success', 'The 1702-EX receipt PDF was generated.');
         } catch (\Throwable $exception) {
             report($exception);
 
-            return to_route('forms.1702-ex.receipt-template.show')
+            return to_route('forms.form1702ex.receipt-template.show')
                 ->with('error', 'The 1702-EX receipt PDF could not be generated right now.');
         }
     }
@@ -112,10 +112,10 @@ class Form1702ExReceiptTemplateController extends Controller
             return null;
         }
 
-        $latestExport['previewUrl'] = route('forms.1702-ex.receipt-template.preview', [
+        $latestExport['previewUrl'] = route('forms.form1702ex.receipt-template.preview', [
             'v' => $latestExport['version'],
         ]);
-        $latestExport['downloadUrl'] = route('forms.1702-ex.receipt-template.download');
+        $latestExport['downloadUrl'] = route('forms.form1702ex.receipt-template.download');
 
         return $latestExport;
     }

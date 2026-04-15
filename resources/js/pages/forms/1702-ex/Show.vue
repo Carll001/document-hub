@@ -63,7 +63,7 @@ const props = defineProps<{
 const breadcrumbs: BreadcrumbItem[] = [
     {
         title: '1702-EX',
-        href: forms.form1702Ex.index(),
+        href: forms.form1702ex.index(),
     },
     {
         title: props.batch.name,

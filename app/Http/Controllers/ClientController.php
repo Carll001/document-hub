@@ -106,7 +106,7 @@ class ClientController extends Controller
                     'primaryRecipient' => $recipientEmails->count() === 1
                         ? (string) $recipientEmails->first()
                         : null,
-                    'sendUrl' => route('clients.forms.1702-ex.send', ['client' => $client]),
+                    'sendUrl' => route('clients.forms.form1702ex.send', ['client' => $client]),
                     'canSend' => $completedRows->isNotEmpty() && $recipientEmails->count() === 1,
                     'warning' => $completedRows->isEmpty()
                         ? 'No completed 1702-EX files are ready for this client yet.'
@@ -277,13 +277,13 @@ class ClientController extends Controller
                                 : 'Not generated yet',
                             'generatedAt' => $row->generated_at?->toIso8601String(),
                             'previewUrl' => filled($row->generated_pdf_storage_path)
-                                ? route('forms.1702-ex.rows.preview', [
+                                ? route('forms.form1702ex.rows.preview', [
                                     'form1702ExBatchRow' => $row,
                                     'v' => $this->form1702ExService->previewVersion($row),
                                 ])
                                 : null,
                             'downloadUrl' => filled($row->generated_pdf_storage_path)
-                                ? route('forms.1702-ex.rows.download', [
+                                ? route('forms.form1702ex.rows.download', [
                                     'form1702ExBatchRow' => $row,
                                 ])
                                 : null,

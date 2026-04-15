@@ -59,7 +59,7 @@ class ProcessForm1702ExRowsExport implements ShouldQueue
                 'status' => Form1702ExRowsExportService::STATUS_READY,
                 'error' => null,
                 'rowCount' => $export['rowCount'],
-                'downloadUrl' => route('forms.1702-ex.rows.export.file'),
+                'downloadUrl' => route('forms.form1702ex.rows.export.file'),
                 'storagePath' => $export['storagePath'],
             ]);
         } catch (\Throwable $exception) {
