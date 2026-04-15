@@ -120,6 +120,98 @@ class Form1702ExTest extends TestCase
             );
     }
 
+    public function test_direct_upload_preserves_effectivity_dates_exactly_as_written_in_the_spreadsheet(): void
+    {
+        Queue::fake();
+
+        $staff = User::factory()->create();
+        $upload = UploadedFile::fake()->createWithContent(
+            '1702-ex-import.csv',
+            implode("\n", [
+                'registered_name,tin,effectivity_from,effectivity_to',
+                'Alpha Ventures OPC,0101112220000,09/04/2024,09/04/2026',
+            ]),
+        );
+
+        $this->actingAs($staff)
+            ->post(route('forms.1702-ex.import.store'), [
+                'spreadsheet' => $upload,
+                'receiptAcceptanceStartDate' => '2026-04-10',
+            ])
+            ->assertRedirect(route('forms.1702-ex.index'))
+            ->assertSessionHas('success');
+
+        $batch = Form1702ExBatch::query()->whereBelongsTo($staff)->sole();
+        $row = Form1702ExBatchRow::query()
+            ->where('form_1702_ex_batch_id', $batch->id)
+            ->sole();
+
+        $this->assertSame('09/04/2024', $row->payload['effectivity_from'] ?? null);
+        $this->assertSame('09/04/2026', $row->payload['effectivity_to'] ?? null);
+    }
+
+    public function test_direct_upload_uses_split_date_headers_for_target_pdf_dates(): void
+    {
+        Queue::fake();
+
+        $staff = User::factory()->create();
+        $upload = UploadedFile::fake()->createWithContent(
+            '1702-ex-import.csv',
+            implode("\n", [
+                'registered_name,tin,incorporation_date_month,incorporation_date_day,incorporation_date_year,effectivity_from_month,effectivity_from_day,effectivity_from_year,effectivity_to_month,effectivity_to_day,effectivity_to_year',
+                'Alpha Ventures OPC,0101112220000,04,09,2024,04,09,2025,04,09,2026',
+            ]),
+        );
+
+        $this->actingAs($staff)
+            ->post(route('forms.1702-ex.import.store'), [
+                'spreadsheet' => $upload,
+                'receiptAcceptanceStartDate' => '2026-04-10',
+            ])
+            ->assertRedirect(route('forms.1702-ex.index'))
+            ->assertSessionHas('success');
+
+        $batch = Form1702ExBatch::query()->whereBelongsTo($staff)->sole();
+        $row = Form1702ExBatchRow::query()
+            ->where('form_1702_ex_batch_id', $batch->id)
+            ->sole();
+
+        $this->assertSame('04/09/2024', $row->payload['incorporation_date'] ?? null);
+        $this->assertSame('04/09/2025', $row->payload['effectivity_from'] ?? null);
+        $this->assertSame('04/09/2026', $row->payload['effectivity_to'] ?? null);
+    }
+
+    public function test_split_date_headers_take_precedence_over_legacy_single_date_columns(): void
+    {
+        Queue::fake();
+
+        $staff = User::factory()->create();
+        $upload = UploadedFile::fake()->createWithContent(
+            '1702-ex-import.csv',
+            implode("\n", [
+                'registered_name,tin,incorporation_date,incorporation_date_month,incorporation_date_day,incorporation_date_year,effectivity_from,effectivity_from_month,effectivity_from_day,effectivity_from_year,effectivity_to,effectivity_to_month,effectivity_to_day,effectivity_to_year',
+                'Alpha Ventures OPC,0101112220000,09/04/2024,04,09,2024,09/04/2025,04,09,2025,09/04/2026,04,09,2026',
+            ]),
+        );
+
+        $this->actingAs($staff)
+            ->post(route('forms.1702-ex.import.store'), [
+                'spreadsheet' => $upload,
+                'receiptAcceptanceStartDate' => '2026-04-10',
+            ])
+            ->assertRedirect(route('forms.1702-ex.index'))
+            ->assertSessionHas('success');
+
+        $batch = Form1702ExBatch::query()->whereBelongsTo($staff)->sole();
+        $row = Form1702ExBatchRow::query()
+            ->where('form_1702_ex_batch_id', $batch->id)
+            ->sole();
+
+        $this->assertSame('04/09/2024', $row->payload['incorporation_date'] ?? null);
+        $this->assertSame('04/09/2025', $row->payload['effectivity_from'] ?? null);
+        $this->assertSame('04/09/2026', $row->payload['effectivity_to'] ?? null);
+    }
+
     public function test_direct_upload_reconciles_matching_existing_synced_emails(): void
     {
         Queue::fake();

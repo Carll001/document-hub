@@ -339,12 +339,26 @@ class Form1702ExImportService
             'address',
         ]) ?: (string) ($payload['registered_address'] ?? '');
         $payload['zip_code'] = $this->firstFilled($normalizedRow, ['zipcode', 'zip']) ?: (string) ($payload['zip_code'] ?? '');
-        $payload['incorporation_date'] = $this->normalizeDisplayDate(
+        $payload['incorporation_date'] = $this->composeDisplayDateFromParts(
             $this->firstFilled($normalizedRow, [
-                'incorporationdate',
-                'dateofincorporationorganization',
+                'incorporationdatemonth',
+                'dateofincorporationorganizationmonth',
             ]),
-            (string) ($payload['incorporation_date'] ?? ''),
+            $this->firstFilled($normalizedRow, [
+                'incorporationdateday',
+                'dateofincorporationorganizationday',
+            ]),
+            $this->firstFilled($normalizedRow, [
+                'incorporationdateyear',
+                'dateofincorporationorganizationyear',
+            ]),
+            $this->normalizeDisplayDate(
+                $this->firstFilled($normalizedRow, [
+                    'incorporationdate',
+                    'dateofincorporationorganization',
+                ]),
+                (string) ($payload['incorporation_date'] ?? ''),
+            ),
         );
         $payload['contact_number'] = $this->normalizePhoneNumber(
             $this->firstFilled($normalizedRow, ['contactnumber', 'contactno', 'contactnumbermobileno', 'mobilenumber']),
@@ -378,13 +392,23 @@ class Form1702ExImportService
             'registeredactivityprogramregistrationnumber',
             'registrationnumber',
         ]) ?: (string) ($payload['registered_activity'] ?? '');
-        $payload['effectivity_from'] = $this->normalizeDisplayDate(
-            $this->firstFilled($normalizedRow, ['effectivityfrom', 'from']),
-            (string) ($payload['effectivity_from'] ?? ''),
+        $payload['effectivity_from'] = $this->composeDisplayDateFromParts(
+            $this->firstFilled($normalizedRow, ['effectivityfrommonth', 'frommonth']),
+            $this->firstFilled($normalizedRow, ['effectivityfromday', 'fromday']),
+            $this->firstFilled($normalizedRow, ['effectivityfromyear', 'fromyear']),
+            $this->preserveSpreadsheetDisplayDate(
+                $this->firstFilled($normalizedRow, ['effectivityfrom', 'from']),
+                (string) ($payload['effectivity_from'] ?? ''),
+            ),
         );
-        $payload['effectivity_to'] = $this->normalizeDisplayDate(
-            $this->firstFilled($normalizedRow, ['effectivityto', 'to']),
-            (string) ($payload['effectivity_to'] ?? ''),
+        $payload['effectivity_to'] = $this->composeDisplayDateFromParts(
+            $this->firstFilled($normalizedRow, ['effectivitytomonth', 'tomonth']),
+            $this->firstFilled($normalizedRow, ['effectivitytoday', 'today']),
+            $this->firstFilled($normalizedRow, ['effectivitytoyear', 'toyear']),
+            $this->preserveSpreadsheetDisplayDate(
+                $this->firstFilled($normalizedRow, ['effectivityto', 'to']),
+                (string) ($payload['effectivity_to'] ?? ''),
+            ),
         );
 
         $payload['line_of_business'] = $this->firstFilled($normalizedRow, [
@@ -931,6 +955,83 @@ class Form1702ExImportService
         } catch (\Throwable) {
             return $fallback;
         }
+    }
+
+    private function preserveSpreadsheetDisplayDate(string $value, string $fallback): string
+    {
+        $trimmed = $this->cleanCellText($value);
+
+        if ($trimmed === '') {
+            return $fallback;
+        }
+
+        if (is_numeric($trimmed)) {
+            return $this->excelSerialDateToCarbon((float) $trimmed)?->format('m/d/Y') ?? $fallback;
+        }
+
+        return $trimmed;
+    }
+
+    private function composeDisplayDateFromParts(
+        string $month,
+        string $day,
+        string $year,
+        string $fallback,
+    ): string {
+        $normalizedMonth = $this->normalizeDateMonthPart($month);
+        $normalizedDay = $this->normalizeDateDayPart($day);
+        $normalizedYear = $this->normalizeDateYearPart($year);
+
+        if ($normalizedMonth === '' || $normalizedDay === '' || $normalizedYear === '') {
+            return $fallback;
+        }
+
+        return "{$normalizedMonth}/{$normalizedDay}/{$normalizedYear}";
+    }
+
+    private function normalizeDateMonthPart(string $value): string
+    {
+        $digits = preg_replace('/\D+/', '', $this->cleanCellText($value)) ?? '';
+
+        if ($digits === '') {
+            return '';
+        }
+
+        $month = (int) substr($digits, -2);
+
+        if ($month < 1 || $month > 12) {
+            return '';
+        }
+
+        return str_pad((string) $month, 2, '0', STR_PAD_LEFT);
+    }
+
+    private function normalizeDateDayPart(string $value): string
+    {
+        $digits = preg_replace('/\D+/', '', $this->cleanCellText($value)) ?? '';
+
+        if ($digits === '') {
+            return '';
+        }
+
+        $day = (int) substr($digits, -2);
+
+        if ($day < 1 || $day > 31) {
+            return '';
+        }
+
+        return str_pad((string) $day, 2, '0', STR_PAD_LEFT);
+    }
+
+    private function normalizeDateYearPart(string $value): string
+    {
+        $digits = preg_replace('/\D+/', '', $this->cleanCellText($value)) ?? '';
+
+        if (strlen($digits) >= 4) {
+            return substr($digits, -4);
+        }
+
+        return '';
     }
 
     private function normalizeIsoDate(string $value, string $fallback): string
