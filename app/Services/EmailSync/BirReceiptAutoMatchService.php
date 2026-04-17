@@ -397,7 +397,10 @@ class BirReceiptAutoMatchService
             return false;
         }
 
-        if (filled($row->receipt_storage_path) || filled($row->receipt_file_name)) {
+        if (
+            ! $row->receipt_is_temporary
+            && (filled($row->receipt_storage_path) || filled($row->receipt_file_name))
+        ) {
             return false;
         }
 

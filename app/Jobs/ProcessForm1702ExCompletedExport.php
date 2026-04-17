@@ -87,7 +87,8 @@ class ProcessForm1702ExCompletedExport implements ShouldQueue
             ->where('pdf_status', Form1702ExBatchRow::PDF_STATUS_GENERATED)
             ->whereNotNull('generated_pdf_storage_path')
             ->whereNotNull('receipt_storage_path')
-            ->whereNotNull('receipt_file_name');
+            ->whereNotNull('receipt_file_name')
+            ->where('receipt_is_temporary', false);
 
         $search = trim($this->search);
 

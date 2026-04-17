@@ -1210,6 +1210,74 @@ class Form1702ExController extends Controller
         }
     }
 
+    public function storeTemporaryReceiptDirect(
+        Request $request,
+        Form1702ExBatchRow $form1702ExBatchRow,
+        Form1702ExRowReceiptService $form1702ExRowReceiptService,
+    ): RedirectResponse {
+        $this->ensureAccessibleStandaloneRow($request, $form1702ExBatchRow);
+
+        if ($form1702ExBatchRow->isProcessing()) {
+            return to_route('forms.form1702ex.index', $this->indexRouteParameters($request))
+                ->with('error', 'Wait for this row PDF to finish generating before adding a temporary receipt.');
+        }
+
+        if ($form1702ExBatchRow->receiptJobIsBusy()) {
+            return to_route('forms.form1702ex.index', $this->indexRouteParameters($request))
+                ->with('error', 'A receipt update is already queued for this row.');
+        }
+
+        if (
+            $form1702ExBatchRow->pdf_status !== Form1702ExBatchRow::PDF_STATUS_GENERATED
+            || ! filled($form1702ExBatchRow->generated_pdf_storage_path)
+        ) {
+            return to_route('forms.form1702ex.index', $this->indexRouteParameters($request))
+                ->with('error', 'Generate the form1702ex PDF before adding a temporary receipt.');
+        }
+
+        if (
+            filled($form1702ExBatchRow->receipt_storage_path)
+            && filled($form1702ExBatchRow->receipt_file_name)
+            && ! $form1702ExBatchRow->receipt_is_temporary
+        ) {
+            return to_route('forms.form1702ex.index', $this->indexRouteParameters($request))
+                ->with('error', 'This row already has a final confirmation receipt.');
+        }
+
+        $validated = Validator::make($request->all(), [
+            'temporaryReceipt' => ['required', 'file', 'mimes:pdf,jpg,jpeg,png,webp'],
+            'recipientEmail' => ['nullable', 'email', 'max:254'],
+        ])->validate();
+
+        $recipientEmail = $this->normalizeOptionalRecipientEmail($validated['recipientEmail'] ?? null);
+        $uploadedTemporaryReceipt = $validated['temporaryReceipt'] ?? null;
+
+        if (! $uploadedTemporaryReceipt instanceof UploadedFile) {
+            throw ValidationException::withMessages([
+                'temporaryReceipt' => 'Upload a temporary receipt file first.',
+            ]);
+        }
+
+        try {
+            $form1702ExBatchRow->forceFill([
+                'completed_email_recipient' => $recipientEmail,
+            ])->save();
+
+            $form1702ExRowReceiptService->attachTemporaryReceipt(
+                $form1702ExBatchRow,
+                $uploadedTemporaryReceipt,
+            );
+
+            return to_route('forms.form1702ex.index', $this->indexRouteParameters($request))
+                ->with('success', 'Temporary receipt added for the selected row.');
+        } catch (\Throwable $exception) {
+            report($exception);
+
+            return to_route('forms.form1702ex.index', $this->indexRouteParameters($request))
+                ->with('error', 'The temporary receipt could not be saved right now. Please try again.');
+        }
+    }
+
     public function downloadReceipt(
         Request $request,
         Form1702ExBatch $form1702ExBatch,
@@ -1709,8 +1777,10 @@ class Form1702ExController extends Controller
      *     receiptJobStatus: string|null,
      *     receiptJobError: string|null,
      *     receiptStoreUrl: string,
+     *     temporaryReceiptStoreUrl: string|null,
      *     receiptRemoveUrl: string|null,
      *     receiptDownloadUrl: string|null,
+     *     isTemporaryReceipt: bool,
      *     regenerateUrl: string,
      *     pdfError: string|null,
      *     autoReceiptStatus: string|null,
@@ -1796,6 +1866,11 @@ class Form1702ExController extends Controller
                     'form1702ExBatch' => $batch,
                     'form1702ExBatchRow' => $row,
                 ]),
+            'temporaryReceiptStoreUrl' => $useDirectRoutes
+                ? route('forms.form1702ex.rows.receipt.temporary.store', [
+                    'form1702ExBatchRow' => $row,
+                ])
+                : null,
             'receiptRemoveUrl' => $hasReceipt
                 ? route($useDirectRoutes ? 'forms.form1702ex.rows.receipt.destroy' : 'forms.form1702ex.batches.rows.receipt.destroy', $useDirectRoutes
                     ? [
@@ -1824,6 +1899,7 @@ class Form1702ExController extends Controller
                     'form1702ExBatch' => $batch,
                     'form1702ExBatchRow' => $row,
                 ]),
+            'isTemporaryReceipt' => $row->receipt_is_temporary,
             'pdfError' => $row->pdf_error,
             'autoReceiptStatus' => $row->auto_receipt_status,
             'autoReceiptError' => $row->auto_receipt_error,
@@ -1862,7 +1938,8 @@ class Form1702ExController extends Controller
                 ->where('pdf_status', Form1702ExBatchRow::PDF_STATUS_GENERATED)
                 ->whereNotNull('generated_pdf_storage_path')
                 ->whereNotNull('receipt_storage_path')
-                ->whereNotNull('receipt_file_name');
+                ->whereNotNull('receipt_file_name')
+                ->where('receipt_is_temporary', false);
 
             return;
         }
@@ -1872,7 +1949,8 @@ class Form1702ExController extends Controller
                 ->where('pdf_status', '!=', Form1702ExBatchRow::PDF_STATUS_GENERATED)
                 ->orWhereNull('generated_pdf_storage_path')
                 ->orWhereNull('receipt_storage_path')
-                ->orWhereNull('receipt_file_name');
+                ->orWhereNull('receipt_file_name')
+                ->orWhere('receipt_is_temporary', true);
         });
     }
 

@@ -227,7 +227,7 @@ function receiptMutationDisabled(record: BatchMergeHistoryRecord): boolean {
                                 <Badge
                                     v-if="isMergedRecord(record)"
                                     variant="outline"
-                                    class="border-emerald-200 bg-emerald-50 text-emerald-700"
+                                    class="border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300"
                                 >
                                     Success
                                 </Badge>
@@ -295,9 +295,9 @@ function receiptMutationDisabled(record: BatchMergeHistoryRecord): boolean {
                                         "
                                         :class="
                                             record.receiptJobStatus === 'queued'
-                                                ? 'border-amber-200 bg-amber-50 text-amber-700'
+                                                ? 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300'
                                                 : record.receiptJobStatus === 'processing'
-                                                  ? 'border-sky-200 bg-sky-50 text-sky-700'
+                                                  ? 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-300'
                                                   : undefined
                                         "
                                     >
@@ -310,7 +310,7 @@ function receiptMutationDisabled(record: BatchMergeHistoryRecord): boolean {
                                     <Badge
                                         v-else-if="record.hasReceipt"
                                         variant="outline"
-                                        class="border-sky-200 bg-sky-50 text-sky-700"
+                                        class="border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-300"
                                     >
                                         Attached
                                     </Badge>

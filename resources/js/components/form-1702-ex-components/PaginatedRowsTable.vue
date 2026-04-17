@@ -5,12 +5,12 @@ import {
     ChevronRight,
     Download,
     Eye,
-    FileText,
     MoreHorizontal,
     Pencil,
     RotateCcw,
     Search,
     Trash2,
+    Upload,
 } from 'lucide-vue-next';
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { Badge } from '@/components/ui/badge';
@@ -68,6 +68,7 @@ const emit = defineEmits<{
     openRecipientEditor: [row: Form1702ExBatchRow];
     openReceipt: [row: Form1702ExBatchRow];
     openRemoveReceipt: [row: Form1702ExBatchRow];
+    openTemporaryReceipt: [row: Form1702ExBatchRow];
     regenerate: [row: Form1702ExBatchRow];
     requestDelete: [rowIds: string[]];
 }>();
@@ -585,12 +586,12 @@ function autoReceiptLabel(row: Form1702ExBatchRow): string | null {
                                                 {{ row.recipientEmail ? 'Edit recipient' : 'Add recipient' }}
                                             </DropdownMenuItem>
                                             <DropdownMenuItem
-                                                v-if="row.hasReceipt"
+                                                v-if="!row.hasReceipt"
                                                 :disabled="receiptMutationDisabled(row)"
-                                                @select="emit('openReceipt', row)"
+                                                @select="emit('openTemporaryReceipt', row)"
                                             >
-                                                <FileText class="size-4" />
-                                                Replace receipt
+                                                <Upload class="size-4" />
+                                                Add temporary receipt
                                             </DropdownMenuItem>
                                             <DropdownMenuItem
                                                 v-if="row.receiptDownloadUrl"
@@ -603,14 +604,6 @@ function autoReceiptLabel(row: Form1702ExBatchRow): string | null {
                                                     <Download class="size-4" />
                                                     Download receipt
                                                 </a>
-                                            </DropdownMenuItem>
-                                            <DropdownMenuItem
-                                                v-if="row.receiptRemoveUrl"
-                                                :disabled="receiptMutationDisabled(row)"
-                                                @select="emit('openRemoveReceipt', row)"
-                                            >
-                                                <Trash2 class="size-4" />
-                                                Remove receipt
                                             </DropdownMenuItem>
                                             <DropdownMenuSeparator />
                                             <DropdownMenuItem

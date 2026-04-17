@@ -18,13 +18,13 @@ defineProps<{
 <template>
     <div
         v-if="hasPanel"
-        class="min-h-dvh bg-[radial-gradient(circle_at_top_left,_rgba(15,23,42,0.06),_transparent_26%),linear-gradient(180deg,_hsl(0_0%_100%),_hsl(0_0%_98%))]"
+        class="min-h-dvh bg-[radial-gradient(circle_at_top_left,_rgba(15,23,42,0.06),_transparent_26%),linear-gradient(180deg,_hsl(0_0%_100%),_hsl(0_0%_98%))] text-foreground dark:bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.08),_transparent_24%),linear-gradient(180deg,_hsl(0_0%_6%),_hsl(0_0%_4%))]"
     >
         <div
             class="grid min-h-dvh lg:grid-cols-[minmax(0,1.08fr)_minmax(420px,0.92fr)]"
         >
             <div
-                class="relative overflow-hidden border-b border-black/10 bg-[linear-gradient(160deg,_rgba(15,23,42,0.98),_rgba(30,41,59,0.96))] text-white lg:border-r lg:border-b-0"
+                class="relative overflow-hidden border-b border-white/10 bg-[linear-gradient(160deg,_rgba(15,23,42,0.98),_rgba(30,41,59,0.96))] text-white lg:border-r lg:border-b-0"
             >
                 <div
                     class="absolute inset-0 bg-[radial-gradient(circle_at_top_right,_rgba(255,255,255,0.12),_transparent_24%),radial-gradient(circle_at_bottom_left,_rgba(255,255,255,0.08),_transparent_28%)]"
@@ -71,7 +71,7 @@ defineProps<{
         class="relative grid h-dvh flex-col items-center justify-center px-8 sm:px-0 lg:max-w-none lg:grid-cols-2 lg:px-0"
     >
         <div
-            class="relative hidden h-full flex-col bg-muted p-10 text-white lg:flex dark:border-r"
+            class="relative hidden h-full flex-col bg-muted p-10 text-white lg:flex lg:border-r lg:border-border"
         >
             <div class="absolute inset-0 bg-zinc-900" />
             <Link

@@ -263,6 +263,7 @@ class Form1702ExService
             'receipt_file_name' => null,
             'receipt_storage_path' => null,
             'receipt_file_size' => null,
+            'receipt_is_temporary' => false,
             'receipt_job_status' => null,
             'receipt_job_error' => null,
         ])->save();
@@ -588,6 +589,11 @@ class Form1702ExService
             'file_size' => $row->generated_pdf_file_size,
             'file_name' => $row->generated_pdf_file_name,
             'status' => $row->pdf_status,
+            'receipt_file_name' => $row->receipt_file_name,
+            'receipt_file_size' => $row->receipt_file_size,
+            'receipt_is_temporary' => $row->receipt_is_temporary,
+            'receipt_job_status' => $row->receipt_job_status,
+            'updated_at' => $row->updated_at?->toIso8601String(),
         ], JSON_THROW_ON_ERROR));
     }
 

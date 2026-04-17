@@ -104,6 +104,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
                         Route::get('rows/{form1702ExBatchRow}/download', 'downloadRowDirect')->name('rows.download');
                         Route::patch('rows/{form1702ExBatchRow}/recipient', 'updateRecipient')->name('rows.recipient.update');
                         Route::post('rows/{form1702ExBatchRow}/receipt', 'storeReceiptDirect')->name('rows.receipt.store');
+                        Route::post('rows/{form1702ExBatchRow}/receipt/temporary', 'storeTemporaryReceiptDirect')->name('rows.receipt.temporary.store');
                         Route::delete('rows/{form1702ExBatchRow}/receipt', 'destroyReceiptDirect')->name('rows.receipt.destroy');
                         Route::get('rows/{form1702ExBatchRow}/receipt', 'downloadReceiptDirect')->name('rows.receipt.download');
                         Route::post('rows/{form1702ExBatchRow}/regenerate', 'regenerateRowDirect')->name('rows.regenerate');

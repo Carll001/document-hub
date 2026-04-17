@@ -291,6 +291,7 @@ class Form1702ExBatchService
 
         return $this->normalizeTin($payload['tin'] ?? null) === $normalizedTin
             && filled($row->receipt_storage_path)
-            && filled($row->receipt_file_name);
+            && filled($row->receipt_file_name)
+            && ! $row->receipt_is_temporary;
     }
 }

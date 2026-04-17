@@ -61,7 +61,7 @@ const emit = defineEmits<{
                     :key="props.mergedPdf.id"
                     :src="props.mergedPdf.previewUrl"
                     title="Merged PDF preview"
-                    class="h-[70vh] w-full rounded-2xl border bg-white"
+                    class="h-[70vh] w-full rounded-2xl border bg-background"
                 />
             </div>
 

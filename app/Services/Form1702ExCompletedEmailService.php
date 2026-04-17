@@ -30,7 +30,8 @@ class Form1702ExCompletedEmailService
         return $row->pdf_status === Form1702ExBatchRow::PDF_STATUS_GENERATED
             && filled($row->generated_pdf_storage_path)
             && filled($row->receipt_storage_path)
-            && filled($row->receipt_file_name);
+            && filled($row->receipt_file_name)
+            && ! $row->receipt_is_temporary;
     }
 
     public function recipientEmail(Form1702ExBatchRow $row): ?string

@@ -18,6 +18,7 @@ use App\Services\Form1702ExRowReceiptService;
 use App\Services\Form1702ExService;
 use App\Services\PdfTextExtractionService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Mail;
@@ -164,6 +165,135 @@ class Form1702ExReceiptTest extends TestCase
         $this->assertNotNull($row->completed_email_auto_hash);
         $this->assertSame('finance@communitygrowth.org', $row->completed_email_auto_recipient);
         $this->assertNotNull($row->completed_email_auto_queued_at);
+    }
+
+    public function test_staff_users_can_upload_temporary_receipts_for_generated_rows(): void
+    {
+        Storage::fake('local');
+
+        $staff = User::factory()->create();
+        $batch = Form1702ExBatch::query()->create([
+            'user_id' => $staff->id,
+            'name' => 'Temporary Receipt Batch',
+        ]);
+        $row = $this->generateRowPdf($this->createBatchRow($batch));
+
+        $this->actingAs($staff)
+            ->post(route('forms.1702-ex.rows.receipt.temporary.store', [
+                'form1702ExBatchRow' => $row,
+            ]), [
+                'temporaryReceipt' => UploadedFile::fake()->create('temp-receipt.pdf', 12, 'application/pdf'),
+                'recipientEmail' => 'replacement@example.com',
+            ])
+            ->assertRedirect(route('forms.1702-ex.index'))
+            ->assertSessionHas('success', 'Temporary receipt added for the selected row.');
+
+        $row->refresh();
+
+        $this->assertTrue($row->receipt_is_temporary);
+        $this->assertSame('replacement@example.com', $row->completed_email_recipient);
+        $this->assertNotNull($row->receipt_file_name);
+        $this->assertNotNull($row->receipt_storage_path);
+        $this->assertNotNull($row->receipt_file_size);
+        Storage::disk('local')->assertExists((string) $row->receipt_storage_path);
+
+        $this->actingAs($staff)
+            ->get(route('forms.1702-ex.index'))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->component('forms/1702-ex/Index')
+                ->where('pagination.total', 1)
+                ->where('completedCount', 0)
+                ->where('rows.0.id', $row->uuid));
+
+        $this->actingAs($staff)
+            ->get(route('forms.1702-ex.completed.index'))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->component('forms/1702-ex/Completed')
+                ->where('pagination.total', 0));
+    }
+
+    public function test_auto_matched_official_receipt_replaces_temporary_receipt_and_moves_row_to_completed(): void
+    {
+        Storage::fake('local');
+        Queue::fake();
+        Mail::fake();
+
+        $staff = User::factory()->create();
+        $batch = Form1702ExBatch::query()->create([
+            'user_id' => $staff->id,
+            'name' => 'Temporary To Official Batch',
+        ]);
+        $row = $this->generateRowPdf($this->createBatchRow($batch, [
+            'payload' => $this->validPayload([
+                'tin' => '010803043000',
+            ]),
+        ]));
+
+        $this->actingAs($staff)
+            ->post(route('forms.1702-ex.rows.receipt.temporary.store', [
+                'form1702ExBatchRow' => $row,
+            ]), [
+                'temporaryReceipt' => UploadedFile::fake()->create('temp-receipt.pdf', 12, 'application/pdf'),
+                'recipientEmail' => 'finance@communitygrowth.org',
+            ])
+            ->assertRedirect(route('forms.1702-ex.index'));
+
+        $row->refresh();
+        $this->assertTrue($row->receipt_is_temporary);
+
+        $email = SyncedEmail::query()->create([
+            'claimed_by_user_id' => $staff->id,
+            'mailbox' => 'INBOX',
+            'imap_uid' => '9901',
+            'message_id' => '<message-9901@example.com>',
+            'subject' => 'BIR receipt confirmation',
+            'body_text' => implode("\n", [
+                'File name: 010803043000-1702EXv2018C-122025.xml',
+                'Date received by BIR: 10 April 2026',
+                'Time received by BIR: 02:49 PM',
+            ]),
+            'synced_at' => now(),
+        ]);
+
+        app(BirReceiptAutoMatchService::class)->syncEmail($email);
+
+        $email->refresh();
+        $row->refresh();
+
+        $this->assertSame(BirReceiptAutoMatchService::MATCH_STATUS_QUEUED, $email->bir_receipt_match_status);
+        $this->assertSame(BirReceiptAutoMatchService::MATCH_STATUS_QUEUED, $row->auto_receipt_status);
+        $this->assertTrue($row->receipt_is_temporary);
+
+        $queuedJob = $this->assertReceiptJobQueuedFor($row);
+        $queuedJob->handle(
+            app(Form1702ExRowReceiptService::class),
+            app(BirReceiptAutoMatchService::class),
+            app(Form1702ExCompletedEmailService::class),
+        );
+
+        $email->refresh();
+        $row->refresh();
+
+        $this->assertFalse($row->receipt_is_temporary);
+        $this->assertSame(BirReceiptAutoMatchService::MATCH_STATUS_APPLIED, $email->bir_receipt_match_status);
+        $this->assertSame(BirReceiptAutoMatchService::MATCH_STATUS_APPLIED, $row->auto_receipt_status);
+
+        $this->actingAs($staff)
+            ->get(route('forms.1702-ex.index'))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->component('forms/1702-ex/Index')
+                ->where('pagination.total', 0)
+                ->where('completedCount', 1));
+
+        $this->actingAs($staff)
+            ->get(route('forms.1702-ex.completed.index'))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->component('forms/1702-ex/Completed')
+                ->where('pagination.total', 1));
     }
 
     public function test_bir_receipt_email_details_auto_match_and_queue_for_generated_rows(): void
@@ -964,6 +1094,7 @@ class Form1702ExReceiptTest extends TestCase
             'receipt_file_name' => null,
             'receipt_storage_path' => null,
             'receipt_file_size' => null,
+            'receipt_is_temporary' => false,
             'receipt_job_status' => null,
             'receipt_job_error' => null,
         ], $overrides));

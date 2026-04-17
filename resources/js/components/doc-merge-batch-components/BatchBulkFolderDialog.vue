@@ -240,7 +240,7 @@ function handlePageFolderContainerSelection(event: Event): void {
                                     <Badge
                                         v-else
                                         variant="outline"
-                                        class="border-emerald-200 bg-emerald-50 text-emerald-700"
+                                        class="border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300"
                                     >
                                         Ready
                                     </Badge>

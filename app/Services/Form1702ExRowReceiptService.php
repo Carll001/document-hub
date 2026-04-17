@@ -6,6 +6,7 @@ namespace App\Services;
 
 use App\Models\Form1702ExBatchRow;
 use Illuminate\Filesystem\FilesystemAdapter;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use RuntimeException;
@@ -62,6 +63,7 @@ class Form1702ExRowReceiptService
                 'receipt_file_name' => $outputName,
                 'receipt_storage_path' => $storagePath,
                 'receipt_file_size' => $disk->size($storagePath),
+                'receipt_is_temporary' => false,
             ])->save();
 
             if (
@@ -96,6 +98,72 @@ class Form1702ExRowReceiptService
             if (is_file($temporaryReceiptPdfPath)) {
                 @unlink($temporaryReceiptPdfPath);
             }
+        }
+    }
+
+    public function attachTemporaryReceipt(
+        Form1702ExBatchRow $row,
+        UploadedFile $uploadedReceipt,
+    ): void {
+        $row->loadMissing('batch');
+        $disk = Storage::disk('local');
+        $generatedPdfPath = (string) ($row->generated_pdf_storage_path ?? '');
+
+        if ($generatedPdfPath === '' || ! $disk->exists($generatedPdfPath)) {
+            throw new RuntimeException('Generate the 1702-EX PDF before adding a temporary receipt.');
+        }
+
+        $outputName = $this->normalizedTemporaryReceiptOutputName($uploadedReceipt);
+        $storagePath = $this->receiptStoragePath(
+            $row,
+            $this->safeUploadedReceiptFilename(
+                $outputName,
+                'temporary-receipt',
+            ),
+        );
+        $previousReceiptPath = $row->receipt_storage_path;
+
+        try {
+            $stored = $disk->putFileAs(
+                dirname($storagePath),
+                $uploadedReceipt,
+                basename($storagePath),
+            );
+
+            if (! is_string($stored) || $stored === '' || ! $disk->exists($storagePath)) {
+                throw new RuntimeException('The temporary receipt file could not be stored.');
+            }
+
+            $this->pdfMergeService->attachForm1702ExReceipt($row, $disk->path($storagePath));
+
+            $row->forceFill([
+                'receipt_file_name' => $outputName,
+                'receipt_storage_path' => $storagePath,
+                'receipt_file_size' => $disk->size($storagePath),
+                'receipt_is_temporary' => true,
+                'receipt_job_status' => null,
+                'receipt_job_error' => null,
+            ])->save();
+
+            if (
+                filled($previousReceiptPath)
+                && $previousReceiptPath !== $storagePath
+                && $disk->exists($previousReceiptPath)
+            ) {
+                $disk->delete($previousReceiptPath);
+            }
+        } catch (\Throwable $exception) {
+            if (
+                $storagePath !== $previousReceiptPath
+                && $disk->exists($storagePath)
+            ) {
+                $disk->delete($storagePath);
+            }
+
+            throw new RuntimeException(
+                'The temporary receipt could not be attached right now. Please try again.',
+                previous: $exception,
+            );
         }
     }
 
@@ -170,6 +238,45 @@ class Form1702ExRowReceiptService
         }
 
         if ($extension !== 'pdf') {
+            $extension = 'pdf';
+        }
+
+        return "{$baseName}.{$extension}";
+    }
+
+    private function normalizedTemporaryReceiptOutputName(UploadedFile $uploadedReceipt): string
+    {
+        $originalName = trim((string) $uploadedReceipt->getClientOriginalName());
+
+        if ($originalName !== '') {
+            return $originalName;
+        }
+
+        $extension = trim((string) $uploadedReceipt->getClientOriginalExtension());
+
+        return $extension !== ''
+            ? "temporary-receipt.{$extension}"
+            : 'temporary-receipt.pdf';
+    }
+
+    private function safeUploadedReceiptFilename(string $fileName, string $fallbackBaseName): string
+    {
+        $extension = Str::of(pathinfo($fileName, PATHINFO_EXTENSION))
+            ->ascii()
+            ->lower()
+            ->replaceMatches('/[^a-z0-9]+/', '')
+            ->value();
+        $baseName = Str::of(pathinfo($fileName, PATHINFO_FILENAME))
+            ->ascii()
+            ->replaceMatches('/[^A-Za-z0-9._-]+/', '-')
+            ->trim('-._')
+            ->value();
+
+        if ($baseName === '') {
+            $baseName = $fallbackBaseName;
+        }
+
+        if (! in_array($extension, ['pdf', 'jpg', 'jpeg', 'png', 'webp'], true)) {
             $extension = 'pdf';
         }
 

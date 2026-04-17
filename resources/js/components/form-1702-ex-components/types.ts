@@ -37,8 +37,10 @@ export type Form1702ExBatchRow = {
     receiptJobStatus: ReceiptJobStatus;
     receiptJobError: string | null;
     receiptStoreUrl: string;
+    temporaryReceiptStoreUrl: string | null;
     receiptRemoveUrl: string | null;
     receiptDownloadUrl: string | null;
+    isTemporaryReceipt: boolean;
     regenerateUrl: string;
     pdfError: string | null;
     autoReceiptStatus:

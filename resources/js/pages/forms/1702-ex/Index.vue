@@ -7,6 +7,7 @@ import InputError from '@/components/InputError.vue';
 import Form1702ExRecipientDialog from '@/components/form-1702-ex-components/Form1702ExRecipientDialog.vue';
 import Form1702ExReceiptDialog from '@/components/form-1702-ex-components/Form1702ExReceiptDialog.vue';
 import Form1702ExRemoveReceiptDialog from '@/components/form-1702-ex-components/Form1702ExRemoveReceiptDialog.vue';
+import Form1702ExTemporaryReceiptDialog from '@/components/form-1702-ex-components/Form1702ExTemporaryReceiptDialog.vue';
 import PaginatedRowsTable from '@/components/form-1702-ex-components/PaginatedRowsTable.vue';
 import type {
     Form1702ExBatchRow,
@@ -92,6 +93,13 @@ const receiptForm = useForm<{
     values: {},
 });
 const removeReceiptForm = useForm<Record<string, never>>({});
+const temporaryReceiptForm = useForm<{
+    temporaryReceipt: File | null;
+    recipientEmail: string;
+}>({
+    temporaryReceipt: null,
+    recipientEmail: '',
+});
 const isUploadDialogOpen = ref(false);
 const isSettingsDialogOpen = ref(false);
 const isDeleteDialogOpen = ref(false);
@@ -99,11 +107,13 @@ const isRegenerateDialogOpen = ref(false);
 const isReceiptDialogOpen = ref(false);
 const isRecipientDialogOpen = ref(false);
 const isRemoveReceiptDialogOpen = ref(false);
+const isTemporaryReceiptDialogOpen = ref(false);
 const pendingDeleteRowIds = ref<string[]>([]);
 const pendingRecipientRow = ref<Form1702ExBatchRow | null>(null);
 const pendingRegenerateRow = ref<Form1702ExBatchRow | null>(null);
 const pendingReceiptRow = ref<Form1702ExBatchRow | null>(null);
 const pendingReceiptRemovalRow = ref<Form1702ExBatchRow | null>(null);
+const pendingTemporaryReceiptRow = ref<Form1702ExBatchRow | null>(null);
 const pollTimeoutId = ref<number | null>(null);
 const spreadsheetInput = ref<HTMLInputElement | null>(null);
 
@@ -206,11 +216,13 @@ watch(
             isReceiptDialogOpen.value = false;
             isRecipientDialogOpen.value = false;
             isRemoveReceiptDialogOpen.value = false;
+            isTemporaryReceiptDialogOpen.value = false;
             pendingDeleteRowIds.value = [];
             pendingRecipientRow.value = null;
             pendingRegenerateRow.value = null;
             pendingReceiptRow.value = null;
             pendingReceiptRemovalRow.value = null;
+            resetTemporaryReceiptDialogState();
             deleteRowsForm.reset();
             deleteRowsForm.clearErrors();
             recipientForm.reset();
@@ -381,6 +393,56 @@ function submitRecipient(): void {
     recipientForm.patch(pendingRecipientRow.value.updateRecipientUrl, {
         preserveScroll: true,
     });
+}
+
+function resetTemporaryReceiptDialogState(): void {
+    pendingTemporaryReceiptRow.value = null;
+    temporaryReceiptForm.reset();
+    temporaryReceiptForm.clearErrors();
+}
+
+function openTemporaryReceiptDialog(row: Form1702ExBatchRow): void {
+    pendingTemporaryReceiptRow.value = row;
+    temporaryReceiptForm.reset();
+    temporaryReceiptForm.temporaryReceipt = null;
+    temporaryReceiptForm.recipientEmail = row.recipientEmail ?? '';
+    temporaryReceiptForm.clearErrors();
+    isTemporaryReceiptDialogOpen.value = true;
+}
+
+function handleTemporaryReceiptDialogOpenChange(open: boolean): void {
+    isTemporaryReceiptDialogOpen.value = open;
+
+    if (!open) {
+        resetTemporaryReceiptDialogState();
+    }
+}
+
+function selectTemporaryReceipt(file: File | null): void {
+    temporaryReceiptForm.temporaryReceipt = file;
+    temporaryReceiptForm.clearErrors('temporaryReceipt');
+}
+
+function updateTemporaryReceiptRecipientEmail(value: string): void {
+    temporaryReceiptForm.recipientEmail = value;
+    temporaryReceiptForm.clearErrors('recipientEmail');
+}
+
+function submitTemporaryReceipt(): void {
+    if (
+        pendingTemporaryReceiptRow.value === null
+        || !pendingTemporaryReceiptRow.value.temporaryReceiptStoreUrl
+    ) {
+        return;
+    }
+
+    temporaryReceiptForm.post(
+        pendingTemporaryReceiptRow.value.temporaryReceiptStoreUrl,
+        {
+            forceFormData: true,
+            preserveScroll: true,
+        },
+    );
 }
 
 function resetReceiptValues(row: Form1702ExBatchRow | null): void {
@@ -707,6 +769,17 @@ function submitRemoveReceipt(): void {
             @update:open="isRecipientDialogOpen = $event"
             @update:recipient-email="recipientForm.recipientEmail = $event"
         />
+        <Form1702ExTemporaryReceiptDialog
+            :errors="temporaryReceiptForm.errors"
+            :open="isTemporaryReceiptDialogOpen"
+            :recipient-email="temporaryReceiptForm.recipientEmail"
+            :row="pendingTemporaryReceiptRow"
+            :temporary-receipt="temporaryReceiptForm.temporaryReceipt"
+            @select-temporary-receipt="selectTemporaryReceipt"
+            @submit="submitTemporaryReceipt"
+            @update:open="handleTemporaryReceiptDialogOpenChange"
+            @update:recipient-email="updateTemporaryReceiptRecipientEmail"
+        />
 
         <div class="flex flex-1 flex-col gap-6 p-4 md:p-6">
             <Card class="rounded-3xl">
@@ -854,6 +927,7 @@ function submitRemoveReceipt(): void {
                         @open-recipient-editor="openRecipientEditor"
                         @open-receipt="openReceiptDialog"
                         @open-remove-receipt="openRemoveReceiptDialog"
+                        @open-temporary-receipt="openTemporaryReceiptDialog"
                         @regenerate="regenerateRow"
                         @request-delete="requestDelete"
                     />
