@@ -12,6 +12,7 @@ import {
 import { computed } from 'vue';
 import AppLogo from '@/components/AppLogo.vue';
 import NavFooter from '@/components/NavFooter.vue';
+import NavForms from '@/components/NavForms.vue';
 import NavMain from '@/components/NavMain.vue';
 import NavUser from '@/components/NavUser.vue';
 import {
@@ -32,6 +33,7 @@ import type { Auth, NavItem } from '@/types';
 
 const page = usePage<{ auth: Auth }>();
 const auth = computed(() => page.props.auth);
+const isStaff = computed(() => auth.value.user?.role === 'staff');
 const homeHref = computed(() =>
     auth.value.user?.canAccessUserManagement
         ? '/users'
@@ -51,6 +53,11 @@ const mainNavItems = computed<NavItem[]>(() => {
                 title: 'Mailbox Accounts',
                 href: '/mailbox-accounts',
                 icon: Mail,
+            },
+            {
+                title: 'Aliases',
+                href: '/settings/aliases',
+                icon: FileStack,
             },
         ];
     }
@@ -82,22 +89,23 @@ const mainNavItems = computed<NavItem[]>(() => {
             icon: BriefcaseBusiness,
         },
         {
-            title: 'Company Name',
-            href: forms.form1702ex.index(),
-            icon: FileSpreadsheet,
-        },
-        {
             title: 'Doc Merge',
             href: docMerge.index(),
             icon: Files,
         },
-        {
-            title: 'Document Generator',
-            href: documentGenerator.index(),
-            icon: FileStack,
-        },
     ];
 });
+
+const formNavItems = computed<NavItem[]>(() => [
+    {
+        title: '1702EX',
+        href: forms.form1702ex.index(),
+    },
+    {
+        title: 'AFS',
+        href: documentGenerator.index(),
+    },
+]);
 
 const footerNavItems: NavItem[] = [
     
@@ -120,6 +128,7 @@ const footerNavItems: NavItem[] = [
 
         <SidebarContent>
             <NavMain :items="mainNavItems" />
+            <NavForms v-if="isStaff" :items="formNavItems" />
         </SidebarContent>
 
         <SidebarFooter>

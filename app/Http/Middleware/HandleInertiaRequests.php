@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use App\Support\FormFieldAliasResolver;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Inertia\Middleware;
@@ -60,6 +61,7 @@ class HandleInertiaRequests extends Middleware
                 ] : null,
             ],
             'sidebarOpen' => ! $request->hasCookie('sidebar_state') || $request->cookie('sidebar_state') === 'true',
+            'fieldAliasRegistry' => FormFieldAliasResolver::exportRegistry(),
         ];
     }
 }

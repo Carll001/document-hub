@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { router } from '@inertiajs/vue3';
 import {
+    ArrowUpDown,
     ChevronLeft,
     ChevronRight,
     Download,
@@ -213,14 +214,6 @@ function toggleSort(sort: Form1702ExRowFilters['sort']): void {
     });
 }
 
-function sortIndicator(sort: Form1702ExRowFilters['sort']): string {
-    if (props.filters.sort !== sort) {
-        return '';
-    }
-
-    return props.filters.direction === 'asc' ? '^' : 'v';
-}
-
 function isRowSelected(row: Form1702ExBatchRow): boolean {
     return selectedRowIds.value.includes(row.id);
 }
@@ -396,42 +389,36 @@ function autoReceiptLabel(row: Form1702ExBatchRow): string | null {
                             <Button
                                 type="button"
                                 variant="ghost"
-                                size="sm"
+                               
                                 class="h-auto px-0 font-medium"
                                 @click="toggleSort('uploadedAt')"
                             >
                                 Uploaded
-                                <span class="ml-1 text-xs text-muted-foreground">
-                                    {{ sortIndicator('uploadedAt') }}
-                                </span>
+                                <ArrowUpDown class="ml-2 size-4 text-muted-foreground" />
                             </Button>
                         </TableHead>
                         <TableHead>
                             <Button
                                 type="button"
                                 variant="ghost"
-                                size="sm"
-                                class="h-auto px-0 font-medium"
+                               
+                                class=" font-medium"
                                 @click="toggleSort('pdfStatus')"
                             >
                                 PDF status
-                                <span class="ml-1 text-xs text-muted-foreground">
-                                    {{ sortIndicator('pdfStatus') }}
-                                </span>
+                                <ArrowUpDown class="ml-2 size-4 text-muted-foreground" />
                             </Button>
                         </TableHead>
                         <TableHead>
                             <Button
                                 type="button"
                                 variant="ghost"
-                                size="sm"
+                               
                                 class="h-auto px-0 font-medium"
                                 @click="toggleSort('generatedAt')"
                             >
                                 Generated
-                                <span class="ml-1 text-xs text-muted-foreground">
-                                    {{ sortIndicator('generatedAt') }}
-                                </span>
+                                <ArrowUpDown class="ml-2 size-4 text-muted-foreground" />
                             </Button>
                         </TableHead>
                         <TableHead class="w-[1%] text-right">Actions</TableHead>

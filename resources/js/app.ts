@@ -4,6 +4,8 @@ import type { DefineComponent } from 'vue';
 import { createApp, h } from 'vue';
 import '../css/app.css';
 import { initializeTheme } from '@/composables/useAppearance';
+import type { AliasRegistry } from '@/lib/form-field-aliases';
+import { setAliasRegistry } from '@/lib/form-field-aliases';
 
 const appName = import.meta.env.VITE_APP_NAME || 'Laravel';
 
@@ -15,6 +17,14 @@ createInertiaApp({
             import.meta.glob<DefineComponent>('./pages/**/*.vue'),
         ),
     setup({ el, App, props, plugin }) {
+        const pageProps = (props.initialPage?.props ?? {}) as {
+            fieldAliasRegistry?: unknown;
+        };
+
+        if (pageProps.fieldAliasRegistry && typeof pageProps.fieldAliasRegistry === 'object') {
+            setAliasRegistry(pageProps.fieldAliasRegistry as AliasRegistry);
+        }
+
         createApp({ render: () => h(App, props) })
             .use(plugin)
             .mount(el);

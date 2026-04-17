@@ -2,8 +2,10 @@
 import { router } from '@inertiajs/vue3';
 import {
     Ban,
+    ChevronDown,
     ChevronLeft,
     ChevronRight,
+    ChevronUp,
     Download,
     Pencil,
     Eye,
@@ -200,12 +202,14 @@ function toggleSort(sort: Form1702ExRowFilters['sort']): void {
     });
 }
 
-function sortIndicator(sort: Form1702ExRowFilters['sort']): string {
+function sortDirection(
+    sort: Form1702ExRowFilters['sort'],
+): Form1702ExRowFilters['direction'] | null {
     if (props.filters.sort !== sort) {
-        return '';
+        return null;
     }
 
-    return props.filters.direction === 'asc' ? '^' : 'v';
+    return props.filters.direction;
 }
 
 function isRowSelected(row: Form1702ExBatchRow): boolean {
@@ -370,9 +374,14 @@ function requestCancel(row: Form1702ExBatchRow): void {
                                 @click="toggleSort('generatedAt')"
                             >
                                 Generated
-                                <span class="ml-1 text-xs text-muted-foreground">
-                                    {{ sortIndicator('generatedAt') }}
-                                </span>
+                                <ChevronUp
+                                    v-if="sortDirection('generatedAt') === 'asc'"
+                                    class="ml-1 size-4 text-muted-foreground"
+                                />
+                                <ChevronDown
+                                    v-else-if="sortDirection('generatedAt') === 'desc'"
+                                    class="ml-1 size-4 text-muted-foreground"
+                                />
                             </Button>
                         </TableHead>
                         <TableHead class="w-[1%] text-right">Actions</TableHead>

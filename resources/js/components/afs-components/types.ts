@@ -1,0 +1,59 @@
+import type { FormType as SharedFormType } from '@/lib/form-field-aliases';
+
+export type FlashState = {
+    success: string | null;
+    error: string | null;
+};
+
+export type SortDirection = 'asc' | 'desc';
+
+export type FormType = SharedFormType;
+
+export type UnifiedItem = {
+    id: number;
+    batch_id: number;
+    row_number: number;
+    company: string;
+    tin?: string | null;
+    status: string;
+    row_data: Record<string, string>;
+    docx_available: boolean;
+    pdf_available: boolean;
+    signature_applied: boolean;
+    signature_applied_at: string | null;
+    error_message: string | null;
+    source_excel_name: string;
+    template_name: string;
+    created_at: string | null;
+    updated_at: string | null;
+};
+
+export type PaginatedResponse<T> = {
+    current_page: number;
+    data: T[];
+    last_page: number;
+    per_page: number;
+    total: number;
+};
+
+export type SignatureAnchor = 'top_left' | 'top_right' | 'bottom_left' | 'bottom_right' | 'center';
+
+export type SignatureLayout = {
+    anchor: SignatureAnchor;
+    offset_x: number;
+    offset_y: number;
+    width: number;
+    height: number;
+};
+
+export type SignatureSettings = {
+    president: {
+        page2: SignatureLayout;
+        page3: SignatureLayout;
+    };
+    getor: {
+        page4: SignatureLayout;
+        page8: SignatureLayout;
+        preview_url: string;
+    };
+};

@@ -15,6 +15,7 @@ use App\Services\DocumentBatchActivityLogger;
 use App\Services\ExcelExtractionService;
 use App\Services\PdfSignatureStampService;
 use App\Services\SignatureImageService;
+use App\Support\FormFieldAliasResolver;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\File;
 use Illuminate\Http\JsonResponse;
@@ -415,7 +416,11 @@ class DocumentGeneratorController extends Controller
             $query->where('status', $validated['status']);
         }
         if (isset($validated['company_search']) && trim($validated['company_search']) !== '') {
-            $this->applyCompanySearch($query, $validated['company_search']);
+            $this->applyCompanySearch(
+                $query,
+                $validated['company_search'],
+                FormFieldAliasResolver::FORM_AFS,
+            );
         }
         if (isset($validated['signature_filter']) && $this->supportsItemSignatureAppliedAt()) {
             if ($validated['signature_filter'] === 'signed') {
@@ -434,6 +439,10 @@ class DocumentGeneratorController extends Controller
                     'id' => $item->id,
                     'row_number' => $item->row_number,
                     'company' => self::extractCompanyFromRowData($item->row_data ?? []),
+                    'tin' => FormFieldAliasResolver::resolveTin(
+                        $item->row_data ?? [],
+                        FormFieldAliasResolver::FORM_AFS,
+                    ),
                     'status' => $item->status,
                     'row_data' => $item->row_data ?? [],
                     'docx_available' => ! empty($item->docx_path),
@@ -1146,7 +1155,11 @@ class DocumentGeneratorController extends Controller
         }
 
         if (isset($validated['company_search']) && trim($validated['company_search']) !== '') {
-            $this->applyCompanySearch($query, $validated['company_search']);
+            $this->applyCompanySearch(
+                $query,
+                $validated['company_search'],
+                FormFieldAliasResolver::FORM_AFS,
+            );
         }
         if (isset($validated['signature_filter']) && $this->supportsItemSignatureAppliedAt()) {
             if ($validated['signature_filter'] === 'signed') {
@@ -1255,6 +1268,10 @@ class DocumentGeneratorController extends Controller
             'id' => $item->id,
             'row_number' => $item->row_number,
             'company' => self::extractCompanyFromRowData($item->row_data ?? []),
+            'tin' => FormFieldAliasResolver::resolveTin(
+                $item->row_data ?? [],
+                FormFieldAliasResolver::FORM_AFS,
+            ),
             'status' => $item->status,
             'row_data' => $item->row_data ?? [],
             'docx_available' => ! empty($item->docx_path),
@@ -1268,26 +1285,64 @@ class DocumentGeneratorController extends Controller
         ];
     }
 
-    private function applyCompanySearch(Builder $query, string $companySearch): void
+    private function applyCompanySearch(
+        Builder $query,
+        string $companySearch,
+        string $formType
+    ): void
     {
-        $search = '%'.mb_strtolower(trim($companySearch)).'%';
+        $rawSearch = mb_strtolower(trim($companySearch));
+        $search = '%'.$rawSearch.'%';
+        $normalizedSearch = '%'.(preg_replace('/[^a-z0-9]+/', '', $rawSearch) ?? '').'%';
+        $tinDigits = preg_replace('/\D+/', '', $rawSearch) ?? '';
         $driver = $query->getModel()->getConnection()->getDriverName();
+        $normalizedTinAliases = array_map(
+            static fn (string $alias): string => FormFieldAliasResolver::normalizeKey($alias),
+            FormFieldAliasResolver::aliasesFor('tin', $formType),
+        );
 
         if ($driver === 'pgsql') {
-            $query->whereRaw(
-                'exists (
-                    select 1
-                    from jsonb_each_text(row_data::jsonb) as company_entry(key, value)
-                    where lower(company_entry.key) like ?
-                    and lower(company_entry.value) like ?
-                )',
-                ['%company%', $search]
-            );
+            $query->where(function (Builder $innerQuery) use ($search, $normalizedSearch, $tinDigits, $normalizedTinAliases): void {
+                $innerQuery->whereRaw(
+                    "exists (
+                        select 1
+                        from jsonb_each_text(row_data::jsonb) as row_entry(key, value)
+                        where lower(row_entry.value) like ?
+                        or regexp_replace(lower(row_entry.value), '[^a-z0-9]+', '', 'g') like ?
+                    )",
+                    [$search, $normalizedSearch]
+                );
+
+                if ($tinDigits === '' || $normalizedTinAliases === []) {
+                    return;
+                }
+
+                $tinAliasPlaceholders = implode(
+                    ', ',
+                    array_fill(0, count($normalizedTinAliases), '?')
+                );
+                $tinDigitSearch = '%'.$tinDigits.'%';
+
+                $innerQuery->orWhereRaw(
+                    "exists (
+                        select 1
+                        from jsonb_each_text(row_data::jsonb) as row_entry(key, value)
+                        where regexp_replace(lower(row_entry.key), '[^a-z0-9]+', '', 'g')
+                            in ({$tinAliasPlaceholders})
+                        and regexp_replace(row_entry.value, '\\D+', '', 'g') like ?
+                    )",
+                    [...$normalizedTinAliases, $tinDigitSearch]
+                );
+            });
 
             return;
         }
 
-        $query->whereRaw('LOWER(CAST(row_data AS CHAR)) LIKE ?', [$search]);
+        $query->whereRaw(
+            "LOWER(CAST(row_data AS CHAR)) LIKE ?
+            OR REPLACE(REPLACE(REPLACE(LOWER(CAST(row_data AS CHAR)), '-', ''), ' ', ''), '.', '') LIKE ?",
+            [$search, $normalizedSearch]
+        );
     }
 
     /**

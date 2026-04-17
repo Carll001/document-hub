@@ -592,11 +592,11 @@ const itemColumns = computed<ColumnDef<GeneratedFileItem>[]>(() => [
 
                     <div class="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
                         <div class="w-full max-w-[360px]">
-                            <Label for="company-search" class="mb-2 block">Search company</Label>
+                            <Label for="company-search" class="mb-2 block">Search company or TIN</Label>
                             <Input
                                 id="company-search"
                                 :model-value="companySearch"
-                                placeholder="Type company name..."
+                                placeholder="Type company name or TIN..."
                                 @input="onCompanySearchInput"
                             />
                         </div>

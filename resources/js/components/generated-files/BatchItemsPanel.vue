@@ -4,7 +4,7 @@ import {
     Eye,
     FileText,
     Loader2,
-    MoreVertical,
+    MoreHorizontal,
     Pencil,
     PenLine,
     Printer,
@@ -1068,15 +1068,14 @@ const itemColumns = computed<ColumnDef<BatchItem>[]>(() => [
                                         h(
                                             Button,
                                             {
-                                                variant: 'outline',
-                                                size: 'icon',
-                                                class: 'size-8',
+                                                variant: 'ghost',
+                                                size: 'icon-sm',
                                                 'aria-label': 'More actions',
                                                 title: 'More actions',
                                             },
                                             {
                                                 default: () =>
-                                                    h(MoreVertical, {
+                                                    h(MoreHorizontal, {
                                                         class: 'size-4',
                                                     }),
                                             },
@@ -1307,12 +1306,12 @@ onBeforeUnmount(() => {
             <div class="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
                 <div class="w-full max-w-[360px]">
                     <Label for="generated-company-search" class="mb-2 block"
-                        >Search company</Label
+                        >Search company or TIN</Label
                     >
                     <Input
                         id="generated-company-search"
                         :model-value="companySearch"
-                        placeholder="Type company name..."
+                        placeholder="Type company name or TIN..."
                         @input="onCompanySearchInput"
                     />
                 </div>

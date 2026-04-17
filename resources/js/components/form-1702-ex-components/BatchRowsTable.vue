@@ -9,6 +9,8 @@ import {
 } from '@tanstack/vue-table';
 import {
     ArrowUpDown,
+    ChevronDown,
+    ChevronUp,
     Download,
     Eye,
     FileText,
@@ -405,7 +407,7 @@ function emptyMessage(): string {
                                 type="button"
                                 variant="ghost"
                                 size="sm"
-                                class="h-auto px-0 font-medium"
+                                class="h-auto px-10 font-medium"
                                 @click="
                                     header.column.toggleSorting(
                                         header.column.getIsSorted() === 'asc',
@@ -413,19 +415,18 @@ function emptyMessage(): string {
                                 "
                             >
                                 {{ columnLabel(header.column.id) }}
-                                <span
-                                    class="ml-1 text-xs text-muted-foreground"
-                                >
-                                    {{
-                                        header.column.getIsSorted() === 'asc'
-                                            ? '^'
-                                            : header.column.getIsSorted() ===
-                                                'desc'
-                                              ? 'v'
-                                              : ''
-                                    }}
-                                </span>
+                                <ChevronUp
+                                    v-if="header.column.getIsSorted() === 'asc'"
+                                    class="ml-2 size-4 text-muted-foreground"
+                                />
+                                <ChevronDown
+                                    v-else-if="
+                                        header.column.getIsSorted() === 'desc'
+                                    "
+                                    class="ml-2 size-4 text-muted-foreground"
+                                />
                                 <ArrowUpDown
+                                    v-else
                                     class="ml-2 size-4 text-muted-foreground"
                                 />
                             </Button>
