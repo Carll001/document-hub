@@ -31,7 +31,11 @@ import type { Auth, NavItem } from '@/types';
 const page = usePage<{ auth: Auth }>();
 const auth = computed(() => page.props.auth);
 const homeHref = computed(() =>
-    auth.value.user?.canAccessUserManagement ? '/users' : dashboard(),
+    auth.value.user?.canAccessUserManagement
+        ? '/users'
+        : auth.value.user?.canAccessClientPortal
+            ? '/client/files'
+            : dashboard(),
 );
 const mainNavItems = computed<NavItem[]>(() => {
     if (auth.value.user?.canAccessUserManagement) {
@@ -45,6 +49,16 @@ const mainNavItems = computed<NavItem[]>(() => {
                 title: 'Mailbox Accounts',
                 href: '/mailbox-accounts',
                 icon: Mail,
+            },
+        ];
+    }
+
+    if (auth.value.user?.canAccessClientPortal) {
+        return [
+            {
+                title: 'My Files',
+                href: '/client/files',
+                icon: FileSpreadsheet,
             },
         ];
     }

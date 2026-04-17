@@ -63,4 +63,9 @@ class User extends Authenticatable
     {
         return $this->isSuperadmin() && $user->isStaff();
     }
+
+    public function isClient(): bool
+    {
+        return $this->role === UserRole::Client;
+    }
 }

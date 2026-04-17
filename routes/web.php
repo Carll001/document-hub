@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\ClientController;
+use App\Http\Controllers\ClientPortalController;
 use App\Http\Controllers\DocMergeBatchController;
 use App\Http\Controllers\DocMergeController;
 use App\Http\Controllers\EmailSyncAccountManagementController;
@@ -21,6 +22,13 @@ Route::inertia('/', 'Welcome', [
 
 Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('dashboard', DashboardController::class)->name('dashboard');
+    Route::middleware('client')
+        ->controller(ClientPortalController::class)
+        ->group(function () {
+            Route::get('client/files', 'files')->name('client.files');
+            Route::get('client/files/{form1702ExBatchRow}/preview', 'preview')->name('client.files.preview');
+            Route::get('client/files/{form1702ExBatchRow}/download', 'download')->name('client.files.download');
+        });
     Route::middleware('staff')->group(function () {
         Route::controller(ClientController::class)
             ->prefix('clients')

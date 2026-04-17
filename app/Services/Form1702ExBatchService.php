@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Enums\UserRole;
+use App\Mail\ClientCredentialsEmail;
 use App\Models\Client;
 use App\Models\Company;
 use App\Models\Form1702ExBatch;
@@ -11,6 +13,9 @@ use App\Models\Form1702ExBatchRow;
 use App\Models\User;
 use App\Services\EmailSync\BirReceiptAutoMatchService;
 use App\Support\Form1702ExRecipientEmailNormalizer;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -90,6 +95,8 @@ class Form1702ExBatchService
             $tinsToSync = [];
             $clientCache = [];
             $companyCache = [];
+            $newClientCredentialsByClientId = [];
+            $credentialRecipientsByClientId = [];
 
             foreach ($rows->chunk(self::STORE_IMPORT_CHUNK_SIZE) as $chunk) {
                 foreach ($chunk as $row) {
@@ -98,6 +105,18 @@ class Form1702ExBatchService
                         is_string($row['recipientEmail'] ?? null) ? $row['recipientEmail'] : null,
                     );
                     [$client, $company] = $this->resolveClientAndCompany($batch, $payload, $clientCache, $companyCache);
+                    if ($client instanceof Client) {
+                        $clientCredentials = $this->ensureClientLoginUser($client, $payload);
+
+                        if ($clientCredentials !== null) {
+                            $newClientCredentialsByClientId[$client->id] = $clientCredentials;
+                        }
+
+                        if ($recipientEmail !== null) {
+                            $credentialRecipientsByClientId[$client->id] ??= [];
+                            $credentialRecipientsByClientId[$client->id][$recipientEmail] = true;
+                        }
+                    }
                     $normalizedTin = $this->normalizeTin($payload['tin'] ?? null);
                     $receiptOwner = $normalizedTin !== null
                         ? $existingRows->first(fn (Form1702ExBatchRow $existingRow): bool => $this->rowOwnsReceiptForTin($existingRow, $normalizedTin))
@@ -154,6 +173,10 @@ class Form1702ExBatchService
             }
 
             $this->birReceiptAutoMatchService->syncStoredEmailsForTins($tinsToSync);
+            $this->dispatchNewClientCredentialEmails(
+                $newClientCredentialsByClientId,
+                $credentialRecipientsByClientId,
+            );
 
             return $createdRows;
         });
@@ -293,5 +316,120 @@ class Form1702ExBatchService
             && filled($row->receipt_storage_path)
             && filled($row->receipt_file_name)
             && ! $row->receipt_is_temporary;
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     * @return array{loginEmail: string, plainPassword: string}|null
+     */
+    private function ensureClientLoginUser(Client $client, array $payload): ?array
+    {
+        $client->loadMissing('loginUser');
+
+        if ($client->loginUser instanceof User) {
+            return null;
+        }
+
+        $sourceClientName = trim((string) ($payload['client_name'] ?? $client->name));
+
+        if ($sourceClientName === '' || $client->name === self::UNASSIGNED_CLIENT_NAME) {
+            return null;
+        }
+
+        $loginEmail = $this->baseClientLoginEmail($sourceClientName);
+
+        if (User::query()->where('email', $loginEmail)->exists()) {
+            Log::warning('Client login provisioning skipped because login email already exists.', [
+                'client_id' => $client->id,
+                'client_name' => $client->name,
+                'login_email' => $loginEmail,
+            ]);
+
+            return null;
+        }
+
+        $plainPassword = (string) Str::password(16);
+        $loginUser = User::query()->create([
+            'name' => $client->name,
+            'email' => $loginEmail,
+            'password' => Hash::make($plainPassword),
+            'role' => UserRole::Client->value,
+            'email_verified_at' => now(),
+        ]);
+
+        $client->forceFill([
+            'login_user_id' => $loginUser->id,
+        ])->save();
+
+        return [
+            'loginEmail' => $loginEmail,
+            'plainPassword' => $plainPassword,
+        ];
+    }
+
+    private function baseClientLoginEmail(string $clientName): string
+    {
+        $baseLocalPart = mb_strtolower(preg_replace('/\s+/u', '', $clientName) ?? '');
+        $baseLocalPart = preg_replace('/[^a-z0-9._-]+/i', '', $baseLocalPart) ?? '';
+
+        if ($baseLocalPart === '') {
+            $baseLocalPart = 'client';
+        }
+
+        return "{$baseLocalPart}@analytica.ph";
+    }
+
+    /**
+     * @param  array<int, array{loginEmail: string, plainPassword: string}>  $newClientCredentialsByClientId
+     * @param  array<int, array<string, bool>>  $credentialRecipientsByClientId
+     */
+    private function dispatchNewClientCredentialEmails(
+        array $newClientCredentialsByClientId,
+        array $credentialRecipientsByClientId,
+    ): void {
+        if ($newClientCredentialsByClientId === []) {
+            return;
+        }
+
+        $clients = Client::query()
+            ->whereIn('id', array_keys($newClientCredentialsByClientId))
+            ->get()
+            ->keyBy('id');
+        $loginUrl = route('login');
+
+        foreach ($newClientCredentialsByClientId as $clientId => $credentials) {
+            $client = $clients->get($clientId);
+
+            if (! $client instanceof Client) {
+                continue;
+            }
+
+            $recipientEmails = array_keys($credentialRecipientsByClientId[$clientId] ?? []);
+
+            if ($recipientEmails === []) {
+                Log::warning('Client login user created without credential recipients from import rows.', [
+                    'client_id' => $clientId,
+                    'client_name' => $client->name,
+                    'login_email' => $credentials['loginEmail'],
+                ]);
+
+                continue;
+            }
+
+            foreach ($recipientEmails as $recipientEmail) {
+                try {
+                    Mail::to($recipientEmail)->queue(
+                        (new ClientCredentialsEmail(
+                            $client,
+                            $credentials['loginEmail'],
+                            $credentials['plainPassword'],
+                            $loginUrl,
+                        ))->afterCommit(),
+                    );
+                } catch (\Throwable $exception) {
+                    report($exception);
+                }
+            }
+        }
     }
 }

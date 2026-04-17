@@ -7,7 +7,7 @@ export type ManagedUser = {
     id: number;
     name: string;
     email: string;
-    role: 'staff' | 'superadmin';
+    role: 'staff' | 'client';
     roleLabel: string;
     createdAt: string | null;
     updatedAt: string | null;

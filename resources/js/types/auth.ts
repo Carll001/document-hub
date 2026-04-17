@@ -1,4 +1,4 @@
-export type UserRole = 'staff' | 'superadmin';
+export type UserRole = 'staff' | 'superadmin' | 'client';
 
 export type User = {
     id: number;
@@ -11,6 +11,7 @@ export type User = {
     role: UserRole;
     canAccessDocMerge: boolean;
     canAccessEmailSync: boolean;
+    canAccessClientPortal: boolean;
     canAccessUserManagement: boolean;
     canAccessMailboxAccounts: boolean;
     [key: string]: unknown;

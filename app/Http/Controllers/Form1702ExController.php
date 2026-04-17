@@ -1542,9 +1542,41 @@ class Form1702ExController extends Controller
         Request $request,
         Form1702ExBatchRow $row,
     ): void {
-        $row->loadMissing('batch.user');
+        $user = $request->user();
+        $row->loadMissing('batch.user', 'client.loginUser');
 
-        abort_unless($row->batch->user->is($request->user()), 404);
+        if ($row->batch->user->is($user)) {
+            return;
+        }
+
+        abort_unless($this->clientCanAccessStandaloneRow($row, $user), 404);
+    }
+
+    private function clientCanAccessStandaloneRow(Form1702ExBatchRow $row, $user): bool
+    {
+        if (! $user || ! method_exists($user, 'isClient') || ! $user->isClient()) {
+            return false;
+        }
+
+        if ($row->isSkippedDuplicate()) {
+            return false;
+        }
+
+        if (
+            $row->pdf_status !== Form1702ExBatchRow::PDF_STATUS_GENERATED
+            || ! filled($row->generated_pdf_storage_path)
+            || ! filled($row->receipt_storage_path)
+            || ! filled($row->receipt_file_name)
+            || $row->receipt_is_temporary
+        ) {
+            return false;
+        }
+
+        $row->loadMissing('client.loginUser');
+
+        return $row->client !== null
+            && $row->client->loginUser !== null
+            && (int) $row->client->loginUser->getKey() === (int) $user->getKey();
     }
 
     private function rowOwnershipQuery(Request $request)

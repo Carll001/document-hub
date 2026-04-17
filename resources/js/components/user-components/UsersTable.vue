@@ -71,6 +71,7 @@ const emit = defineEmits<{
                         <TableHead>#</TableHead>
                         <TableHead>Name</TableHead>
                         <TableHead>Email</TableHead>
+                        <TableHead>Role</TableHead>
                         <TableHead>Created</TableHead>
                         <TableHead class="w-[1%] text-right">Actions</TableHead>
                     </TableRow>
@@ -102,6 +103,9 @@ const emit = defineEmits<{
                         </TableCell>
                         <TableCell class="text-sm text-muted-foreground">
                             {{ user.email }}
+                        </TableCell>
+                        <TableCell class="text-sm text-muted-foreground">
+                            {{ user.roleLabel }}
                         </TableCell>
                         <TableCell class="text-sm text-muted-foreground">
                             {{ props.formatDateTime(user.createdAt) }}

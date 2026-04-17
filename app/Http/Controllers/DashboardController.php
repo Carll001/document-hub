@@ -26,6 +26,10 @@ class DashboardController extends Controller
             return to_route('users.index');
         }
 
+        if ($user->isClient()) {
+            return to_route('client.files');
+        }
+
         $syncedEmailQuery = SyncedEmail::query()
             ->visibleTo($user);
 

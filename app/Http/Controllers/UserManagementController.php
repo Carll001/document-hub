@@ -174,7 +174,7 @@ class UserManagementController extends Controller
     private function userPage(int $page): LengthAwarePaginator
     {
         return User::query()
-            ->where('role', UserRole::Staff)
+            ->whereIn('role', [UserRole::Staff, UserRole::Client])
             ->orderByDesc('created_at')
             ->orderByDesc('id')
             ->paginate(self::USERS_PER_PAGE, ['*'], 'page', $page);

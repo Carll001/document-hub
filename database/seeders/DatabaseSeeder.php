@@ -18,19 +18,19 @@ class DatabaseSeeder extends Seeder
 
         User::updateOrCreate([
             'name' => 'Super Admin',
-            'email' => 'superadmin@gmail.com',
+            'email' => 'bosxsuperadmin@analytica.ph',
             'role' => UserRole::Superadmin,
-            'password' => Hash::make('password'),
+            'password' => Hash::make('feshword'),
         ]);
         User::updateOrCreate([
-            'name' => 'user',
-            'email' => 'user@gmail.com',
+            'name' => 'Sample User',
+            'email' => 'bosxuser1@gmail.com',
             'role' => UserRole::Staff,
-            'password' => Hash::make('password'),
+            'password' => Hash::make('feshword'),
         ]);
         User::updateOrCreate([
-            'name' => 'user2',
-            'email' => 'user2@gmail.com',
+            'name' => 'Sample User 2',
+            'email' => 'bosxuser2@gmail.com',
             'role' => UserRole::Staff,
             'password' => Hash::make('password'),
         ]);

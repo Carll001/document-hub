@@ -7,6 +7,8 @@ namespace Tests\Feature;
 use App\Enums\UserRole;
 use App\Jobs\ProcessForm1702ExBatchRows;
 use App\Jobs\ProcessForm1702ExRowsExport;
+use App\Mail\ClientCredentialsEmail;
+use App\Models\Client;
 use App\Models\Form1702ExBatch;
 use App\Models\Form1702ExBatchRow;
 use App\Models\SyncedEmail;
@@ -16,6 +18,7 @@ use App\Services\Form1702ExRowsExportService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Inertia\Testing\AssertableInertia as Assert;
@@ -242,11 +245,11 @@ class Form1702ExTest extends TestCase
         );
 
         $this->actingAs($staff)
-            ->post(route('forms.1702-ex.import.store'), [
+            ->post(route('forms.form1702ex.import.store'), [
                 'spreadsheet' => $upload,
                 'receiptAcceptanceStartDate' => '2026-04-10',
             ])
-            ->assertRedirect(route('forms.1702-ex.index'));
+            ->assertRedirect(route('forms.form1702ex.index'));
 
         $batch = Form1702ExBatch::query()->whereBelongsTo($staff)->sole();
         $row = Form1702ExBatchRow::query()
@@ -364,6 +367,168 @@ class Form1702ExTest extends TestCase
         $this->actingAs($staff)
             ->get(route('forms.1702-ex.alignment'))
             ->assertRedirect(route('forms.1702-ex.index'));
+    }
+
+    public function test_import_auto_provisions_a_client_login_and_queues_credentials_to_all_unique_recipients(): void
+    {
+        Queue::fake();
+        Mail::fake();
+
+        $staff = User::factory()->create();
+        $upload = UploadedFile::fake()->createWithContent(
+            '1702-ex-import.csv',
+            implode("\n", [
+                'registered_name,tin,recipient,client_name',
+                'Alpha Ventures OPC,0101112220000,recipient.one@example.com,Acme Client',
+                'Bravo Ventures OPC,0101112220001,recipient.two@example.com,Acme Client',
+                'Charlie Ventures OPC,0101112220002,recipient.one@example.com,Acme Client',
+            ]),
+        );
+
+        $this->actingAs($staff)
+            ->post(route('forms.form1702ex.import.store'), [
+                'spreadsheet' => $upload,
+                'receiptAcceptanceStartDate' => '2026-04-10',
+            ])
+            ->assertRedirect(route('forms.form1702ex.index'));
+
+        $client = Client::query()
+            ->whereBelongsTo($staff)
+            ->where('name_normalized', 'acme client')
+            ->first();
+
+        $this->assertNotNull($client);
+        $this->assertNotNull($client?->login_user_id);
+        $this->assertDatabaseHas('users', [
+            'id' => $client?->login_user_id,
+            'role' => UserRole::Client->value,
+            'email' => 'acmeclient@analytica.ph',
+        ]);
+
+        Mail::assertQueued(ClientCredentialsEmail::class, function (ClientCredentialsEmail $mail): bool {
+            return $mail->hasTo('recipient.one@example.com')
+                && $mail->loginEmail === 'acmeclient@analytica.ph';
+        });
+        Mail::assertQueued(ClientCredentialsEmail::class, function (ClientCredentialsEmail $mail): bool {
+            return $mail->hasTo('recipient.two@example.com')
+                && $mail->loginEmail === 'acmeclient@analytica.ph';
+        });
+        Mail::assertQueued(ClientCredentialsEmail::class, 2);
+    }
+
+    public function test_import_skips_client_login_provisioning_for_unassigned_client_names(): void
+    {
+        Queue::fake();
+        Mail::fake();
+
+        $staff = User::factory()->create();
+        $upload = UploadedFile::fake()->createWithContent(
+            '1702-ex-import.csv',
+            implode("\n", [
+                'registered_name,tin,recipient,client_name',
+                'Alpha Ventures OPC,0101112220000,recipient.one@example.com,',
+            ]),
+        );
+
+        $this->actingAs($staff)
+            ->post(route('forms.form1702ex.import.store'), [
+                'spreadsheet' => $upload,
+                'receiptAcceptanceStartDate' => '2026-04-10',
+            ])
+            ->assertRedirect(route('forms.form1702ex.index'));
+
+        $unassignedClient = Client::query()
+            ->whereBelongsTo($staff)
+            ->where('name_normalized', 'unassigned client')
+            ->first();
+
+        $this->assertNotNull($unassignedClient);
+        $this->assertNull($unassignedClient?->login_user_id);
+        Mail::assertNothingQueued();
+    }
+
+    public function test_reimport_does_not_recreate_or_rotate_existing_client_login_credentials(): void
+    {
+        Queue::fake();
+        Mail::fake();
+
+        $staff = User::factory()->create();
+        $firstUpload = UploadedFile::fake()->createWithContent(
+            '1702-ex-import-first.csv',
+            implode("\n", [
+                'registered_name,tin,recipient,client_name',
+                'Alpha Ventures OPC,0101112220000,recipient.one@example.com,Acme Client',
+            ]),
+        );
+
+        $this->actingAs($staff)
+            ->post(route('forms.form1702ex.import.store'), [
+                'spreadsheet' => $firstUpload,
+                'receiptAcceptanceStartDate' => '2026-04-10',
+            ])
+            ->assertRedirect(route('forms.form1702ex.index'));
+
+        $client = Client::query()
+            ->whereBelongsTo($staff)
+            ->where('name_normalized', 'acme client')
+            ->firstOrFail();
+        $originalLoginUserId = (int) $client->login_user_id;
+
+        Mail::assertQueued(ClientCredentialsEmail::class, 1);
+        Mail::fake();
+
+        $secondUpload = UploadedFile::fake()->createWithContent(
+            '1702-ex-import-second.csv',
+            implode("\n", [
+                'registered_name,tin,recipient,client_name',
+                'Bravo Ventures OPC,0101112220001,recipient.two@example.com,Acme Client',
+            ]),
+        );
+
+        $this->actingAs($staff)
+            ->post(route('forms.form1702ex.import.store'), [
+                'spreadsheet' => $secondUpload,
+                'receiptAcceptanceStartDate' => '2026-04-10',
+            ])
+            ->assertRedirect(route('forms.form1702ex.index'));
+
+        $client->refresh();
+        $this->assertSame($originalLoginUserId, (int) $client->login_user_id);
+        Mail::assertNothingQueued();
+    }
+
+    public function test_import_client_login_provisioning_is_skipped_when_base_email_already_exists(): void
+    {
+        Queue::fake();
+        Mail::fake();
+
+        User::factory()->create([
+            'email' => 'acmeclient@analytica.ph',
+        ]);
+
+        $staff = User::factory()->create();
+        $upload = UploadedFile::fake()->createWithContent(
+            '1702-ex-import.csv',
+            implode("\n", [
+                'registered_name,tin,recipient,client_name',
+                'Alpha Ventures OPC,0101112220000,recipient.one@example.com,Acme Client',
+            ]),
+        );
+
+        $this->actingAs($staff)
+            ->post(route('forms.form1702ex.import.store'), [
+                'spreadsheet' => $upload,
+                'receiptAcceptanceStartDate' => '2026-04-10',
+            ])
+            ->assertRedirect(route('forms.form1702ex.index'));
+
+        $client = Client::query()
+            ->whereBelongsTo($staff)
+            ->where('name_normalized', 'acme client')
+            ->firstOrFail();
+
+        $this->assertNull($client->login_user_id);
+        Mail::assertNothingQueued();
     }
 
     public function test_index_lists_rows_from_multiple_internal_batches_without_exposing_batch_names(): void

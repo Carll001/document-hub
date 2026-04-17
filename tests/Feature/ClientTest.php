@@ -156,6 +156,48 @@ class ClientTest extends TestCase
             ->assertNotFound();
     }
 
+    public function test_client_show_and_send_exclude_temporary_receipt_rows_from_completed_counts(): void
+    {
+        Storage::fake('local');
+        $this->withoutVite();
+
+        $staff = User::factory()->create();
+        $client = Client::query()->create([
+            'user_id' => $staff->id,
+            'name' => 'Temporary Scope Client',
+            'name_normalized' => 'temporary scope client',
+        ]);
+        $company = Company::query()->create([
+            'user_id' => $staff->id,
+            'client_id' => $client->id,
+            'name' => 'Scoped Company',
+            'name_normalized' => 'scoped company',
+            'tin' => '300000000001',
+            'tin_normalized' => '300000000001',
+        ]);
+        $batch = Form1702ExBatch::query()->create([
+            'user_id' => $staff->id,
+            'name' => 'Scoped Batch',
+        ]);
+
+        $this->createCompletedRow($batch, $client, $company, [
+            'receipt_is_temporary' => true,
+        ]);
+
+        $this->actingAs($staff)
+            ->get(route('clients.show', ['client' => $client]))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('ClientShow')
+                ->where('client.folder.completedCount', 0)
+                ->where('client.folder.canSend', false));
+
+        $this->actingAs($staff)
+            ->post(route('clients.forms.form1702ex.send', ['client' => $client]))
+            ->assertRedirect(route('clients.show', ['client' => $client]))
+            ->assertSessionHas('error', 'No completed 1702-EX files are ready for this client yet.');
+    }
+
     private function createCompletedRow(
         Form1702ExBatch $batch,
         Client $client,
@@ -190,6 +232,7 @@ class ClientTest extends TestCase
             'receipt_file_name' => 'completed-row-receipt.pdf',
             'receipt_storage_path' => $receiptPath,
             'receipt_file_size' => Storage::disk('local')->size($receiptPath),
+            'receipt_is_temporary' => false,
             'receipt_job_status' => null,
             'receipt_job_error' => null,
         ], $overrides));

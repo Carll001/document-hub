@@ -33,6 +33,11 @@ class UserManagementTest extends TestCase
             'email' => 'staff@example.com',
             'role' => UserRole::Staff,
         ]);
+        $client = User::factory()->create([
+            'name' => 'Client User',
+            'email' => 'client@example.com',
+            'role' => UserRole::Client,
+        ]);
 
         $this->actingAs($superadmin)
             ->get(route('users.index'))
@@ -41,11 +46,19 @@ class UserManagementTest extends TestCase
                 ->component('Users')
                 ->where('storeUrl', route('users.store'))
                 ->where('usersPageUrl', route('users.list'))
-                ->has('users', 1)
-                ->where('users.0.id', $staff->id)
-                ->where('users.0.name', 'Staff Member')
-                ->where('users.0.email', 'staff@example.com')
-                ->where('users.0.role', UserRole::Staff->value)
+                ->where('users', fn (array $users): bool => collect($users)->count() === 2
+                    && collect($users)->contains(fn (array $user): bool =>
+                        $user['id'] === $staff->id
+                        && $user['role'] === UserRole::Staff->value
+                        && $user['roleLabel'] === UserRole::Staff->label()
+                        && $user['canEdit'] === true
+                        && is_string($user['deleteUrl']))
+                    && collect($users)->contains(fn (array $user): bool =>
+                        $user['id'] === $client->id
+                        && $user['role'] === UserRole::Client->value
+                        && $user['roleLabel'] === UserRole::Client->label()
+                        && $user['canEdit'] === false
+                        && $user['deleteUrl'] === null))
                 ->where('hasMoreUsers', false)
                 ->where('nextUsersCursor', null),
             );
@@ -54,8 +67,11 @@ class UserManagementTest extends TestCase
             ->get(route('users.index'))
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
-                ->has('users', 1)
-                ->where('users.0.id', $staff->id),
+                ->where('users', fn (array $users): bool => collect($users)->count() === 2
+                    && collect($users)->contains(fn (array $user): bool => $user['id'] === $staff->id)
+                    && collect($users)->contains(fn (array $user): bool => $user['id'] === $client->id)
+                    && ! collect($users)->contains(fn (array $user): bool => $user['id'] === $superadmin->id)
+                    && ! collect($users)->contains(fn (array $user): bool => $user['id'] === $otherSuperadmin->id)),
             );
 
         $this->assertDatabaseHas('users', [

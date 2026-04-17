@@ -12,6 +12,7 @@ use Illuminate\Support\Str;
 
 #[Fillable([
     'user_id',
+    'login_user_id',
     'uuid',
     'name',
     'name_normalized',
@@ -30,6 +31,11 @@ class Client extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function loginUser(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'login_user_id');
     }
 
     public function companies(): HasMany

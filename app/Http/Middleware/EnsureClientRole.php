@@ -8,7 +8,7 @@ use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
-class EnsureStaffRole
+class EnsureClientRole
 {
     /**
      * Handle an incoming request.
@@ -17,7 +17,7 @@ class EnsureStaffRole
     {
         $user = $request->user();
 
-        if ($user && method_exists($user, 'isStaff') && $user->isStaff()) {
+        if ($user && method_exists($user, 'isClient') && $user->isClient()) {
             return $next($request);
         }
 
@@ -25,10 +25,7 @@ class EnsureStaffRole
             abort(403);
         }
 
-        if ($user && method_exists($user, 'isClient') && $user->isClient()) {
-            return redirect()->route('client.files');
-        }
-
-        return redirect()->route('users.index');
+        return redirect()->route('dashboard');
     }
 }
+

@@ -2,6 +2,7 @@
 
 use App\Http\Middleware\EnsureStaffRole;
 use App\Http\Middleware\EnsureSuperadminRole;
+use App\Http\Middleware\EnsureClientRole;
 use App\Http\Middleware\HandleAppearance;
 use App\Http\Middleware\HandleInertiaRequests;
 use Illuminate\Foundation\Application;
@@ -20,6 +21,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'staff' => EnsureStaffRole::class,
             'superadmin' => EnsureSuperadminRole::class,
+            'client' => EnsureClientRole::class,
         ]);
 
         $middleware->web(append: [

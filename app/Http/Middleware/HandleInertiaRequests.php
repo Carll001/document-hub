@@ -54,6 +54,7 @@ class HandleInertiaRequests extends Middleware
                     'role' => $user->role?->value,
                     'canAccessDocMerge' => $user->isStaff(),
                     'canAccessEmailSync' => $user->isStaff(),
+                    'canAccessClientPortal' => $user->isClient(),
                     'canAccessUserManagement' => $user->canAccessUserManagement(),
                     'canAccessMailboxAccounts' => $user->canAccessMailboxAccounts(),
                 ] : null,
