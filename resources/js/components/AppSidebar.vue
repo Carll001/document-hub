@@ -3,6 +3,7 @@ import { Link, usePage } from '@inertiajs/vue3';
 import {
     BriefcaseBusiness,
     Files,
+    FileStack,
     FileSpreadsheet,
     LayoutGrid,
     Mail,
@@ -23,6 +24,7 @@ import {
     SidebarMenuItem,
 } from '@/components/ui/sidebar';
 import { dashboard } from '@/routes';
+import documentGenerator from '@/routes/document-generator';
 import docMerge from '@/routes/doc-merge';
 import emailSync from '@/routes/email-sync';
 import forms from '@/routes/forms';
@@ -88,6 +90,11 @@ const mainNavItems = computed<NavItem[]>(() => {
             title: 'Doc Merge',
             href: docMerge.index(),
             icon: Files,
+        },
+        {
+            title: 'Document Generator',
+            href: documentGenerator.index(),
+            icon: FileStack,
         },
     ];
 });

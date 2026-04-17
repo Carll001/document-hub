@@ -19,9 +19,11 @@ import {
     CardTitle,
 } from '@/components/ui/card';
 import AppLayout from '@/layouts/AppLayout.vue';
+import documentGeneratorRoutes from '@/routes/document-generator';
 import docMerge from '@/routes/doc-merge';
 import { dashboard } from '@/routes';
 import emailSync from '@/routes/email-sync';
+import generatedFilesRoutes from '@/routes/generated-files';
 import type { Auth, BreadcrumbItem } from '@/types';
 
 type Overview = {
@@ -55,6 +57,7 @@ type RecentMergedPdf = {
 };
 
 const props = defineProps<{
+    signatureEnabled: boolean;
     overview: Overview;
     recentEmails: RecentEmail[];
     recentMergedPdfs: RecentMergedPdf[];
@@ -120,6 +123,10 @@ const dashboardStatus = computed(() => [
             props.overview.lastMergeAt,
             'No merged files yet',
         ),
+    },
+    {
+        label: 'Signature tools',
+        value: props.signatureEnabled ? 'Enabled' : 'Disabled',
     },
 ]);
 
@@ -227,6 +234,23 @@ function emailPreview(email: RecentEmail): string {
                         Doc merge
                     </Link>
                 </Button>
+                <Button
+                    as-child
+                    size="sm"
+                    variant="outline"
+                    class="gap-2 text-xs"
+                >
+                    <Link :href="documentGeneratorRoutes.index().url">
+                        <Files class="size-4" />
+                        Document generator
+                    </Link>
+                </Button>
+                <Button as-child size="sm" variant="outline" class="gap-2 text-xs">
+                    <Link :href="generatedFilesRoutes.index().url">
+                        <Files class="size-4" />
+                        Generated files
+                    </Link>
+                </Button>
             </div>
         </template>
 
@@ -272,6 +296,18 @@ function emailPreview(email: RecentEmail): string {
                             <Button as-child variant="secondary" class="gap-2">
                                 <Link :href="docMerge.index()">
                                     Open doc merge
+                                    <ArrowRight class="size-4" />
+                                </Link>
+                            </Button>
+                            <Button as-child variant="outline" class="gap-2">
+                                <Link :href="documentGeneratorRoutes.index().url">
+                                    Open document generator
+                                    <ArrowRight class="size-4" />
+                                </Link>
+                            </Button>
+                            <Button as-child variant="outline" class="gap-2">
+                                <Link :href="generatedFilesRoutes.index().url">
+                                    Open generated files
                                     <ArrowRight class="size-4" />
                                 </Link>
                             </Button>

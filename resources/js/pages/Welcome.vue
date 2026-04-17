@@ -19,15 +19,19 @@ import {
     CardHeader,
     CardTitle,
 } from '@/components/ui/card';
+import documentGeneratorRoutes from '@/routes/document-generator';
+import generatedFilesRoutes from '@/routes/generated-files';
 import { dashboard, login } from '@/routes';
 import type { Auth } from '@/types';
 
 withDefaults(
     defineProps<{
         canRegister: boolean;
+        signatureEnabled: boolean;
     }>(),
     {
         canRegister: true,
+        signatureEnabled: true,
     },
 );
 
@@ -54,6 +58,14 @@ const primaryLabel = computed(() => {
     return user.canAccessUserManagement ? 'Open users' : 'Open dashboard';
 });
 
+const documentGeneratorHref = computed(() =>
+    auth.value.user ? documentGeneratorRoutes.index().url : login(),
+);
+
+const generatedFilesHref = computed(() =>
+    auth.value.user ? generatedFilesRoutes.index().url : login(),
+);
+
 const workflowSteps = [
     'Sync incoming emails into one workspace.',
     'Merge PDFs with a shared confirmation template.',
@@ -71,6 +83,18 @@ const featureCards = [
         title: 'Doc Merge',
         description:
             'Generate merged PDFs quickly, including bulk workflows for repeated document sets.',
+        icon: Files,
+    },
+    {
+        title: 'Document Generator',
+        description:
+            'Generate document rows from Excel + DOCX templates with one shared process.',
+        icon: Files,
+    },
+    {
+        title: 'Generated Files',
+        description:
+            'Track outputs in one place and open completed documents quickly.',
         icon: Files,
     },
     {
@@ -213,6 +237,9 @@ function scrollToFeatures(): void {
                                 Bulk PDF merge
                             </Badge>
                             <Badge variant="secondary" class="rounded-full px-3 py-1">
+                                {{ signatureEnabled ? 'Signature tools enabled' : 'Signature tools disabled' }}
+                            </Badge>
+                            <Badge variant="secondary" class="rounded-full px-3 py-1">
                                 Staff-only accounts
                             </Badge>
                         </div>
@@ -272,7 +299,7 @@ function scrollToFeatures(): void {
                     </Card>
                 </section>
 
-                <section id="features" class="mt-14 grid gap-4 md:grid-cols-3">
+                <section id="features" class="mt-14 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
                     <Card
                         v-for="feature in featureCards"
                         :key="feature.title"
@@ -353,6 +380,30 @@ function scrollToFeatures(): void {
                                 <Button as-child size="lg" class="gap-2 rounded-full px-6">
                                     <Link :href="primaryHref">
                                         {{ primaryLabel }}
+                                        <ArrowRight class="size-4" />
+                                    </Link>
+                                </Button>
+                                <Button
+                                    v-if="$page.props.auth.user"
+                                    as-child
+                                    variant="secondary"
+                                    size="lg"
+                                    class="gap-2 rounded-full px-6"
+                                >
+                                    <Link :href="documentGeneratorHref">
+                                        Open document generator
+                                        <ArrowRight class="size-4" />
+                                    </Link>
+                                </Button>
+                                <Button
+                                    v-if="$page.props.auth.user"
+                                    as-child
+                                    variant="outline"
+                                    size="lg"
+                                    class="gap-2 rounded-full px-6"
+                                >
+                                    <Link :href="generatedFilesHref">
+                                        Open generated files
                                         <ArrowRight class="size-4" />
                                     </Link>
                                 </Button>

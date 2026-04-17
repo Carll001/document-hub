@@ -97,6 +97,7 @@ class DashboardTest extends TestCase
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->component('Dashboard')
+                ->where('signatureEnabled', true)
                 ->where('overview.totalSyncedEmails', 2)
                 ->where('overview.emailsWithAttachments', 1)
                 ->where('overview.totalMergedPdfs', 1)
@@ -108,6 +109,22 @@ class DashboardTest extends TestCase
                 ->has('recentMergedPdfs', 1)
                 ->where('recentMergedPdfs.0.fileName', 'combined-report.pdf')
                 ->where('recentMergedPdfs.0.downloadUrl', route('doc-merge.download', ['mergedPdf' => $mergedPdf])),
+            );
+    }
+
+    public function test_dashboard_includes_disabled_signature_flag_when_feature_is_off(): void
+    {
+        $this->withoutVite();
+
+        $user = User::factory()->create();
+        config()->set('services.document_generator.signature_enabled', false);
+
+        $this->actingAs($user)
+            ->get(route('dashboard'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Dashboard')
+                ->where('signatureEnabled', false),
             );
     }
 

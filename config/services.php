@@ -46,4 +46,9 @@ return [
         'validate_certificate' => filter_var(env('IMAP_VALIDATE_CERT', true), FILTER_VALIDATE_BOOL),
     ],
 
+    'document_generator' => [
+        'libreoffice_binary' => env('LIBREOFFICE_BINARY', 'libreoffice'),
+        'signature_enabled' => filter_var(env('DOCUMENT_GENERATOR_SIGNATURE_ENABLED', true), FILTER_VALIDATE_BOOL),
+    ],
+
 ];

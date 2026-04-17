@@ -43,6 +43,7 @@ class DashboardController extends Controller
         $totalMergedPdfs = (clone $mergedPdfQuery)->count();
 
         return Inertia::render('Dashboard', [
+            'signatureEnabled' => (bool) config('services.document_generator.signature_enabled', true),
             'overview' => [
                 'totalSyncedEmails' => $totalSyncedEmails,
                 'emailsWithAttachments' => $emailsWithAttachments,
