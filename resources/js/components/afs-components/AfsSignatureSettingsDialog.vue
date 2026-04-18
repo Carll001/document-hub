@@ -11,10 +11,9 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Spinner } from '@/components/ui/spinner';
 import { csrfToken, sendDelete } from '@/components/afs-components/utils';
-import type { SignatureAnchor, SignatureSettings } from '@/components/afs-components/types';
+import type { SignatureSettings } from '@/components/afs-components/types';
 
 const open = defineModel<boolean>('open', { required: true });
 
@@ -37,14 +36,18 @@ const signatureData = ref<SignatureSettings | null>(props.initialSignature);
 const form = reactive({
     president: {
         page2: {
-            anchor: (props.initialSignature?.president.page2.anchor ?? 'bottom_right') as SignatureAnchor,
+            anchor: props.initialSignature?.president.page2.anchor ?? 'bottom_right',
+            placement_mode: props.initialSignature?.president.page2.placement_mode ?? 'fixed',
+            anchor_text: props.initialSignature?.president.page2.anchor_text ?? '',
             offset_x: props.initialSignature?.president.page2.offset_x ?? 0,
             offset_y: props.initialSignature?.president.page2.offset_y ?? 0,
             width: props.initialSignature?.president.page2.width ?? 40,
             height: props.initialSignature?.president.page2.height ?? 16,
         },
         page3: {
-            anchor: (props.initialSignature?.president.page3.anchor ?? 'bottom_right') as SignatureAnchor,
+            anchor: props.initialSignature?.president.page3.anchor ?? 'bottom_right',
+            placement_mode: props.initialSignature?.president.page3.placement_mode ?? 'fixed',
+            anchor_text: props.initialSignature?.president.page3.anchor_text ?? '',
             offset_x: props.initialSignature?.president.page3.offset_x ?? 0,
             offset_y: props.initialSignature?.president.page3.offset_y ?? 0,
             width: props.initialSignature?.president.page3.width ?? 40,
@@ -53,14 +56,18 @@ const form = reactive({
     },
     getor: {
         page4: {
-            anchor: (props.initialSignature?.getor.page4.anchor ?? 'bottom_right') as SignatureAnchor,
+            anchor: props.initialSignature?.getor.page4.anchor ?? 'bottom_right',
+            placement_mode: props.initialSignature?.getor.page4.placement_mode ?? 'fixed',
+            anchor_text: props.initialSignature?.getor.page4.anchor_text ?? '',
             offset_x: props.initialSignature?.getor.page4.offset_x ?? 0,
             offset_y: props.initialSignature?.getor.page4.offset_y ?? 0,
             width: props.initialSignature?.getor.page4.width ?? 40,
             height: props.initialSignature?.getor.page4.height ?? 16,
         },
         page8: {
-            anchor: (props.initialSignature?.getor.page8.anchor ?? 'bottom_right') as SignatureAnchor,
+            anchor: props.initialSignature?.getor.page8.anchor ?? 'bottom_right',
+            placement_mode: props.initialSignature?.getor.page8.placement_mode ?? 'fixed',
+            anchor_text: props.initialSignature?.getor.page8.anchor_text ?? '',
             offset_x: props.initialSignature?.getor.page8.offset_x ?? 0,
             offset_y: props.initialSignature?.getor.page8.offset_y ?? 0,
             width: props.initialSignature?.getor.page8.width ?? 40,
@@ -82,21 +89,29 @@ const save = async () => {
     try {
         const formData = new FormData();
         formData.append('page2_anchor', form.president.page2.anchor);
+        formData.append('page2_placement_mode', form.president.page2.placement_mode);
+        formData.append('page2_anchor_text', form.president.page2.anchor_text);
         formData.append('page2_offset_x', String(form.president.page2.offset_x));
         formData.append('page2_offset_y', String(form.president.page2.offset_y));
         formData.append('page2_width', String(form.president.page2.width));
         formData.append('page2_height', String(form.president.page2.height));
         formData.append('page3_anchor', form.president.page3.anchor);
+        formData.append('page3_placement_mode', form.president.page3.placement_mode);
+        formData.append('page3_anchor_text', form.president.page3.anchor_text);
         formData.append('page3_offset_x', String(form.president.page3.offset_x));
         formData.append('page3_offset_y', String(form.president.page3.offset_y));
         formData.append('page3_width', String(form.president.page3.width));
         formData.append('page3_height', String(form.president.page3.height));
         formData.append('page4_anchor', form.getor.page4.anchor);
+        formData.append('page4_placement_mode', form.getor.page4.placement_mode);
+        formData.append('page4_anchor_text', form.getor.page4.anchor_text);
         formData.append('page4_offset_x', String(form.getor.page4.offset_x));
         formData.append('page4_offset_y', String(form.getor.page4.offset_y));
         formData.append('page4_width', String(form.getor.page4.width));
         formData.append('page4_height', String(form.getor.page4.height));
         formData.append('page8_anchor', form.getor.page8.anchor);
+        formData.append('page8_placement_mode', form.getor.page8.placement_mode);
+        formData.append('page8_anchor_text', form.getor.page8.anchor_text);
         formData.append('page8_offset_x', String(form.getor.page8.offset_x));
         formData.append('page8_offset_y', String(form.getor.page8.offset_y));
         formData.append('page8_width', String(form.getor.page8.width));
@@ -139,21 +154,29 @@ const save = async () => {
 
         if (payload.signature) {
             form.president.page2.anchor = payload.signature.president.page2.anchor;
+            form.president.page2.placement_mode = payload.signature.president.page2.placement_mode;
+            form.president.page2.anchor_text = payload.signature.president.page2.anchor_text;
             form.president.page2.offset_x = payload.signature.president.page2.offset_x;
             form.president.page2.offset_y = payload.signature.president.page2.offset_y;
             form.president.page2.width = payload.signature.president.page2.width;
             form.president.page2.height = payload.signature.president.page2.height;
             form.president.page3.anchor = payload.signature.president.page3.anchor;
+            form.president.page3.placement_mode = payload.signature.president.page3.placement_mode;
+            form.president.page3.anchor_text = payload.signature.president.page3.anchor_text;
             form.president.page3.offset_x = payload.signature.president.page3.offset_x;
             form.president.page3.offset_y = payload.signature.president.page3.offset_y;
             form.president.page3.width = payload.signature.president.page3.width;
             form.president.page3.height = payload.signature.president.page3.height;
             form.getor.page4.anchor = payload.signature.getor.page4.anchor;
+            form.getor.page4.placement_mode = payload.signature.getor.page4.placement_mode;
+            form.getor.page4.anchor_text = payload.signature.getor.page4.anchor_text;
             form.getor.page4.offset_x = payload.signature.getor.page4.offset_x;
             form.getor.page4.offset_y = payload.signature.getor.page4.offset_y;
             form.getor.page4.width = payload.signature.getor.page4.width;
             form.getor.page4.height = payload.signature.getor.page4.height;
             form.getor.page8.anchor = payload.signature.getor.page8.anchor;
+            form.getor.page8.placement_mode = payload.signature.getor.page8.placement_mode;
+            form.getor.page8.anchor_text = payload.signature.getor.page8.anchor_text;
             form.getor.page8.offset_x = payload.signature.getor.page8.offset_x;
             form.getor.page8.offset_y = payload.signature.getor.page8.offset_y;
             form.getor.page8.width = payload.signature.getor.page8.width;
@@ -185,14 +208,6 @@ const remove = async () => {
         deleting.value = false;
     }
 };
-
-const anchorOptions: { value: SignatureAnchor; label: string }[] = [
-    { value: 'top_left', label: 'Top Left' },
-    { value: 'top_right', label: 'Top Right' },
-    { value: 'bottom_left', label: 'Bottom Left' },
-    { value: 'bottom_right', label: 'Bottom Right' },
-    { value: 'center', label: 'Center' },
-];
 </script>
 
 <template>
@@ -201,7 +216,7 @@ const anchorOptions: { value: SignatureAnchor; label: string }[] = [
             <DialogHeader>
                 <DialogTitle>Signature Settings</DialogTitle>
                 <DialogDescription>
-                    Upload the default Getor signature image and configure layouts for President (pages 2/3) and Getor (pages 4/8).
+                    Upload or replace the default signature image used during signing.
                 </DialogDescription>
             </DialogHeader>
 
@@ -220,51 +235,6 @@ const anchorOptions: { value: SignatureAnchor; label: string }[] = [
                         <img :src="signatureData.getor.preview_url" alt="Signature preview" class="max-h-24 object-contain" />
                     </div>
                 </div>
-
-                <template v-for="section in [
-                    { title: 'President Signature: Page 2', model: form.president.page2, prefix: 'page2' },
-                    { title: 'President Signature: Page 3', model: form.president.page3, prefix: 'page3' },
-                    { title: 'Getor Signature: Page 4', model: form.getor.page4, prefix: 'page4' },
-                    { title: 'Getor Signature: Page 8', model: form.getor.page8, prefix: 'page8' },
-                ]" :key="section.prefix">
-                    <div class="grid gap-4 rounded-md border p-3">
-                        <h4 class="text-sm font-semibold">{{ section.title }}</h4>
-                        <div class="grid gap-4 md:grid-cols-2">
-                            <div class="grid gap-2">
-                                <Label>Anchor</Label>
-                                <Select
-                                    :model-value="section.model.anchor"
-                                    @update:model-value="(value) => section.model.anchor = String(value) as SignatureAnchor"
-                                >
-                                    <SelectTrigger>
-                                        <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem v-for="opt in anchorOptions" :key="opt.value" :value="opt.value">
-                                            {{ opt.label }}
-                                        </SelectItem>
-                                    </SelectContent>
-                                </Select>
-                            </div>
-                            <div class="grid gap-2">
-                                <Label :for="`sig-${section.prefix}-width`">Width (mm)</Label>
-                                <Input :id="`sig-${section.prefix}-width`" v-model.number="section.model.width" type="number" min="1" max="300" step="0.1" />
-                            </div>
-                            <div class="grid gap-2">
-                                <Label :for="`sig-${section.prefix}-height`">Height (mm)</Label>
-                                <Input :id="`sig-${section.prefix}-height`" v-model.number="section.model.height" type="number" min="1" max="300" step="0.1" />
-                            </div>
-                            <div class="grid gap-2">
-                                <Label :for="`sig-${section.prefix}-offset-x`">Offset X (mm)</Label>
-                                <Input :id="`sig-${section.prefix}-offset-x`" v-model.number="section.model.offset_x" type="number" min="-500" max="500" step="0.1" />
-                            </div>
-                            <div class="grid gap-2">
-                                <Label :for="`sig-${section.prefix}-offset-y`">Offset Y (mm)</Label>
-                                <Input :id="`sig-${section.prefix}-offset-y`" v-model.number="section.model.offset_y" type="number" min="-500" max="500" step="0.1" />
-                            </div>
-                        </div>
-                    </div>
-                </template>
             </div>
 
             <p v-if="errorMessage" class="text-sm text-destructive">

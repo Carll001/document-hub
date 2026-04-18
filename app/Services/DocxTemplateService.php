@@ -11,6 +11,14 @@ use ZipArchive;
 class DocxTemplateService
 {
     /**
+     * @var list<string>
+     */
+    private const SIGNATURE_IMAGE_PLACEHOLDERS = [
+        'president_signature',
+        'getor_signature',
+    ];
+
+    /**
      * @return list<string>
      */
     public function placeholderKeys(string $templatePath): array
@@ -77,6 +85,11 @@ class DocxTemplateService
 
                 $keysInTemplate = $this->extractPlaceholderKeys($processor);
                 foreach ($keysInTemplate as $key) {
+                    if ($this->isSignatureImagePlaceholder($key)) {
+                        // Keep signature placeholders unresolved so they can be injected later during signing.
+                        continue;
+                    }
+
                     $resolution = $this->resolvePlaceholderValue($key, $normalizedMap, $selectedTemplateYear);
                     $value = $resolution['status'] === 'resolved'
                         ? $this->formatValueForTemplate($resolution['value'])
@@ -88,6 +101,63 @@ class DocxTemplateService
                 $processor->saveAs($outputPath);
             }
         );
+    }
+
+    /**
+     * @param  array<string, array{path: string, width_mm?: float, height_mm?: float}>  $images
+     */
+    public function injectSignatureImages(string $templatePath, string $outputPath, array $images): void
+    {
+        $this->withPreparedTemplate(
+            $templatePath,
+            function (string $preparedTemplatePath) use ($outputPath, $images): void {
+                $processor = new TemplateProcessor($preparedTemplatePath);
+                $this->configureMacroChars($processor);
+
+                foreach ($images as $placeholder => $image) {
+                    if (! $this->isSignatureImagePlaceholder($placeholder)) {
+                        continue;
+                    }
+
+                    $path = trim((string) ($image['path'] ?? ''));
+                    if ($path === '' || ! is_file($path)) {
+                        continue;
+                    }
+
+                    $options = [
+                        'path' => $path,
+                    ];
+
+                    if (isset($image['width_mm']) && is_numeric((string) $image['width_mm'])) {
+                        $options['width'] = sprintf('%.2fmm', (float) $image['width_mm']);
+                    }
+
+                    if (isset($image['height_mm']) && is_numeric((string) $image['height_mm'])) {
+                        $options['height'] = sprintf('%.2fmm', (float) $image['height_mm']);
+                    }
+
+                    $processor->setImageValue($placeholder, $options);
+                }
+
+                $processor->saveAs($outputPath);
+            }
+        );
+    }
+
+    public function hasSignatureImagePlaceholders(string $templatePath): bool
+    {
+        $placeholders = array_map(
+            static fn (string $placeholder): string => mb_strtolower(trim($placeholder)),
+            $this->placeholderKeys($templatePath)
+        );
+
+        foreach (self::SIGNATURE_IMAGE_PLACEHOLDERS as $requiredPlaceholder) {
+            if (in_array($requiredPlaceholder, $placeholders, true)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -539,5 +609,10 @@ class DocxTemplateService
     private function placeholderLabel(string $placeholder): string
     {
         return '{'.$placeholder.'}';
+    }
+
+    private function isSignatureImagePlaceholder(string $placeholder): bool
+    {
+        return in_array(mb_strtolower(trim($placeholder)), self::SIGNATURE_IMAGE_PLACEHOLDERS, true);
     }
 }

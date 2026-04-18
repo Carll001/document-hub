@@ -84,7 +84,7 @@ const confirmDeleteBatch = async () => {
         showNotice(
             'success',
             `Batch #${props.batch.id} deleted`,
-            'The batch has been removed from generated files.',
+            'The batch has been removed from completed files.',
         );
         router.visit('/generated-files');
     } catch (error) {
@@ -100,7 +100,7 @@ const confirmDeleteBatch = async () => {
 
 const breadcrumbs: BreadcrumbItem[] = [
     {
-        title: 'Generated Files',
+        title: 'Completed Files',
         href: '/generated-files',
     },
     {
@@ -117,7 +117,7 @@ const breadcrumbs: BreadcrumbItem[] = [
         <div class="space-y-6 p-4">
             <div class="flex flex-wrap items-center gap-3">
                 <Button variant="outline" as-child>
-                    <Link href="/generated-files">Back to Batch Folders</Link>
+                    <Link href="/generated-files">Back to Completed Files</Link>
                 </Button>
                 <Button variant="destructive" @click="deleteDialogOpen = true">
                     Delete Batch
@@ -133,7 +133,7 @@ const breadcrumbs: BreadcrumbItem[] = [
             <DialogHeader>
                 <DialogTitle>Delete Batch #{{ batch.id }}?</DialogTitle>
                 <DialogDescription>
-                    This batch will be hidden from generated files and history. Stored files will remain on disk for now.
+                    This batch will be hidden from completed files and history. Stored files will remain on disk for now.
                 </DialogDescription>
             </DialogHeader>
 

@@ -49,6 +49,7 @@ return [
     'document_generator' => [
         'libreoffice_binary' => env('LIBREOFFICE_BINARY', 'libreoffice'),
         'signature_enabled' => filter_var(env('DOCUMENT_GENERATOR_SIGNATURE_ENABLED', true), FILTER_VALIDATE_BOOL),
+        'signature_docx_placeholder_enabled' => filter_var(env('SIGNATURE_DOCX_PLACEHOLDER_ENABLED', true), FILTER_VALIDATE_BOOL),
     ],
 
 ];

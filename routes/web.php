@@ -97,12 +97,18 @@ Route::middleware(['auth', 'verified'])->group(function () {
                 Route::delete('templates/{template}', 'destroyGlobalTemplate')->name('templates.destroy');
                 Route::get('batches/history', 'history')->name('batches.history');
                 Route::get('items', 'allItems')->name('items');
+                Route::post('completed/download', 'queueCompletedDownload')->name('completed.download');
+                Route::get('completed/download/state', 'completedDownloadState')->name('completed.download.state');
+                Route::get('completed/download/file', 'downloadCompletedPrepared')->name('completed.download.file');
+                Route::delete('completed/items', 'destroyCompletedItemsBulk')->name('completed.items.destroy.bulk');
                 Route::get('batches/{batch}/template-mapping', 'generatedFilesTemplateMapping')
                     ->name('batches.template-mapping');
                 Route::get('batches/{batch}/progress', 'progress')->name('batches.progress');
                 Route::delete('batches/{batch}', 'destroyBatch')->name('batches.destroy');
                 Route::get('batches/{batch}/items', 'items')->name('batches.items');
                 Route::get('batches/{batch}/items/{item}', 'showItem')->name('batches.items.show');
+                Route::get('batches/{batch}/items/{item}/signature/preflight', 'preflightAnchorCheck')
+                    ->name('batches.items.signature.preflight');
                 Route::post('batches/{batch}/items/{item}/signature', 'signItem')
                     ->name('batches.items.signature');
                 Route::put('batches/{batch}/items/{item}', 'updateItem')->name('batches.items.update');

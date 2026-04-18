@@ -92,9 +92,9 @@ const featureCards = [
         icon: Files,
     },
     {
-        title: 'Generated Files',
+        title: 'Completed Files',
         description:
-            'Track outputs in one place and open completed documents quickly.',
+            'Track signed outputs in one place and open completed documents quickly.',
         icon: Files,
     },
     {
@@ -403,7 +403,7 @@ function scrollToFeatures(): void {
                                     class="gap-2 rounded-full px-6"
                                 >
                                     <Link :href="generatedFilesHref">
-                                        Open generated files
+                                        Open completed files
                                         <ArrowRight class="size-4" />
                                     </Link>
                                 </Button>

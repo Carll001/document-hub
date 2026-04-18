@@ -37,9 +37,12 @@ export type PaginatedResponse<T> = {
 };
 
 export type SignatureAnchor = 'top_left' | 'top_right' | 'bottom_left' | 'bottom_right' | 'center';
+export type SignaturePlacementMode = 'fixed' | 'text_anchor';
 
 export type SignatureLayout = {
     anchor: SignatureAnchor;
+    placement_mode: SignaturePlacementMode;
+    anchor_text: string;
     offset_x: number;
     offset_y: number;
     width: number;

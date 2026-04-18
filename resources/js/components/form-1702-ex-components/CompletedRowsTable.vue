@@ -120,6 +120,8 @@ const selectAllState = computed<boolean | 'indeterminate'>(() => {
 
     return 'indeterminate';
 });
+const showingFrom = computed(() => props.pagination.total === 0 ? 0 : (props.pagination.from ?? 0));
+const showingTo = computed(() => props.pagination.total === 0 ? 0 : (props.pagination.to ?? 0));
 
 watch(
     () => props.filters.search,
@@ -293,7 +295,7 @@ function requestCancel(row: Form1702ExBatchRow): void {
                 <Input
                     v-model="searchValue"
                     type="search"
-                    placeholder="Search taxpayer, TIN, recipient, or file"
+                    placeholder="Search company, TIN, recipient, or file"
                     class="pl-10"
                 />
             </div>
@@ -361,8 +363,7 @@ function requestCancel(row: Form1702ExBatchRow): void {
                             />
                         </TableHead>
                         <TableHead class="w-[1%]">#</TableHead>
-                        <TableHead>File name</TableHead>
-                        <TableHead>Taxpayer</TableHead>
+                        <TableHead>Company</TableHead>
                         <TableHead>TIN</TableHead>
                         <TableHead>Recipient</TableHead>
                         <TableHead>
@@ -407,28 +408,8 @@ function requestCancel(row: Form1702ExBatchRow): void {
                                 }}
                             </TableCell>
                             <TableCell>
-                                <div class="space-y-1">
-                                    <p
-                                        class="max-w-[16rem] truncate text-sm text-foreground"
-                                        :title="row.fileName"
-                                    >
-                                        {{ row.fileName }}
-                                    </p>
-                                    <p
-                                        v-if="row.receiptFileName"
-                                        class="max-w-[16rem] truncate text-xs text-muted-foreground"
-                                        :title="row.receiptFileName"
-                                    >
-                                        Receipt: {{ row.receiptFileName }}
-                                    </p>
-                                </div>
-                            </TableCell>
-                            <TableCell>
                                 <p class="font-medium text-foreground">
                                     {{ row.taxpayerName }}
-                                </p>
-                                <p class="text-xs text-muted-foreground">
-                                    {{ row.sourceName }} row {{ row.sourceRowNumber }}
                                 </p>
                             </TableCell>
                             <TableCell class="text-sm text-muted-foreground">
@@ -514,7 +495,7 @@ function requestCancel(row: Form1702ExBatchRow): void {
                         </TableRow>
                     </template>
 
-                    <TableEmpty v-else :colspan="8">
+                    <TableEmpty v-else :colspan="7">
                         {{
                             props.pagination.total === 0
                                 ? 'No completed files yet.'
@@ -526,53 +507,61 @@ function requestCancel(row: Form1702ExBatchRow): void {
         </div>
 
         <div
-            v-if="props.pagination.lastPage > 1"
             ref="paginationControls"
-            class="flex flex-wrap items-center justify-center gap-2 pt-2"
+            class="flex flex-col gap-3 pt-2 md:flex-row md:items-center md:justify-between"
         >
-            <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                class="gap-2"
-                :disabled="props.pagination.currentPage <= 1"
-                @click="visitPage(props.pagination.currentPage - 1)"
-            >
-                <ChevronLeft class="size-4" />
-                Previous
-            </Button>
+            <div class="text-sm text-muted-foreground">
+                Showing {{ showingFrom }} to {{ showingTo }} of {{ props.pagination.total }} rows
+            </div>
 
-            <template v-for="item in paginationItems" :key="String(item)">
+            <div
+                v-if="props.pagination.lastPage > 1"
+                class="flex flex-wrap items-center justify-center gap-2 md:justify-end"
+            >
                 <Button
-                    v-if="typeof item === 'number'"
                     type="button"
+                    variant="outline"
                     size="sm"
-                    :variant="item === props.pagination.currentPage ? 'default' : 'outline'"
-                    :aria-current="item === props.pagination.currentPage ? 'page' : undefined"
-                    @click="visitPage(item)"
+                    class="gap-2"
+                    :disabled="props.pagination.currentPage <= 1"
+                    @click="visitPage(props.pagination.currentPage - 1)"
                 >
-                    {{ item }}
+                    <ChevronLeft class="size-4" />
+                    Previous
                 </Button>
-                <span
-                    v-else
-                    class="px-1 text-sm text-muted-foreground"
-                    aria-hidden="true"
-                >
-                    ...
-                </span>
-            </template>
 
-            <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                class="gap-2"
-                :disabled="props.pagination.currentPage >= props.pagination.lastPage"
-                @click="visitPage(props.pagination.currentPage + 1)"
-            >
-                Next
-                <ChevronRight class="size-4" />
-            </Button>
+                <template v-for="item in paginationItems" :key="String(item)">
+                    <Button
+                        v-if="typeof item === 'number'"
+                        type="button"
+                        size="sm"
+                        :variant="item === props.pagination.currentPage ? 'default' : 'outline'"
+                        :aria-current="item === props.pagination.currentPage ? 'page' : undefined"
+                        @click="visitPage(item)"
+                    >
+                        {{ item }}
+                    </Button>
+                    <span
+                        v-else
+                        class="px-1 text-sm text-muted-foreground"
+                        aria-hidden="true"
+                    >
+                        ...
+                    </span>
+                </template>
+
+                <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    class="gap-2"
+                    :disabled="props.pagination.currentPage >= props.pagination.lastPage"
+                    @click="visitPage(props.pagination.currentPage + 1)"
+                >
+                    Next
+                    <ChevronRight class="size-4" />
+                </Button>
+            </div>
         </div>
     </div>
 </template>

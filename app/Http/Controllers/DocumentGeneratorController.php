@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Http\Requests\DocumentBatchStoreRequest;
 use App\Jobs\GenerateDocumentBatchItemJob;
+use App\Jobs\ProcessDocumentGeneratorCompletedExport;
 use App\Models\DocumentBatch;
 use App\Models\DocumentBatchItem;
 use App\Models\DocumentBatchItemActivityLog;
@@ -11,9 +12,11 @@ use App\Models\DocumentBatchTemplate;
 use App\Models\DocumentGeneratorSignature;
 use App\Models\DocumentGeneratorTemplate;
 use App\Models\User;
+use App\Services\DocumentGeneratorCompletedExportService;
 use App\Services\DocumentBatchActivityLogger;
+use App\Services\DocxTemplateService;
 use App\Services\ExcelExtractionService;
-use App\Services\PdfSignatureStampService;
+use App\Services\PdfConversionService;
 use App\Services\SignatureImageService;
 use App\Support\FormFieldAliasResolver;
 use Illuminate\Database\Eloquent\Builder;
@@ -25,6 +28,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
@@ -34,12 +38,47 @@ class DocumentGeneratorController extends Controller
 {
     public function index(Request $request): Response
     {
+        $validated = $request->validate([
+            'page' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'min:5', 'max:100'],
+            'search' => ['nullable', 'string', 'max:255'],
+            'sort' => ['nullable', 'in:uploadedAt,generatedAt,pdfStatus,sourceRowNumber,created_at,updated_at,status,row_number'],
+            'direction' => ['nullable', 'in:asc,desc'],
+            'status' => ['nullable', 'in:queued,processing,docx_done,pdf_done,failed'],
+        ]);
+
+        $sort = (string) ($validated['sort'] ?? 'uploadedAt');
+        $sortBy = match ($sort) {
+            'uploadedAt' => 'created_at',
+            'generatedAt' => 'updated_at',
+            'pdfStatus' => 'status',
+            'sourceRowNumber' => 'row_number',
+            default => $sort,
+        };
+        $direction = (string) ($validated['direction'] ?? 'desc');
+        $search = isset($validated['search']) ? trim((string) $validated['search']) : '';
+
         /** @var User $user */
         $user = $request->user();
         $signatureEnabled = $this->signatureFeatureEnabled();
 
         return Inertia::render('DocumentGenerator', [
-            'initialItems' => $this->allItemsPayload($request, null),
+            'initialItems' => $this->allItemsPayload($request, [
+                'per_page' => $validated['per_page'] ?? null,
+                'sort_by' => $sortBy,
+                'sort_direction' => $direction,
+                'status' => $validated['status'] ?? null,
+                'company_search' => $search !== '' ? $search : null,
+                'unsigned_only' => true,
+            ]),
+            'initialFilters' => [
+                'search' => $search,
+                'sort' => $sort,
+                'direction' => $direction,
+                'status' => (string) ($validated['status'] ?? 'all'),
+                'per_page' => (int) ($validated['per_page'] ?? 25),
+            ],
+            'initialMapping' => $this->globalTemplateMappingPayload(),
             'initialSignature' => $signatureEnabled ? $this->signaturePayload($user) : ['signature' => null],
             'signatureEnabled' => $signatureEnabled,
         ]);
@@ -62,21 +101,29 @@ class DocumentGeneratorController extends Controller
         $validated = $request->validate([
             'signature_file' => ['nullable', 'file', 'mimes:png,jpg,jpeg,webp', 'max:5120'],
             'page2_anchor' => ['required', 'in:top_left,top_right,bottom_left,bottom_right,center'],
+            'page2_placement_mode' => ['nullable', 'in:fixed,text_anchor'],
+            'page2_anchor_text' => ['nullable', 'string', 'max:255', 'required_if:page2_placement_mode,text_anchor'],
             'page2_offset_x' => ['required', 'numeric', 'min:-500', 'max:500'],
             'page2_offset_y' => ['required', 'numeric', 'min:-500', 'max:500'],
             'page2_width' => ['required', 'numeric', 'min:1', 'max:300'],
             'page2_height' => ['required', 'numeric', 'min:1', 'max:300'],
             'page3_anchor' => ['required', 'in:top_left,top_right,bottom_left,bottom_right,center'],
+            'page3_placement_mode' => ['nullable', 'in:fixed,text_anchor'],
+            'page3_anchor_text' => ['nullable', 'string', 'max:255', 'required_if:page3_placement_mode,text_anchor'],
             'page3_offset_x' => ['required', 'numeric', 'min:-500', 'max:500'],
             'page3_offset_y' => ['required', 'numeric', 'min:-500', 'max:500'],
             'page3_width' => ['required', 'numeric', 'min:1', 'max:300'],
             'page3_height' => ['required', 'numeric', 'min:1', 'max:300'],
             'page4_anchor' => ['required', 'in:top_left,top_right,bottom_left,bottom_right,center'],
+            'page4_placement_mode' => ['nullable', 'in:fixed,text_anchor'],
+            'page4_anchor_text' => ['nullable', 'string', 'max:255', 'required_if:page4_placement_mode,text_anchor'],
             'page4_offset_x' => ['required', 'numeric', 'min:-500', 'max:500'],
             'page4_offset_y' => ['required', 'numeric', 'min:-500', 'max:500'],
             'page4_width' => ['required', 'numeric', 'min:1', 'max:300'],
             'page4_height' => ['required', 'numeric', 'min:1', 'max:300'],
             'page8_anchor' => ['required', 'in:top_left,top_right,bottom_left,bottom_right,center'],
+            'page8_placement_mode' => ['nullable', 'in:fixed,text_anchor'],
+            'page8_anchor_text' => ['nullable', 'string', 'max:255', 'required_if:page8_placement_mode,text_anchor'],
             'page8_offset_x' => ['required', 'numeric', 'min:-500', 'max:500'],
             'page8_offset_y' => ['required', 'numeric', 'min:-500', 'max:500'],
             'page8_width' => ['required', 'numeric', 'min:1', 'max:300'],
@@ -174,6 +221,20 @@ class DocumentGeneratorController extends Controller
             ];
         }
 
+        if ($this->supportsTextAnchorSignatureLayout()) {
+            $attributes = [
+                ...$attributes,
+                'page2_placement_mode' => (string) ($validated['page2_placement_mode'] ?? 'fixed'),
+                'page2_anchor_text' => $this->normalizeAnchorText($validated['page2_anchor_text'] ?? null),
+                'page3_placement_mode' => (string) ($validated['page3_placement_mode'] ?? 'fixed'),
+                'page3_anchor_text' => $this->normalizeAnchorText($validated['page3_anchor_text'] ?? null),
+                'page4_placement_mode' => (string) ($validated['page4_placement_mode'] ?? 'fixed'),
+                'page4_anchor_text' => $this->normalizeAnchorText($validated['page4_anchor_text'] ?? null),
+                'page8_placement_mode' => (string) ($validated['page8_placement_mode'] ?? 'fixed'),
+                'page8_anchor_text' => $this->normalizeAnchorText($validated['page8_anchor_text'] ?? null),
+            ];
+        }
+
         DocumentGeneratorSignature::query()->updateOrCreate(
             ['user_id' => $user->id],
             $attributes,
@@ -235,30 +296,197 @@ class DocumentGeneratorController extends Controller
         ]);
     }
 
-    public function generatedFiles(Request $request): Response
+    public function generatedFiles(Request $request, DocumentGeneratorCompletedExportService $completedExportService): Response
     {
         $validated = $request->validate([
             'per_page' => ['nullable', 'integer', 'min:5', 'max:100'],
             'sort_by' => ['nullable', 'in:created_at,status,row_number,updated_at'],
             'sort_direction' => ['nullable', 'in:asc,desc'],
-            'status' => ['nullable', 'in:queued,processing,docx_done,pdf_done,failed'],
+            'status' => ['nullable', 'in:pdf_done'],
             'company_search' => ['nullable', 'string', 'max:255'],
-            'signature_filter' => ['nullable', 'in:signed,unsigned'],
         ]);
+
+        /** @var User $user */
+        $user = $request->user();
 
         return Inertia::render('GeneratedFiles', [
             'initialItems' => $this->allItemsPayload($request, [
                 ...$validated,
-                'files_only' => true,
+                'completed_only' => true,
             ]),
-            'signatureEnabled' => $this->signatureFeatureEnabled(),
+            'initialExportState' => $completedExportService->getState((int) $user->getKey()),
         ]);
     }
 
-    public function templateMapping(): Response
+    public function queueCompletedDownload(
+        Request $request,
+        DocumentGeneratorCompletedExportService $completedExportService,
+    ): JsonResponse {
+        $validated = $request->validate([
+            'company_search' => ['nullable', 'string', 'max:255'],
+            'sort_by' => ['nullable', 'in:created_at,status,row_number,updated_at'],
+            'sort_direction' => ['nullable', 'in:asc,desc'],
+            'item_ids' => ['nullable', 'array', 'min:1'],
+            'item_ids.*' => ['required', 'integer'],
+        ]);
+
+        /** @var User $user */
+        $user = $request->user();
+        $userId = (int) $user->getKey();
+
+        if ($this->completedExportIsBusy($userId, $completedExportService)) {
+            return response()->json([
+                'message' => 'A completed files export is already processing.',
+                'export_state' => $completedExportService->getState($userId),
+            ], 409);
+        }
+
+        $query = $this->completedItemsQuery($user, $validated);
+        $itemIds = collect($validated['item_ids'] ?? [])
+            ->filter(static fn (mixed $id): bool => is_numeric($id))
+            ->map(static fn (mixed $id): int => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+
+        if ($itemIds !== []) {
+            $query->whereIn('id', $itemIds);
+        }
+
+        $resolvedIds = $query->pluck('id')->map(static fn (mixed $id): int => (int) $id)->all();
+        if ($resolvedIds === []) {
+            return response()->json([
+                'message' => 'No completed files matched this export request.',
+            ], 422);
+        }
+
+        $completedExportService->forgetState($userId);
+        $completedExportService->putState($userId, [
+            'status' => DocumentGeneratorCompletedExportService::STATUS_QUEUED,
+            'error' => null,
+            'itemCount' => null,
+            'downloadUrl' => null,
+            'storagePath' => null,
+        ]);
+
+        ProcessDocumentGeneratorCompletedExport::dispatch($userId, $resolvedIds);
+
+        return response()->json([
+            'message' => 'Completed files export queued. Your ZIP will be ready shortly.',
+            'export_state' => $completedExportService->getState($userId),
+        ]);
+    }
+
+    public function completedDownloadState(
+        Request $request,
+        DocumentGeneratorCompletedExportService $completedExportService,
+    ): JsonResponse {
+        /** @var User $user */
+        $user = $request->user();
+
+        return response()->json($completedExportService->getState((int) $user->getKey()));
+    }
+
+    public function downloadCompletedPrepared(
+        Request $request,
+        DocumentGeneratorCompletedExportService $completedExportService,
+    ): BinaryFileResponse {
+        /** @var User $user */
+        $user = $request->user();
+        $userId = (int) $user->getKey();
+        $state = $completedExportService->getState($userId);
+        $cached = cache()->get($completedExportService->cacheKey($userId));
+
+        abort_unless(
+            $state['status'] === DocumentGeneratorCompletedExportService::STATUS_READY
+                && is_array($cached)
+                && is_string($cached['storagePath'] ?? null)
+                && Storage::disk('local')->exists($cached['storagePath']),
+            404,
+        );
+
+        $storagePath = (string) $cached['storagePath'];
+
+        return response()->download(
+            Storage::disk('local')->path($storagePath),
+            'afs-completed-files.zip',
+            ['Content-Type' => 'application/zip'],
+        )->deleteFileAfterSend(true);
+    }
+
+    public function destroyCompletedItemsBulk(Request $request): JsonResponse
     {
+        $validated = $request->validate([
+            'item_ids' => ['required', 'array', 'min:1'],
+            'item_ids.*' => ['required', 'integer'],
+        ]);
+
+        /** @var User $user */
+        $user = $request->user();
+        $itemIds = collect($validated['item_ids'])
+            ->map(static fn (mixed $id): int => (int) $id)
+            ->unique()
+            ->values();
+
+        $query = $this->completedItemsQuery($user, []);
+        $items = $query
+            ->whereIn('id', $itemIds->all())
+            ->get(['id', 'document_batch_id']);
+
+        if ($items->isEmpty()) {
+            return response()->json([
+                'message' => 'No completed rows matched the selected items.',
+            ], 422);
+        }
+
+        $deleted = 0;
+        DB::transaction(function () use ($items, &$deleted): void {
+            /** @var array<int, list<int>> $batchItemMap */
+            $batchItemMap = [];
+            foreach ($items as $item) {
+                $batchId = (int) $item->document_batch_id;
+                $batchItemMap[$batchId] ??= [];
+                $batchItemMap[$batchId][] = (int) $item->id;
+            }
+
+            foreach ($batchItemMap as $batchId => $batchItemIds) {
+                $lockedBatch = DocumentBatch::query()->lockForUpdate()->find($batchId);
+                if (! $lockedBatch instanceof DocumentBatch) {
+                    continue;
+                }
+
+                $itemModels = DocumentBatchItem::query()
+                    ->where('document_batch_id', $batchId)
+                    ->whereIn('id', $batchItemIds)
+                    ->lockForUpdate()
+                    ->get();
+
+                foreach ($itemModels as $itemModel) {
+                    $itemModel->delete();
+                    $deleted++;
+                }
+
+                $this->recalculateBatchState($lockedBatch);
+            }
+        });
+
+        return response()->json([
+            'message' => $deleted === 1
+                ? 'Deleted 1 completed row.'
+                : "Deleted {$deleted} completed rows.",
+            'deleted_count' => $deleted,
+        ]);
+    }
+
+    public function templateMapping(Request $request): Response
+    {
+        /** @var User $user */
+        $user = $request->user();
+
         return Inertia::render('TemplateMapping', [
             'mapping' => $this->globalTemplateMappingPayload(),
+            'initialSignature' => $this->signatureFeatureEnabled() ? $this->signaturePayload($user) : ['signature' => null],
+            'signatureEnabled' => $this->signatureFeatureEnabled(),
         ]);
     }
 
@@ -480,6 +708,8 @@ class DocumentGeneratorController extends Controller
             'company_search' => ['nullable', 'string', 'max:255'],
             'signature_filter' => ['nullable', 'in:signed,unsigned'],
             'files_only' => ['nullable', 'boolean'],
+            'completed_only' => ['nullable', 'boolean'],
+            'unsigned_only' => ['nullable', 'boolean'],
         ]);
 
         return response()->json($this->allItemsPayload($request, $validated));
@@ -521,11 +751,41 @@ class DocumentGeneratorController extends Controller
         return response()->json($this->batchItemPayload($item));
     }
 
+    public function preflightAnchorCheck(
+        Request $request,
+        DocumentBatch $batch,
+        DocumentBatchItem $item,
+        DocxTemplateService $docxTemplateService,
+    ): JsonResponse {
+        $this->ensureSignatureFeatureEnabledOr404();
+        $this->assertBatchOwnership($request, $batch);
+        $this->assertItemBelongsToBatch($batch, $item);
+
+        /** @var User $user */
+        $user = $request->user();
+        $this->resolveSignatureOrFail($user);
+
+        if ($this->canUseDocxSignaturePlaceholderFlow($item, $docxTemplateService)) {
+            return response()->json([
+                'ok' => true,
+                'message' => 'DOCX signature placeholders detected. Preflight passed.',
+                'targets' => [],
+            ]);
+        }
+
+        return response()->json([
+            'ok' => false,
+            'message' => 'DOCX signature placeholders were not found in this generated file. Regenerate with {president_signature} and {getor_signature} placeholders.',
+            'targets' => [],
+        ], 422);
+    }
+
     public function signItem(
         Request $request,
         DocumentBatch $batch,
         DocumentBatchItem $item,
-        PdfSignatureStampService $pdfSignatureStampService,
+        DocxTemplateService $docxTemplateService,
+        PdfConversionService $pdfConversionService,
         SignatureImageService $signatureImageService
     ): JsonResponse {
         $this->ensureSignatureFeatureEnabledOr404();
@@ -553,13 +813,25 @@ class DocumentGeneratorController extends Controller
         );
 
         try {
-            $this->signSingleItem(
-                $request->user(),
-                $batch,
-                $item,
-                $pdfSignatureStampService,
-                $processedPresidentSignaturePath
-            );
+            try {
+                $this->signSingleItem(
+                    $request->user(),
+                    $item,
+                    $docxTemplateService,
+                    $pdfConversionService,
+                    $processedPresidentSignaturePath
+                );
+            } catch (ValidationException $exception) {
+                $errors = $exception->errors();
+
+                return response()->json([
+                    'message' => $this->firstValidationMessage(
+                        $errors,
+                        'Unable to apply signature. Switch to fixed placement or update anchor text.'
+                    ),
+                    'errors' => $errors,
+                ], 422);
+            }
         } finally {
             @unlink($processedPresidentSignaturePath);
         }
@@ -573,7 +845,8 @@ class DocumentGeneratorController extends Controller
 
     public function signItemsBulk(
         Request $request,
-        PdfSignatureStampService $pdfSignatureStampService,
+        DocxTemplateService $docxTemplateService,
+        PdfConversionService $pdfConversionService,
         SignatureImageService $signatureImageService
     ): JsonResponse {
         $this->ensureSignatureFeatureEnabledOr404();
@@ -636,9 +909,9 @@ class DocumentGeneratorController extends Controller
                 try {
                     $this->signSingleItem(
                         $user,
-                        $batch,
                         $item,
-                        $pdfSignatureStampService,
+                        $docxTemplateService,
+                        $pdfConversionService,
                         $processedPresidentSignaturePath
                     );
                     $results[] = [
@@ -899,66 +1172,17 @@ class DocumentGeneratorController extends Controller
 
     public function storeGlobalTemplate(Request $request): JsonResponse
     {
-        $validated = $request->validate([
-            'year' => ['required', 'integer', 'digits:4'],
-            'template_file' => ['required', 'file', 'mimes:docx'],
-        ]);
-
-        $year = (int) $validated['year'];
-        $this->ensureUniqueGlobalTemplateYear($year);
-
-        $file = $request->file('template_file');
-        if (! $file) {
-            return response()->json(['message' => 'Template file is required.'], 422);
-        }
-
-        DocumentGeneratorTemplate::query()->create([
-            'year' => $year,
-            'template_name' => $file->getClientOriginalName(),
-            'template_path' => $file->store('document-generator/global-templates', 'local'),
-        ]);
-
-        return response()->json($this->globalTemplateMappingPayload(), 201);
+        abort(404);
     }
 
     public function updateGlobalTemplate(Request $request, DocumentGeneratorTemplate $template): JsonResponse
     {
-        abort_if($template->year === null, 404);
-
-        $validated = $request->validate([
-            'year' => ['required', 'integer', 'digits:4'],
-            'template_file' => ['nullable', 'file', 'mimes:docx'],
-        ]);
-
-        $year = (int) $validated['year'];
-        $this->ensureUniqueGlobalTemplateYear($year, $template->id);
-
-        $oldPath = null;
-        $file = $request->file('template_file');
-        $updates = ['year' => $year];
-
-        if ($file) {
-            $oldPath = $template->template_path;
-            $updates['template_name'] = $file->getClientOriginalName();
-            $updates['template_path'] = $file->store('document-generator/global-templates', 'local');
-        }
-
-        $template->forceFill($updates)->save();
-
-        $this->deleteTemplateFiles($oldPath ? [$oldPath] : []);
-
-        return response()->json($this->globalTemplateMappingPayload());
+        abort(404);
     }
 
     public function destroyGlobalTemplate(DocumentGeneratorTemplate $template): JsonResponse
     {
-        abort_if($template->year === null, 404);
-
-        $oldPath = $template->template_path;
-        $template->delete();
-        $this->deleteTemplateFiles([$oldPath]);
-
-        return response()->json($this->globalTemplateMappingPayload());
+        abort(404);
     }
 
     public function updateDefaultTemplate(Request $request, DocumentBatch $batch): JsonResponse
@@ -1136,11 +1360,13 @@ class DocumentGeneratorController extends Controller
     private function allItemsPayload(Request $request, ?array $validated): array
     {
         $validated ??= [];
-        $perPage = (int) ($validated['per_page'] ?? $request->integer('per_page', 10));
+        $perPage = (int) ($validated['per_page'] ?? $request->integer('per_page', 25));
         $perPage = max(5, min($perPage, 100));
         $sortBy = (string) ($validated['sort_by'] ?? 'created_at');
         $sortDirection = (string) ($validated['sort_direction'] ?? 'desc');
         $filesOnly = (bool) ($validated['files_only'] ?? false);
+        $completedOnly = (bool) ($validated['completed_only'] ?? false);
+        $unsignedOnly = (bool) ($validated['unsigned_only'] ?? false);
 
         $query = DocumentBatchItem::query()
             ->with([
@@ -1161,12 +1387,23 @@ class DocumentGeneratorController extends Controller
                 FormFieldAliasResolver::FORM_AFS,
             );
         }
-        if (isset($validated['signature_filter']) && $this->supportsItemSignatureAppliedAt()) {
+        if (! $completedOnly && isset($validated['signature_filter']) && $this->supportsItemSignatureAppliedAt()) {
             if ($validated['signature_filter'] === 'signed') {
                 $query->whereNotNull('signature_applied_at');
             }
             if ($validated['signature_filter'] === 'unsigned') {
                 $query->whereNull('signature_applied_at');
+            }
+        }
+
+        if (! $completedOnly && $unsignedOnly && $this->supportsItemSignatureAppliedAt()) {
+            $query->whereNull('signature_applied_at');
+        }
+
+        if ($completedOnly) {
+            $query->where('status', 'pdf_done');
+            if ($this->supportsItemSignatureAppliedAt()) {
+                $query->whereNotNull('signature_applied_at');
             }
         }
 
@@ -1196,6 +1433,53 @@ class DocumentGeneratorController extends Controller
     }
 
     /**
+     * @param  array<string, mixed>  $filters
+     */
+    private function completedItemsQuery(User $user, array $filters): Builder
+    {
+        $query = DocumentBatchItem::query()
+            ->where('status', 'pdf_done')
+            ->whereHas('batch', static function (Builder $batchQuery) use ($user): void {
+                $batchQuery->where('user_id', $user->id);
+            });
+
+        if ($this->supportsItemSignatureAppliedAt()) {
+            $query->whereNotNull('signature_applied_at');
+        }
+
+        if (isset($filters['company_search']) && is_string($filters['company_search']) && trim($filters['company_search']) !== '') {
+            $this->applyCompanySearch(
+                $query,
+                $filters['company_search'],
+                FormFieldAliasResolver::FORM_AFS,
+            );
+        }
+
+        $sortBy = (string) ($filters['sort_by'] ?? 'created_at');
+        $sortDirection = (string) ($filters['sort_direction'] ?? 'desc');
+        $sortBy = in_array($sortBy, ['created_at', 'status', 'row_number', 'updated_at'], true) ? $sortBy : 'created_at';
+        $sortDirection = in_array($sortDirection, ['asc', 'desc'], true) ? $sortDirection : 'desc';
+
+        return $query->orderBy($sortBy, $sortDirection);
+    }
+
+    private function completedExportIsBusy(
+        int $userId,
+        DocumentGeneratorCompletedExportService $completedExportService,
+    ): bool {
+        $state = $completedExportService->getState($userId);
+
+        return in_array(
+            $state['status'],
+            [
+                DocumentGeneratorCompletedExportService::STATUS_QUEUED,
+                DocumentGeneratorCompletedExportService::STATUS_PROCESSING,
+            ],
+            true,
+        );
+    }
+
+    /**
      * @return array<string, mixed>
      */
     private function templateMappingBatchPayload(DocumentBatch $batch): array
@@ -1222,21 +1506,14 @@ class DocumentGeneratorController extends Controller
      */
     private function globalTemplateMappingPayload(): array
     {
-        $templates = DocumentGeneratorTemplate::query()
-            ->orderByRaw('case when year is null then 0 else 1 end')
-            ->orderBy('year')
-            ->get();
-
         /** @var DocumentGeneratorTemplate|null $defaultTemplate */
-        $defaultTemplate = $templates->first(static fn (DocumentGeneratorTemplate $template): bool => $template->year === null);
+        $defaultTemplate = DocumentGeneratorTemplate::query()
+            ->whereNull('year')
+            ->first();
 
         return [
             'default_template' => $defaultTemplate ? $this->globalTemplatePayload($defaultTemplate) : null,
-            'year_templates' => $templates
-                ->filter(static fn (DocumentGeneratorTemplate $template): bool => $template->year !== null)
-                ->values()
-                ->map(fn (DocumentGeneratorTemplate $template): array => $this->globalTemplatePayload($template))
-                ->all(),
+            'year_templates' => [],
         ];
     }
 
@@ -1684,9 +1961,9 @@ class DocumentGeneratorController extends Controller
 
     private function signSingleItem(
         User $user,
-        DocumentBatch $batch,
         DocumentBatchItem $item,
-        PdfSignatureStampService $pdfSignatureStampService,
+        DocxTemplateService $docxTemplateService,
+        PdfConversionService $pdfConversionService,
         string $presidentSignatureImagePath
     ): void {
         $signature = $this->resolveSignatureOrFail($user);
@@ -1697,34 +1974,15 @@ class DocumentGeneratorController extends Controller
             ]);
         }
 
-        if (! is_string($item->pdf_path) || trim($item->pdf_path) === '') {
-            throw new \RuntimeException('PDF file is not available for this item.');
+        if (! $this->canUseDocxSignaturePlaceholderFlow($item, $docxTemplateService)) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'signature' => [
+                    'DOCX signature placeholders were not found for this file. Regenerate with {president_signature} and {getor_signature} placeholders.',
+                ],
+            ]);
         }
 
-        if (! Storage::disk('local')->exists($item->pdf_path)) {
-            throw new \RuntimeException('PDF file is missing on disk.');
-        }
-
-        $pdfPath = Storage::disk('local')->path($item->pdf_path);
-        $getorSignatureImagePath = Storage::disk('local')->path($signature->processed_signature_path);
-
-        $pdfSignatureStampService->stampFileWithPageLayouts(
-            $pdfPath,
-            $presidentSignatureImagePath,
-            [
-                2 => $this->signatureLayout($signature, 'page2'),
-                3 => $this->signatureLayout($signature, 'page3'),
-            ],
-        );
-
-        $pdfSignatureStampService->stampFileWithPageLayouts(
-            $pdfPath,
-            $getorSignatureImagePath,
-            [
-                4 => $this->signatureLayout($signature, 'page4'),
-                8 => $this->signatureLayout($signature, 'page8'),
-            ],
-        );
+        $this->signWithDocxPlaceholders($item, $signature, $presidentSignatureImagePath, $docxTemplateService, $pdfConversionService);
 
         if ($this->supportsItemSignatureAppliedAt()) {
             $item->signature_applied_at = now();
@@ -1807,6 +2065,28 @@ class DocumentGeneratorController extends Controller
         return $supportsGetorPageSpecificLayout;
     }
 
+    private function supportsTextAnchorSignatureLayout(): bool
+    {
+        static $supportsTextAnchorLayout = null;
+
+        if ($supportsTextAnchorLayout !== null) {
+            return $supportsTextAnchorLayout;
+        }
+
+        $supportsTextAnchorLayout = Schema::hasColumns('document_generator_signatures', [
+            'page2_placement_mode',
+            'page2_anchor_text',
+            'page3_placement_mode',
+            'page3_anchor_text',
+            'page4_placement_mode',
+            'page4_anchor_text',
+            'page8_placement_mode',
+            'page8_anchor_text',
+        ]);
+
+        return $supportsTextAnchorLayout;
+    }
+
     private function supportsItemSignatureAppliedAt(): bool
     {
         static $supportsSignatureAppliedAt = null;
@@ -1858,17 +2138,153 @@ class DocumentGeneratorController extends Controller
     }
 
     /**
-     * @return array{anchor: string, offset_x: float, offset_y: float, width: float, height: float}
+     * @return array{
+     *   anchor: string,
+     *   placement_mode: string,
+     *   anchor_text: string,
+     *   offset_x: float,
+     *   offset_y: float,
+     *   width: float,
+     *   height: float
+     * }
      */
     private function signatureLayout(DocumentGeneratorSignature $signature, string $pageKey): array
     {
+        $placementMode = 'fixed';
+        $anchorText = '';
+
+        if ($this->supportsTextAnchorSignatureLayout()) {
+            $placementMode = (string) ($signature->{"{$pageKey}_placement_mode"} ?: 'fixed');
+            $anchorText = (string) ($signature->{"{$pageKey}_anchor_text"} ?: '');
+        }
+
         return [
             'anchor' => (string) ($signature->{"{$pageKey}_anchor"} ?: $signature->anchor),
+            'placement_mode' => $placementMode,
+            'anchor_text' => $anchorText,
             'offset_x' => (float) ($signature->{"{$pageKey}_offset_x"} ?? $signature->offset_x),
             'offset_y' => (float) ($signature->{"{$pageKey}_offset_y"} ?? $signature->offset_y),
             'width' => (float) ($signature->{"{$pageKey}_width"} ?? $signature->width),
             'height' => (float) ($signature->{"{$pageKey}_height"} ?? $signature->height),
         ];
+    }
+
+    private function canUseDocxSignaturePlaceholderFlow(
+        DocumentBatchItem $item,
+        DocxTemplateService $docxTemplateService,
+    ): bool {
+        if (! (bool) config('services.document_generator.signature_docx_placeholder_enabled', true)) {
+            return false;
+        }
+
+        if (! is_string($item->docx_path) || trim($item->docx_path) === '') {
+            return false;
+        }
+
+        if (! Storage::disk('local')->exists($item->docx_path)) {
+            return false;
+        }
+
+        try {
+            $docxPath = Storage::disk('local')->path($item->docx_path);
+            return $docxTemplateService->hasSignatureImagePlaceholders($docxPath);
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    private function signWithDocxPlaceholders(
+        DocumentBatchItem $item,
+        DocumentGeneratorSignature $signature,
+        string $presidentSignatureImagePath,
+        DocxTemplateService $docxTemplateService,
+        PdfConversionService $pdfConversionService,
+    ): void {
+        if (! is_string($item->docx_path) || trim($item->docx_path) === '') {
+            throw new \RuntimeException('DOCX file is not available for this item.');
+        }
+
+        if (! Storage::disk('local')->exists($item->docx_path)) {
+            throw new \RuntimeException('DOCX file is missing on disk.');
+        }
+
+        $docxPath = Storage::disk('local')->path($item->docx_path);
+        $getorSignatureImagePath = Storage::disk('local')->path($signature->processed_signature_path);
+
+        $page2Layout = $this->signatureLayout($signature, 'page2');
+        $page4Layout = $this->signatureLayout($signature, 'page4');
+
+        $docxTemplateService->injectSignatureImages($docxPath, $docxPath, [
+            'president_signature' => [
+                'path' => $presidentSignatureImagePath,
+                'width_mm' => (float) ($page2Layout['width'] ?? 40.0),
+                'height_mm' => (float) ($page2Layout['height'] ?? 16.0),
+            ],
+            'getor_signature' => [
+                'path' => $getorSignatureImagePath,
+                'width_mm' => (float) ($page4Layout['width'] ?? 40.0),
+                'height_mm' => (float) ($page4Layout['height'] ?? 16.0),
+            ],
+        ]);
+
+        $convertedPdfPath = $pdfConversionService->convertDocxToPdf($docxPath);
+        $expectedPdfRelativePath = $this->expectedPdfRelativePath($item);
+        $expectedPdfAbsolutePath = Storage::disk('local')->path($expectedPdfRelativePath);
+
+        if ($convertedPdfPath !== $expectedPdfAbsolutePath && is_file($convertedPdfPath)) {
+            @rename($convertedPdfPath, $expectedPdfAbsolutePath);
+        }
+
+        $item->pdf_path = $expectedPdfRelativePath;
+        $item->save();
+    }
+
+    private function expectedPdfRelativePath(DocumentBatchItem $item): string
+    {
+        $existingPdfPath = trim((string) ($item->pdf_path ?? ''));
+        if ($existingPdfPath !== '') {
+            return $existingPdfPath;
+        }
+
+        $docxPath = trim((string) ($item->docx_path ?? ''));
+        if ($docxPath !== '') {
+            $replaced = preg_replace('/\.docx$/i', '.pdf', $docxPath);
+            if (is_string($replaced) && $replaced !== $docxPath) {
+                return $replaced;
+            }
+        }
+
+        throw new \RuntimeException('Unable to resolve the expected PDF path for this item.');
+    }
+
+    private function normalizeAnchorText(mixed $value): ?string
+    {
+        if (! is_string($value)) {
+            return null;
+        }
+
+        $trimmed = trim($value);
+
+        return $trimmed !== '' ? $trimmed : null;
+    }
+
+    /**
+     * @param  array<string, list<string>>  $errors
+     */
+    private function firstValidationMessage(array $errors, string $fallback): string
+    {
+        foreach ($errors as $messages) {
+            if (! is_array($messages) || $messages === []) {
+                continue;
+            }
+
+            $first = trim((string) $messages[0]);
+            if ($first !== '') {
+                return $first;
+            }
+        }
+
+        return $fallback;
     }
 
     private function processPresidentSignatureUpload(

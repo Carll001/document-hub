@@ -18,7 +18,7 @@ use Inertia\Response;
 
 class ClientController extends Controller
 {
-    private const COMPANIES_PER_PAGE = 10;
+    private const COMPANIES_PER_PAGE = 25;
 
     public function __construct(
         private readonly Form1702ExCompletedEmailService $form1702ExCompletedEmailService,
@@ -255,7 +255,7 @@ class ClientController extends Controller
             ->map(function (Company $company) use ($rowsByCompanyId): array {
                 /** @var Collection<int, Form1702ExBatchRow> $companyRows */
                 $companyRows = $rowsByCompanyId->get($company->id, collect())->values();
-                [$statusLabel, $statusVariant] = $this->companyStatus($companyRows);
+                [$statusLabel, $statusVariant, $statusClass] = $this->companyStatus($companyRows);
 
                 return [
                     'id' => $company->uuid,
@@ -270,6 +270,7 @@ class ClientController extends Controller
                         ->all(),
                     'statusLabel' => $statusLabel,
                     'statusVariant' => $statusVariant,
+                    'statusClass' => $statusClass,
                     'files' => $companyRows
                         ->map(fn (Form1702ExBatchRow $row): array => [
                             'id' => $row->uuid,
@@ -345,21 +346,21 @@ class ClientController extends Controller
     private function companyStatus($rows): array
     {
         if ($rows->contains(fn (Form1702ExBatchRow $row): bool => $this->isCompletedRow($row))) {
-            return ['Completed', 'secondary'];
+            return ['Completed', 'outline', 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300'];
         }
 
         if ($rows->contains(fn (Form1702ExBatchRow $row): bool => $row->pdf_status === Form1702ExBatchRow::PDF_STATUS_PROCESSING)) {
-            return ['Processing', 'outline'];
+            return ['Processing', 'outline', 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-300'];
         }
 
         if ($rows->contains(fn (Form1702ExBatchRow $row): bool => $row->pdf_status === Form1702ExBatchRow::PDF_STATUS_QUEUED)) {
-            return ['Queued', 'outline'];
+            return ['Queued', 'outline', 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300'];
         }
 
         if ($rows->contains(fn (Form1702ExBatchRow $row): bool => $row->pdf_status === Form1702ExBatchRow::PDF_STATUS_FAILED)) {
-            return ['Failed', 'destructive'];
+            return ['Failed', 'destructive', ''];
         }
 
-        return ['Pending', 'outline'];
+        return ['Pending', 'outline', 'border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-500/30 dark:bg-slate-500/10 dark:text-slate-300'];
     }
 }

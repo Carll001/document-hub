@@ -1,7 +1,5 @@
 <script setup lang="ts">
 import {
-    ChevronLeft,
-    ChevronRight,
     Download,
     Eye,
     FileText,
@@ -11,7 +9,7 @@ import {
     Trash2,
 } from 'lucide-vue-next';
 import { router } from '@inertiajs/vue3';
-import { computed, nextTick, ref } from 'vue';
+import { computed, ref } from 'vue';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -74,46 +72,6 @@ const emit = defineEmits<{
     'update:search': [value: string];
 }>();
 
-type PaginationItem = number | 'ellipsis-start' | 'ellipsis-end';
-
-const paginationItems = computed<PaginationItem[]>(() => {
-    const { currentPage, lastPage } = props.pagination;
-
-    if (lastPage <= 1) {
-        return [1];
-    }
-
-    if (lastPage <= 7) {
-        return Array.from({ length: lastPage }, (_, index) => index + 1);
-    }
-
-    if (currentPage <= 4) {
-        return [1, 2, 3, 4, 5, 'ellipsis-end', lastPage];
-    }
-
-    if (currentPage >= lastPage - 3) {
-        return [
-            1,
-            'ellipsis-start',
-            lastPage - 4,
-            lastPage - 3,
-            lastPage - 2,
-            lastPage - 1,
-            lastPage,
-        ];
-    }
-
-    return [
-        1,
-        'ellipsis-start',
-        currentPage - 1,
-        currentPage,
-        currentPage + 1,
-        'ellipsis-end',
-        lastPage,
-    ];
-});
-
 function visitPage(page: number): void {
     if (page === props.pagination.currentPage) {
         return;
@@ -125,13 +83,6 @@ function visitPage(page: number): void {
         {
             preserveScroll: true,
             preserveState: true,
-            onSuccess: () => {
-                void nextTick(() => {
-                    paginationControls.value?.scrollIntoView({
-                        block: 'end',
-                    });
-                });
-            },
         },
     );
 }
@@ -451,56 +402,28 @@ function receiptMutationDisabled(record: BatchMergeHistoryRecord): boolean {
         <div
             v-if="props.pagination.lastPage > 1"
             ref="paginationControls"
-            class="flex flex-wrap items-center justify-center gap-2 pt-2"
+            class="flex items-center justify-center gap-2 pt-2"
         >
             <Button
                 type="button"
                 variant="outline"
                 size="sm"
-                class="gap-2"
                 :disabled="props.pagination.currentPage <= 1"
                 @click="visitPage(props.pagination.currentPage - 1)"
             >
-                <ChevronLeft class="size-4" />
                 Previous
             </Button>
-
-            <template v-for="item in paginationItems" :key="String(item)">
-                <Button
-                    v-if="typeof item === 'number'"
-                    type="button"
-                    size="sm"
-                    :variant="
-                        item === props.pagination.currentPage ? 'default' : 'outline'
-                    "
-                    :aria-current="
-                        item === props.pagination.currentPage ? 'page' : undefined
-                    "
-                    @click="visitPage(item)"
-                >
-                    {{ item }}
-                </Button>
-                <span
-                    v-else
-                    class="px-1 text-sm text-muted-foreground"
-                    aria-hidden="true"
-                >
-                    ...
-                </span>
-            </template>
-
+            <span class="text-sm">Page {{ props.pagination.currentPage }} / {{ props.pagination.lastPage }}</span>
             <Button
                 type="button"
                 variant="outline"
                 size="sm"
-                class="gap-2"
                 :disabled="
                     props.pagination.currentPage >= props.pagination.lastPage
                 "
                 @click="visitPage(props.pagination.currentPage + 1)"
             >
                 Next
-                <ChevronRight class="size-4" />
             </Button>
         </div>
     </CardContent>

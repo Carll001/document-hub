@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Head, Link, router, useForm } from '@inertiajs/vue3';
-import { ChevronLeft, ChevronRight, Ellipsis, Eye, FolderKanban, Send } from 'lucide-vue-next';
-import { computed, nextTick, ref, watch } from 'vue';
+import { Download, Ellipsis, Eye, FolderKanban, Send } from 'lucide-vue-next';
+import { computed, ref, watch } from 'vue';
 import { toast } from 'vue-sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -45,6 +45,7 @@ type ClientCompanyGroup = {
     recipientEmails: string[];
     statusLabel: string;
     statusVariant: 'secondary' | 'outline' | 'destructive';
+    statusClass: string;
     files: ClientCompanyFile[];
 };
 
@@ -56,8 +57,6 @@ type ClientPagination = {
     from: number | null;
     to: number | null;
 };
-
-type PaginationItem = number | 'ellipsis-start' | 'ellipsis-end';
 
 const props = defineProps<{
     flash: {
@@ -103,27 +102,6 @@ const companyLabel = computed(() =>
         props.client.folder.companyCount === 1 ? 'y' : 'ies'
     }`,
 );
-const paginationItems = computed<PaginationItem[]>(() => {
-    const { currentPage, lastPage } = props.client.pagination;
-
-    if (lastPage <= 1) {
-        return [1];
-    }
-
-    if (lastPage <= 7) {
-        return Array.from({ length: lastPage }, (_, index) => index + 1);
-    }
-
-    if (currentPage <= 4) {
-        return [1, 2, 3, 4, 5, 'ellipsis-end', lastPage];
-    }
-
-    if (currentPage >= lastPage - 3) {
-        return [1, 'ellipsis-start', lastPage - 4, lastPage - 3, lastPage - 2, lastPage - 1, lastPage];
-    }
-
-    return [1, 'ellipsis-start', currentPage - 1, currentPage, currentPage + 1, 'ellipsis-end', lastPage];
-});
 
 watch(
     () => [props.flash.success, props.flash.error] as const,
@@ -156,13 +134,6 @@ function visitPage(page: number): void {
         {
             preserveScroll: true,
             preserveState: true,
-            onSuccess: () => {
-                void nextTick(() => {
-                    paginationControls.value?.scrollIntoView({
-                        block: 'end',
-                    });
-                });
-            },
         },
     );
 }
@@ -279,10 +250,10 @@ function formatDateTime(value: string | null): string {
                         <Table>
                             <TableHeader>
                                 <TableRow>
+                                    <TableHead class="w-[1%]">#</TableHead>
                                     <TableHead>Company</TableHead>
                                     <TableHead>TIN</TableHead>
                                     <TableHead>Recipient</TableHead>
-                                    <TableHead>Files</TableHead>
                                     <TableHead>Status</TableHead>
                                     <TableHead class="text-right">Actions</TableHead>
                                 </TableRow>
@@ -290,10 +261,13 @@ function formatDateTime(value: string | null): string {
 
                             <TableBody>
                                 <TableRow
-                                    v-for="company in props.client.companies"
+                                    v-for="(company, index) in props.client.companies"
                                     :key="company.id"
                                     class="align-top"
                                 >
+                                    <TableCell class="text-sm text-muted-foreground">
+                                        {{ (props.client.pagination.from ?? 1) + index }}
+                                    </TableCell>
                                     <TableCell class="font-medium text-foreground">
                                         {{ company.name }}
                                     </TableCell>
@@ -307,24 +281,8 @@ function formatDateTime(value: string | null): string {
                                                 : 'No saved recipient email'
                                         }}
                                     </TableCell>
-                                    <TableCell class="space-y-2">
-                                        <div
-                                            v-for="file in company.files"
-                                            :key="file.id"
-                                            class="rounded-xl border px-3 py-2"
-                                        >
-                                            <div class="min-w-0 space-y-1">
-                                                <p class="truncate text-sm font-medium text-foreground">
-                                                    {{ file.fileName }}
-                                                </p>
-                                                <p class="text-xs text-muted-foreground">
-                                                    {{ formatDateTime(file.generatedAt) }}
-                                                </p>
-                                            </div>
-                                        </div>
-                                    </TableCell>
                                     <TableCell>
-                                        <Badge :variant="company.statusVariant" class="rounded-full">
+                                        <Badge :variant="company.statusVariant" :class="['rounded-full', company.statusClass]">
                                             {{ company.statusLabel }}
                                         </Badge>
                                     </TableCell>
@@ -338,8 +296,8 @@ function formatDateTime(value: string | null): string {
                                                     <Button
                                                         type="button"
                                                         size="icon"
-                                                        variant="outline"
-                                                        class="size-9 rounded-full"
+                                                        variant="ghost"
+                                                        class="size-9"
                                                     >
                                                         <Ellipsis class="size-4" />
                                                         <span class="sr-only">
@@ -366,7 +324,11 @@ function formatDateTime(value: string | null): string {
                                                         v-if="file.downloadUrl"
                                                         :as-child="true"
                                                     >
-                                                        <a :href="file.downloadUrl">
+                                                        <a
+                                                            :href="file.downloadUrl"
+                                                            class="flex items-center gap-2"
+                                                        >
+                                                            <Download class="size-4" />
                                                             Download
                                                         </a>
                                                     </DropdownMenuItem>
@@ -388,51 +350,32 @@ function formatDateTime(value: string | null): string {
                     <div
                         v-if="props.client.pagination.lastPage > 1"
                         ref="paginationControls"
-                        class="flex flex-wrap items-center justify-center gap-2 pt-4"
+                        class="flex items-center justify-between gap-2 pt-4"
                     >
-                        <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            class="gap-2"
-                            :disabled="props.client.pagination.currentPage <= 1"
-                            @click="visitPage(props.client.pagination.currentPage - 1)"
-                        >
-                            <ChevronLeft class="size-4" />
-                            Previous
-                        </Button>
-
-                        <template v-for="item in paginationItems" :key="String(item)">
+                        <div class="text-sm text-muted-foreground">
+                            Showing {{ props.client.pagination.from ?? 0 }} to {{ props.client.pagination.to ?? 0 }} of {{ props.client.pagination.total }} rows
+                        </div>
+                        <div class="flex items-center gap-2">
                             <Button
-                                v-if="typeof item === 'number'"
                                 type="button"
+                                variant="outline"
                                 size="sm"
-                                :variant="item === props.client.pagination.currentPage ? 'default' : 'outline'"
-                                :aria-current="item === props.client.pagination.currentPage ? 'page' : undefined"
-                                @click="visitPage(item)"
+                                :disabled="props.client.pagination.currentPage <= 1"
+                                @click="visitPage(props.client.pagination.currentPage - 1)"
                             >
-                                {{ item }}
+                                Previous
                             </Button>
-                            <span
-                                v-else
-                                class="px-1 text-sm text-muted-foreground"
-                                aria-hidden="true"
+                            <span class="text-sm">Page {{ props.client.pagination.currentPage }} / {{ props.client.pagination.lastPage }}</span>
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                :disabled="props.client.pagination.currentPage >= props.client.pagination.lastPage"
+                                @click="visitPage(props.client.pagination.currentPage + 1)"
                             >
-                                ...
-                            </span>
-                        </template>
-
-                        <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            class="gap-2"
-                            :disabled="props.client.pagination.currentPage >= props.client.pagination.lastPage"
-                            @click="visitPage(props.client.pagination.currentPage + 1)"
-                        >
-                            Next
-                            <ChevronRight class="size-4" />
-                        </Button>
+                                Next
+                            </Button>
+                        </div>
                     </div>
                 </CardContent>
             </Card>

@@ -1,23 +1,22 @@
 <script setup lang="ts">
-import { Head } from '@inertiajs/vue3';
+import { Head, router } from '@inertiajs/vue3';
 import type { ColumnDef } from '@tanstack/vue-table';
-import { MoreHorizontal, Search, Settings2, Trash2, Upload } from 'lucide-vue-next';
+import { ArrowUpDown, Download, Eye, FileText, MoreHorizontal, Pencil, PenLine, Search, Settings2, Trash2, Upload } from 'lucide-vue-next';
 import { computed, h, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { toast } from 'vue-sonner';
 import AfsEditDialog from '@/components/afs-components/AfsEditDialog.vue';
-import AfsSignatureSettingsDialog from '@/components/afs-components/AfsSignatureSettingsDialog.vue';
 import AfsSignDialog from '@/components/afs-components/AfsSignDialog.vue';
 import type { PaginatedResponse, SignatureSettings, UnifiedItem } from '@/components/afs-components/types';
 import {
     csrfToken,
     getApi,
+    statusBadgeClass,
     statusBadgeVariant,
 } from '@/components/afs-components/utils';
 import { resolveTin } from '@/lib/form-field-aliases';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Checkbox } from '@/components/ui/checkbox';
 import { DataTable } from '@/components/ui/data-table';
 import {
     Dialog,
@@ -27,6 +26,16 @@ import {
     DialogHeader,
     DialogTitle,
 } from '@/components/ui/dialog';
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -44,6 +53,13 @@ import type { BreadcrumbItem } from '@/types';
 
 const props = defineProps<{
     initialItems: PaginatedResponse<UnifiedItem>;
+    initialFilters: {
+        search: string;
+        sort: 'uploadedAt' | 'generatedAt' | 'pdfStatus' | 'sourceRowNumber' | 'created_at' | 'updated_at' | 'status' | 'row_number';
+        direction: 'asc' | 'desc';
+        status: string;
+        per_page: number;
+    };
     initialSignature: {
         signature: SignatureSettings | null;
     };
@@ -66,25 +82,45 @@ const creatingBatch = ref(false);
 
 const itemsData = ref<PaginatedResponse<UnifiedItem>>(props.initialItems);
 const itemsLoading = ref(false);
-const itemsSortBy = ref('created_at');
-const itemsSortDirection = ref<'asc' | 'desc'>('desc');
-const itemStatusFilter = ref('all');
-const itemSignatureFilter = ref('all');
-const companySearch = ref('');
-const selectedItemIds = ref<number[]>([]);
+const itemsSortBy = ref<string>('created_at');
+const itemsSortDirection = ref<'asc' | 'desc'>(props.initialFilters.direction ?? 'desc');
+const itemStatusFilter = ref(props.initialFilters.status ?? 'all');
+const companySearch = ref(props.initialFilters.search ?? '');
 const pollingActive = ref(false);
 const deletingItems = ref(false);
 
 const editDialogOpen = ref(false);
 const editingItem = ref<UnifiedItem | null>(null);
-const signatureDialogOpen = ref(false);
 const signingItemIds = ref<number[]>([]);
 const signDialogOpen = ref(false);
 const signDialogTarget = ref<UnifiedItem | null>(null);
 const editDialogRef = ref<InstanceType<typeof AfsEditDialog> | null>(null);
+const deleteConfirmOpen = ref(false);
+const deleteConfirmIds = ref<number[]>([]);
 
 let pollInterval: ReturnType<typeof setInterval> | null = null;
 let companySearchDebounce: ReturnType<typeof setTimeout> | null = null;
+
+const sortByFromQuery = (sort: string): string => {
+    if (sort === 'uploadedAt') return 'created_at';
+    if (sort === 'generatedAt') return 'updated_at';
+    if (sort === 'pdfStatus') return 'status';
+    if (sort === 'sourceRowNumber') return 'row_number';
+    return sort;
+};
+
+const querySortFromSortBy = (sortBy: string): string => {
+    if (sortBy === 'created_at') return 'uploadedAt';
+    if (sortBy === 'updated_at') return 'generatedAt';
+    if (sortBy === 'status') return 'pdfStatus';
+    if (sortBy === 'row_number') return 'sourceRowNumber';
+    return sortBy;
+};
+
+itemsSortBy.value = sortByFromQuery(props.initialFilters.sort);
+if (props.initialFilters.per_page && props.initialFilters.per_page > 0) {
+    itemsData.value.per_page = props.initialFilters.per_page;
+}
 
 const buildItemsUrl = (page = itemsData.value.current_page) => {
     const query: Record<string, string> = {
@@ -92,15 +128,12 @@ const buildItemsUrl = (page = itemsData.value.current_page) => {
         per_page: String(itemsData.value.per_page),
         sort_by: itemsSortBy.value,
         sort_direction: itemsSortDirection.value,
+        unsigned_only: '1',
     };
 
     if (itemStatusFilter.value !== 'all') {
         query.status = itemStatusFilter.value;
     }
-    if (props.signatureEnabled && itemSignatureFilter.value !== 'all') {
-        query.signature_filter = itemSignatureFilter.value;
-    }
-
     if (companySearch.value.trim() !== '') {
         query.company_search = companySearch.value.trim();
     }
@@ -110,25 +143,42 @@ const buildItemsUrl = (page = itemsData.value.current_page) => {
     return `/document-generator/items?${params.toString()}`;
 };
 
+const visitIndex = (overrides: Partial<{
+    page: number;
+    perPage: number;
+    search: string;
+    sortBy: string;
+    direction: 'asc' | 'desc';
+    status: string;
+}>) => {
+    const nextPage = overrides.page ?? itemsData.value.current_page;
+    const nextPerPage = overrides.perPage ?? itemsData.value.per_page;
+    const nextSearch = overrides.search ?? companySearch.value.trim();
+    const nextSortBy = overrides.sortBy ?? itemsSortBy.value;
+    const nextDirection = overrides.direction ?? itemsSortDirection.value;
+    const nextStatus = overrides.status ?? itemStatusFilter.value;
+
+    router.get(
+        documentGeneratorRoutes.index().url,
+        {
+            page: nextPage,
+            per_page: nextPerPage,
+            search: nextSearch !== '' ? nextSearch : undefined,
+            sort: querySortFromSortBy(nextSortBy),
+            direction: nextDirection,
+            status: nextStatus !== 'all' ? nextStatus : undefined,
+        },
+        {
+            preserveState: true,
+            preserveScroll: true,
+            replace: true,
+            only: ['initialItems', 'initialFilters'],
+        },
+    );
+};
+
 const hasPendingVisibleItems = computed(() =>
-    itemsData.value.data.some((item) => ['queued', 'processing'].includes(item.status)),
-);
-const selectedVisibleCount = computed(
-    () => itemsData.value.data.filter((item) => selectedItemIds.value.includes(item.id)).length,
-);
-const selectAllState = computed<boolean | 'indeterminate'>(() => {
-    if (itemsData.value.data.length === 0 || selectedVisibleCount.value === 0) {
-        return false;
-    }
-
-    if (selectedVisibleCount.value === itemsData.value.data.length) {
-        return true;
-    }
-
-    return 'indeterminate';
-});
-const canBulkDelete = computed(
-    () => selectedItemIds.value.length > 0 && !deletingItems.value,
+    itemsData.value.data.some((item) => ['queued', 'processing', 'docx_done'].includes(item.status)),
 );
 
 const stopPolling = () => {
@@ -140,8 +190,14 @@ const stopPolling = () => {
     }
 };
 
-const loadItems = async (page = itemsData.value.current_page) => {
-    itemsLoading.value = true;
+const loadItems = async (
+    page = itemsData.value.current_page,
+    options: { silent?: boolean } = {},
+) => {
+    const silent = options.silent === true;
+    if (!silent) {
+        itemsLoading.value = true;
+    }
 
     try {
         itemsData.value = await getApi<PaginatedResponse<UnifiedItem>>(buildItemsUrl(page));
@@ -150,7 +206,9 @@ const loadItems = async (page = itemsData.value.current_page) => {
             stopPolling();
         }
     } finally {
-        itemsLoading.value = false;
+        if (!silent) {
+            itemsLoading.value = false;
+        }
     }
 };
 
@@ -165,7 +223,7 @@ const startPolling = () => {
 
     pollInterval = setInterval(async () => {
         try {
-            await loadItems();
+            await loadItems(itemsData.value.current_page, { silent: true });
         } catch {
             stopPolling();
         }
@@ -243,15 +301,9 @@ const onTemplateFileChange = (event: Event) => {
     defaultTemplateFile.value = input.files?.[0] ?? null;
 };
 
-const onItemStatusChange = async (value: string) => {
+const onItemStatusChange = (value: string) => {
     itemStatusFilter.value = value;
-    await loadItems(1);
-    startPolling();
-};
-
-const onItemSignatureFilterChange = async (value: string) => {
-    itemSignatureFilter.value = value;
-    await loadItems(1);
+    visitIndex({ page: 1, status: value });
     startPolling();
 };
 
@@ -263,14 +315,31 @@ const onCompanySearchInput = (event: Event) => {
         clearTimeout(companySearchDebounce);
     }
 
-    companySearchDebounce = setTimeout(async () => {
-        await loadItems(1);
+    companySearchDebounce = setTimeout(() => {
+        visitIndex({ page: 1, search: companySearch.value.trim() });
         startPolling();
     }, 300);
 };
 
 const canEditItem = (item: UnifiedItem) => !['queued', 'processing'].includes(item.status);
 const canDeleteItem = (item: UnifiedItem) => !['queued', 'processing'].includes(item.status);
+const displayStatus = (item: UnifiedItem): string =>
+    item.status === 'pdf_done' && !item.signature_applied ? 'Generated' : item.status;
+const formatDateTime = (value: string | null): string => {
+    if (!value) {
+        return '-';
+    }
+
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+        return value;
+    }
+
+    return new Intl.DateTimeFormat('en-PH', {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+    }).format(parsed);
+};
 
 const extractTin = (item: UnifiedItem): string => {
     if (typeof item.tin === 'string' && item.tin.trim() !== '') {
@@ -280,35 +349,15 @@ const extractTin = (item: UnifiedItem): string => {
     return resolveTin(item.row_data, 'afs') ?? '-';
 };
 
-const toggleItemSelection = (item: UnifiedItem, checked: boolean | 'indeterminate') => {
-    if (checked === 'indeterminate') {
-        return;
-    }
-
-    if (checked) {
-        if (!selectedItemIds.value.includes(item.id)) {
-            selectedItemIds.value = [...selectedItemIds.value, item.id];
-        }
-        return;
-    }
-
-    selectedItemIds.value = selectedItemIds.value.filter((itemId) => itemId !== item.id);
+const confirmDelete = (ids: number[]) => {
+    deleteConfirmIds.value = ids;
+    deleteConfirmOpen.value = true;
 };
 
-const toggleAllVisibleRows = (checked: boolean | 'indeterminate') => {
-    if (checked === 'indeterminate') {
-        return;
-    }
-
-    if (checked) {
-        selectedItemIds.value = Array.from(
-            new Set([...selectedItemIds.value, ...itemsData.value.data.map((item) => item.id)]),
-        );
-        return;
-    }
-
-    const visibleIds = new Set(itemsData.value.data.map((item) => item.id));
-    selectedItemIds.value = selectedItemIds.value.filter((itemId) => !visibleIds.has(itemId));
+const handleConfirmedDelete = async () => {
+    deleteConfirmOpen.value = false;
+    await deleteItems(deleteConfirmIds.value);
+    deleteConfirmIds.value = [];
 };
 
 const deleteItems = async (itemIds: number[]) => {
@@ -358,8 +407,6 @@ const deleteItems = async (itemIds: number[]) => {
         ).length;
         const failedCount = results.length - successCount;
 
-        selectedItemIds.value = selectedItemIds.value.filter((itemId) => !uniqueItemIds.includes(itemId));
-
         await loadItems(1);
         startPolling();
 
@@ -391,7 +438,7 @@ const openEditDialog = (item: UnifiedItem) => {
 };
 
 const onEditSaved = async () => {
-    await loadItems(itemsData.value.current_page);
+    await loadItems(itemsData.value.current_page, { silent: true });
     startPolling();
 };
 
@@ -406,17 +453,9 @@ const applySignatureToItem = (item: UnifiedItem) => {
     signDialogOpen.value = true;
 };
 
-const onSignatureSaved = () => {
-    toast.success('Signature settings saved.');
-};
-
-const onSignatureRemoved = () => {
-    toast.success('Signature removed.');
-};
-
 const onItemSigned = async (pdfUrl?: string) => {
     const item = signDialogTarget.value;
-    await loadItems(itemsData.value.current_page);
+    await loadItems(itemsData.value.current_page, { silent: true });
     toast.success(item ? `Row ${item.row_number} was signed.` : 'Signature applied.');
     signDialogTarget.value = null;
 
@@ -427,25 +466,6 @@ const onItemSigned = async (pdfUrl?: string) => {
 
 const itemColumns = computed<ColumnDef<UnifiedItem>[]>(() => [
     {
-        id: 'selection',
-        header: () =>
-            h(Checkbox, {
-                modelValue: selectAllState.value,
-                disabled: itemsData.value.data.length === 0 || deletingItems.value,
-                'aria-label': 'Select visible rows',
-                'onUpdate:modelValue': (value: boolean | 'indeterminate') => toggleAllVisibleRows(value),
-            }),
-        enableSorting: false,
-        cell: ({ row }) =>
-            h(Checkbox, {
-                modelValue: selectedItemIds.value.includes(row.original.id),
-                disabled: deletingItems.value,
-                'aria-label': `Select row ${row.original.row_number}`,
-                'onUpdate:modelValue': (value: boolean | 'indeterminate') =>
-                    toggleItemSelection(row.original, value),
-            }),
-    },
-    {
         id: 'index',
         header: '#',
         enableSorting: false,
@@ -455,13 +475,6 @@ const itemColumns = computed<ColumnDef<UnifiedItem>[]>(() => [
                 + row.index
                 + 1,
             ),
-    },
-    {
-        id: 'batch_id',
-        accessorKey: 'batch_id',
-        header: 'Batch',
-        enableSorting: false,
-        cell: ({ row }) => `#${row.original.batch_id}`,
     },
     {
         id: 'tin',
@@ -477,9 +490,24 @@ const itemColumns = computed<ColumnDef<UnifiedItem>[]>(() => [
         cell: ({ row }) => row.original.company || '-',
     },
     {
+        id: 'created_at',
+        accessorKey: 'created_at',
+        header: () =>
+            h('span', { class: 'inline-flex items-center gap-1' }, [
+                'Uploaded',
+                h(ArrowUpDown, { class: 'size-4 text-muted-foreground' }),
+            ]),
+        enableSorting: true,
+        cell: ({ row }) => formatDateTime(row.original.created_at),
+    },
+    {
         id: 'status',
         accessorKey: 'status',
-        header: 'Status',
+        header: () =>
+            h('span', { class: 'inline-flex items-center gap-1' }, [
+                'Status',
+                h(ArrowUpDown, { class: 'size-4 text-muted-foreground' }),
+            ]),
         enableSorting: true,
         cell: ({ row }) =>
             h(
@@ -490,18 +518,10 @@ const itemColumns = computed<ColumnDef<UnifiedItem>[]>(() => [
                         Badge,
                         {
                             variant: statusBadgeVariant(row.original.status),
+                            class: statusBadgeClass(row.original.status),
                         },
-                        () => row.original.status,
+                        () => displayStatus(row.original),
                     ),
-                    row.original.signature_applied
-                        ? h(
-                              Badge,
-                              {
-                                  variant: 'secondary',
-                              },
-                              () => 'Signed',
-                          )
-                        : null,
                 ],
             ),
     },
@@ -552,8 +572,7 @@ const itemColumns = computed<ColumnDef<UnifiedItem>[]>(() => [
                                         DropdownMenuItem,
                                         {
                                             disabled: !canEditItem(row.original),
-                                            onSelect: (event: Event) => {
-                                                event.preventDefault();
+                                            onSelect: () => {
                                                 if (!canEditItem(row.original)) {
                                                     return;
                                                 }
@@ -561,7 +580,7 @@ const itemColumns = computed<ColumnDef<UnifiedItem>[]>(() => [
                                             },
                                         },
                                         {
-                                            default: () => 'Edit',
+                                            default: () => [h(Pencil, { class: 'size-4' }), 'Edit'],
                                         },
                                     ),
                                     row.original.docx_available
@@ -578,8 +597,9 @@ const itemColumns = computed<ColumnDef<UnifiedItem>[]>(() => [
                                                                   item: row.original.id,
                                                                   type: 'docx',
                                                               }),
+                                                              class: 'flex w-full items-center gap-2',
                                                           },
-                                                          'DOCX',
+                                                          [h(FileText, { class: 'size-4' }), 'DOCX'],
                                                       ),
                                               },
                                           )
@@ -587,7 +607,7 @@ const itemColumns = computed<ColumnDef<UnifiedItem>[]>(() => [
                                               DropdownMenuItem,
                                               { disabled: true },
                                               {
-                                                  default: () => 'DOCX',
+                                                  default: () => [h(FileText, { class: 'size-4' }), 'DOCX'],
                                               },
                                           ),
                                     row.original.pdf_available
@@ -606,8 +626,9 @@ const itemColumns = computed<ColumnDef<UnifiedItem>[]>(() => [
                                                               }),
                                                               target: '_blank',
                                                               rel: 'noopener noreferrer',
+                                                              class: 'flex w-full items-center gap-2',
                                                           },
-                                                          'Preview PDF',
+                                                          [h(Eye, { class: 'size-4' }), 'Preview PDF'],
                                                       ),
                                               },
                                           )
@@ -615,7 +636,7 @@ const itemColumns = computed<ColumnDef<UnifiedItem>[]>(() => [
                                               DropdownMenuItem,
                                               { disabled: true },
                                               {
-                                                  default: () => 'Preview PDF',
+                                                  default: () => [h(Eye, { class: 'size-4' }), 'Preview PDF'],
                                               },
                                           ),
                                     props.signatureEnabled
@@ -623,13 +644,15 @@ const itemColumns = computed<ColumnDef<UnifiedItem>[]>(() => [
                                               DropdownMenuItem,
                                               {
                                                   disabled: !row.original.pdf_available || row.original.signature_applied || isItemSigning(row.original.id),
-                                                  onSelect: (event: Event) => {
-                                                      event.preventDefault();
+                                                  onSelect: () => {
                                                       void applySignatureToItem(row.original);
                                                   },
                                               },
                                               {
-                                                  default: () => (row.original.signature_applied ? 'Signed' : isItemSigning(row.original.id) ? 'Signing...' : 'Add Signature'),
+                                                  default: () => [
+                                                      h(PenLine, { class: 'size-4' }),
+                                                      row.original.signature_applied ? 'Signed' : isItemSigning(row.original.id) ? 'Signing...' : 'Add Signature',
+                                                  ],
                                               },
                                           )
                                         : null,
@@ -638,9 +661,8 @@ const itemColumns = computed<ColumnDef<UnifiedItem>[]>(() => [
                                         {
                                             disabled: !canDeleteItem(row.original) || deletingItems.value,
                                             variant: 'destructive',
-                                            onSelect: async (event: Event) => {
-                                                event.preventDefault();
-                                                await deleteItems([row.original.id]);
+                                            onSelect: () => {
+                                                confirmDelete([row.original.id]);
                                             },
                                         },
                                         {
@@ -660,14 +682,25 @@ const itemColumns = computed<ColumnDef<UnifiedItem>[]>(() => [
 ]);
 
 watch(
-    () => itemsData.value.data.map((item) => item.id),
-    (visibleItemIds) => {
-        const availableItemIds = new Set(visibleItemIds);
-        selectedItemIds.value = selectedItemIds.value.filter((itemId) =>
-            availableItemIds.has(itemId),
-        );
+    () => props.initialItems,
+    (nextItems) => {
+        itemsData.value = nextItems;
     },
-    { immediate: true },
+    { immediate: true, deep: true },
+);
+
+watch(
+    () => props.initialFilters,
+    (nextFilters) => {
+        companySearch.value = nextFilters.search ?? '';
+        itemStatusFilter.value = nextFilters.status ?? 'all';
+        itemsSortDirection.value = nextFilters.direction ?? 'desc';
+        itemsSortBy.value = sortByFromQuery(nextFilters.sort ?? 'uploadedAt');
+        if (nextFilters.per_page > 0) {
+            itemsData.value.per_page = nextFilters.per_page;
+        }
+    },
+    { deep: true },
 );
 
 onBeforeUnmount(() => {
@@ -694,20 +727,32 @@ onMounted(() => {
             @saved="onEditSaved"
         />
 
-        <AfsSignatureSettingsDialog
-            v-if="props.signatureEnabled"
-            v-model:open="signatureDialogOpen"
-            :initial-signature="props.initialSignature.signature"
-            @saved="onSignatureSaved"
-            @removed="onSignatureRemoved"
-        />
-
         <AfsSignDialog
             v-if="props.signatureEnabled"
             v-model:open="signDialogOpen"
             :target="signDialogTarget"
             @signed="onItemSigned"
         />
+
+        <AlertDialog v-model:open="deleteConfirmOpen">
+            <AlertDialogContent>
+                <AlertDialogHeader>
+                    <AlertDialogTitle>Delete {{ deleteConfirmIds.length === 1 ? 'row' : 'rows' }}?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                        This will permanently delete {{ deleteConfirmIds.length === 1 ? 'this row' : `${deleteConfirmIds.length} rows` }} and any generated files. This action cannot be undone.
+                    </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                        class="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                        @click="handleConfirmedDelete"
+                    >
+                        Delete
+                    </AlertDialogAction>
+                </AlertDialogFooter>
+            </AlertDialogContent>
+        </AlertDialog>
 
         <div class="flex flex-1 flex-col gap-6 p-4 md:p-6">
             <Card class="rounded-3xl">
@@ -720,21 +765,20 @@ onMounted(() => {
                             Bulk Document Generator
                         </h1>
                         <p class="max-w-3xl text-sm leading-7 text-muted-foreground">
-                            Upload one Excel source, one default DOCX template, and optional year-threshold templates.
-                            Each year rule applies from its year onward until the next higher rule takes over.
+                            Upload one Excel source and one default DOCX template, then generate and review output rows
+                            in one workspace.
                         </p>
                     </div>
 
                     <div class="flex flex-wrap gap-2">
                         <Button variant="secondary" as-child>
-                            <a :href="generatedFilesRoutes.index().url">Generated Files</a>
+                            <a :href="generatedFilesRoutes.index().url">Completed Files</a>
                         </Button>
                         <Button variant="outline" as-child>
-                            <a href="/document-generator/template-mapping">Template Mapping</a>
-                        </Button>
-                        <Button v-if="props.signatureEnabled" variant="outline" @click="signatureDialogOpen = true">
+                            <a :href="documentGeneratorRoutes.templateMapping().url">
                             <Settings2 class="mr-2 size-4" />
-                            Signature Settings
+                            Settings
+                            </a>
                         </Button>
                         <Button @click="isUploadDialogOpen = true">
                             <Upload class="mr-2 size-4" />
@@ -769,7 +813,7 @@ onMounted(() => {
                                 {{ createErrors.default_template_file[0] }}
                             </p>
                             <p class="text-xs text-muted-foreground">
-                                Optional if a global default is already set in Template Mapping.
+                                Optional if a global default is already set in Settings.
                             </p>
                             <p class="text-xs text-muted-foreground">
                                 The first worksheet is always used, and the latest earlier workbook you uploaded is
@@ -837,41 +881,11 @@ onMounted(() => {
                                     <SelectItem value="queued">Queued</SelectItem>
                                     <SelectItem value="processing">Processing</SelectItem>
                                     <SelectItem value="docx_done">Docx Done</SelectItem>
-                                    <SelectItem value="pdf_done">Pdf Done</SelectItem>
+                                    <SelectItem value="pdf_done">Generated</SelectItem>
                                     <SelectItem value="failed">Failed</SelectItem>
                                 </SelectContent>
                             </Select>
 
-                            <Select
-                                v-if="props.signatureEnabled"
-                                :model-value="itemSignatureFilter"
-                                @update:model-value="(value) => onItemSignatureFilterChange(String(value))"
-                            >
-                                <SelectTrigger class="h-9 w-[150px] text-sm">
-                                    <SelectValue placeholder="All signatures" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="all">All signatures</SelectItem>
-                                    <SelectItem value="signed">Signed</SelectItem>
-                                    <SelectItem value="unsigned">Unsigned</SelectItem>
-                                </SelectContent>
-                            </Select>
-
-                            <Button
-                                type="button"
-                                variant="destructive"
-                                size="sm"
-                                class="gap-2"
-                                :disabled="!canBulkDelete"
-                                @click="void deleteItems(selectedItemIds)"
-                            >
-                                <Trash2 class="size-4" />
-                                {{
-                                    selectedItemIds.length > 0
-                                        ? `Delete selected (${selectedItemIds.length})`
-                                        : 'Delete selected'
-                                }}
-                            </Button>
                         </div>
                     </div>
 
@@ -883,9 +897,9 @@ onMounted(() => {
                         :sort-by="itemsSortBy"
                         :sort-direction="itemsSortDirection"
                         empty-message="No rows available."
-                        @page-change="async (page) => { await loadItems(page); startPolling(); }"
-                        @per-page-change="async (perPage) => { itemsData.per_page = perPage; await loadItems(1); startPolling(); }"
-                        @sort-change="async (column, direction) => { itemsSortBy = column; itemsSortDirection = direction; await loadItems(1); startPolling(); }"
+                        @page-change="(page) => { visitIndex({ page }); startPolling(); }"
+                        @per-page-change="(perPage) => { itemsData.per_page = perPage; visitIndex({ page: 1, perPage }); startPolling(); }"
+                        @sort-change="(column, direction) => { itemsSortBy = column; itemsSortDirection = direction; visitIndex({ page: 1, sortBy: column, direction }); startPolling(); }"
                     />
                 </CardContent>
             </Card>

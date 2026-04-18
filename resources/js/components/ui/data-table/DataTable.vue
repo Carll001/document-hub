@@ -67,7 +67,7 @@ const table = useVueTable({
     },
 });
 
-const perPageOptions = [10, 20, 50, 100];
+const perPageOptions = [10, 25, 50, 100];
 
 const onSort = (columnId: string) => {
     if (!columnId) {
@@ -100,20 +100,15 @@ const showingTo = computed(() => {
                     <TableRow v-for="headerGroup in table.getHeaderGroups()" :key="headerGroup.id">
                         <TableHead v-for="header in headerGroup.headers" :key="header.id">
                             <template v-if="!header.isPlaceholder">
-                                <button
+                                <Button
                                     v-if="header.column.getCanSort()"
-                                    class="inline-flex items-center gap-1"
+                                    variant="ghost"
                                     type="button"
+                                    class="h-auto font-medium"
                                     @click="onSort(header.column.id)"
                                 >
                                     <FlexRender :render="header.column.columnDef.header" :props="header.getContext()" />
-                                    <span
-                                        v-if="sortBy === header.column.id"
-                                        class="text-muted-foreground text-xs"
-                                    >
-                                        {{ sortDirection === 'asc' ? 'ASC' : 'DESC' }}
-                                    </span>
-                                </button>
+                                </Button>
                                 <FlexRender
                                     v-else
                                     :render="header.column.columnDef.header"

@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { router } from '@inertiajs/vue3';
-import { ChevronLeft, ChevronRight } from 'lucide-vue-next';
-import { computed, nextTick, ref } from 'vue';
+import { ref } from 'vue';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -47,30 +46,6 @@ const emit = defineEmits<{
 
 const paginationControls = ref<HTMLElement | null>(null);
 
-type PaginationItem = number | 'ellipsis-start' | 'ellipsis-end';
-
-const paginationItems = computed<PaginationItem[]>(() => {
-    const { currentPage, lastPage } = props.pagination;
-
-    if (lastPage <= 1) {
-        return [1];
-    }
-
-    if (lastPage <= 7) {
-        return Array.from({ length: lastPage }, (_, index) => index + 1);
-    }
-
-    if (currentPage <= 4) {
-        return [1, 2, 3, 4, 5, 'ellipsis-end', lastPage];
-    }
-
-    if (currentPage >= lastPage - 3) {
-        return [1, 'ellipsis-start', lastPage - 4, lastPage - 3, lastPage - 2, lastPage - 1, lastPage];
-    }
-
-    return [1, 'ellipsis-start', currentPage - 1, currentPage, currentPage + 1, 'ellipsis-end', lastPage];
-});
-
 function visitPage(page: number): void {
     if (page === props.pagination.currentPage) {
         return;
@@ -88,13 +63,6 @@ function visitPage(page: number): void {
             preserveScroll: true,
             preserveState: true,
             only: ['appliedEmails', 'appliedPagination', 'receiptCounts', 'flash', 'filters'],
-            onSuccess: () => {
-                void nextTick(() => {
-                    paginationControls.value?.scrollIntoView({
-                        block: 'end',
-                    });
-                });
-            },
         },
     );
 }
@@ -199,7 +167,7 @@ function visitPage(page: number): void {
             <div
                 v-if="props.pagination.lastPage > 1"
                 ref="paginationControls"
-                class="mt-4 flex flex-wrap items-center justify-between gap-3 border-t pt-3"
+                class="mt-4 flex items-center justify-between gap-3 border-t pt-3"
             >
                 <p class="text-xs text-muted-foreground">
                     Showing
@@ -211,61 +179,28 @@ function visitPage(page: number): void {
                     applied receipts.
                 </p>
 
-                <div class="flex flex-wrap items-center gap-2">
+                <div class="flex items-center gap-2">
                     <Button
                         type="button"
                         variant="outline"
                         size="sm"
-                        class="rounded-full"
                         :disabled="props.pagination.currentPage <= 1"
                         @click="visitPage(props.pagination.currentPage - 1)"
                     >
-                        <ChevronLeft class="size-4" />
+                        Previous
                     </Button>
-
-                    <template
-                        v-for="item in paginationItems"
-                        :key="String(item)"
-                    >
-                        <span
-                            v-if="typeof item !== 'number'"
-                            class="px-1 text-xs text-muted-foreground"
-                        >
-                            ...
-                        </span>
-                        <Button
-                            v-else
-                            type="button"
-                            size="sm"
-                            class="min-w-9 rounded-full"
-                            :variant="
-                                item === props.pagination.currentPage
-                                    ? 'default'
-                                    : 'outline'
-                            "
-                            :aria-current="
-                                item === props.pagination.currentPage
-                                    ? 'page'
-                                    : undefined
-                            "
-                            @click="visitPage(item)"
-                        >
-                            {{ item }}
-                        </Button>
-                    </template>
-
+                    <span class="text-sm">Page {{ props.pagination.currentPage }} / {{ props.pagination.lastPage }}</span>
                     <Button
                         type="button"
                         variant="outline"
                         size="sm"
-                        class="rounded-full"
                         :disabled="
                             props.pagination.currentPage >=
                             props.pagination.lastPage
                         "
                         @click="visitPage(props.pagination.currentPage + 1)"
                     >
-                        <ChevronRight class="size-4" />
+                        Next
                     </Button>
                 </div>
             </div>

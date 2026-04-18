@@ -1,22 +1,44 @@
 <script setup lang="ts">
-import { Head, Link } from '@inertiajs/vue3';
+import { Head } from '@inertiajs/vue3';
 import type { ColumnDef } from '@tanstack/vue-table';
-import { computed, h, ref } from 'vue';
-import { Badge } from '@/components/ui/badge';
+import { ArrowLeft, Download, Eye, MoreHorizontal, Trash2 } from 'lucide-vue-next';
+import { computed, h, onBeforeUnmount, ref, watch } from 'vue';
+import { toast } from 'vue-sonner';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { DataTable } from '@/components/ui/data-table';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import AppLayout from '@/layouts/AppLayout.vue';
-import { createToast, showToast } from '@/lib/toast';
 import documentGeneratorRoutes from '@/routes/document-generator';
-import generatedFilesRoutes from '@/routes/generated-files';
+import { csrfToken } from '@/components/afs-components/utils';
 import type { BreadcrumbItem } from '@/types';
 
 type SortDirection = 'asc' | 'desc';
+
+type CompletedExportState = {
+    status: 'queued' | 'processing' | 'failed' | 'ready' | null;
+    error: string | null;
+    itemCount: number | null;
+    downloadUrl: string | null;
+};
 
 type GeneratedFileItem = {
     id: number;
@@ -45,172 +67,69 @@ type PaginatedResponse<T> = {
 
 const props = defineProps<{
     initialItems: PaginatedResponse<GeneratedFileItem>;
-    signatureEnabled: boolean;
+    initialExportState: CompletedExportState;
 }>();
 
 const breadcrumbs: BreadcrumbItem[] = [
     {
-        title: 'Generated Files',
+        title: 'Completed Files',
         href: '/generated-files',
     },
 ];
 
 const itemsData = ref<PaginatedResponse<GeneratedFileItem>>(props.initialItems);
 const itemsLoading = ref(false);
-const itemsSortBy = ref('created_at');
+const itemsSortBy = ref('updated_at');
 const itemsSortDirection = ref<SortDirection>('desc');
-const itemStatusFilter = ref('all');
-const itemSignatureFilter = ref('all');
 const companySearch = ref('');
-const selectedKeys = ref<string[]>([]);
-const signingItemIds = ref<number[]>([]);
-const signingBulk = ref(false);
-const signDialogOpen = ref(false);
-const signDialogSubmitting = ref(false);
-const signDialogError = ref<string | null>(null);
-const signDialogMode = ref<'single' | 'bulk'>('single');
-const signDialogTarget = ref<GeneratedFileItem | null>(null);
-const presidentSignatureFile = ref<File | null>(null);
+const selectedItemIds = ref<number[]>([]);
+const deletingItems = ref(false);
+const deleteConfirmOpen = ref(false);
+const deleteConfirmIds = ref<number[]>([]);
+const exportQueueing = ref(false);
+const exportState = ref<CompletedExportState>(props.initialExportState);
 let companySearchDebounce: ReturnType<typeof setTimeout> | null = null;
+let exportPollTimeout: ReturnType<typeof setTimeout> | null = null;
 
-const showNotice = (type: 'success' | 'error', title: string, message: string) => {
-    showToast(createToast(type, title, message));
-};
-
-const csrfToken = () => {
-    const xsrfCookie = document.cookie
-        .split('; ')
-        .find((value) => value.startsWith('XSRF-TOKEN='));
-
-    if (!xsrfCookie) {
-        return '';
-    }
-
-    return decodeURIComponent(xsrfCookie.split('=')[1] ?? '');
-};
-
-const sendPostJson = async <T>(url: string, payload: unknown): Promise<T> => {
-    const response = await fetch(url, {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: {
-            Accept: 'application/json',
-            'Content-Type': 'application/json',
-            'X-Requested-With': 'XMLHttpRequest',
-            'X-XSRF-TOKEN': csrfToken(),
-        },
-        body: JSON.stringify(payload),
-    });
-
-    if (response.status === 422) {
-        const errorPayload = (await response.json()) as {
-            errors?: Record<string, string[]>;
-            message?: string;
-        };
-        throw new Error(errorPayload.message ?? 'Validation failed.');
-    }
-
-    if (!response.ok) {
-        throw new Error(`Request failed with status ${response.status}`);
-    }
-
-    return (await response.json()) as T;
-};
-
-const sendPostFormData = async <T>(url: string, payload: FormData): Promise<T> => {
-    const response = await fetch(url, {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: {
-            Accept: 'application/json',
-            'X-Requested-With': 'XMLHttpRequest',
-            'X-XSRF-TOKEN': csrfToken(),
-        },
-        body: payload,
-    });
-
-    if (response.status === 422) {
-        const errorPayload = (await response.json()) as {
-            errors?: Record<string, string[]>;
-            message?: string;
-        };
-        throw new Error(errorPayload.message ?? 'Validation failed.');
-    }
-
-    if (!response.ok) {
-        throw new Error(`Request failed with status ${response.status}`);
-    }
-
-    return (await response.json()) as T;
-};
-
-const rowKey = (item: GeneratedFileItem) => `${item.batch_id}:${item.id}`;
-const isItemSelected = (item: GeneratedFileItem) => selectedKeys.value.includes(rowKey(item));
-const visibleSelectableItems = computed(() => itemsData.value.data.filter((item) => item.pdf_available && !item.signature_applied));
-const allVisibleSelected = computed(
-    () => visibleSelectableItems.value.length > 0 && visibleSelectableItems.value.every((item) => isItemSelected(item)),
+const selectedVisibleCount = computed(
+    () => itemsData.value.data.filter((item) => selectedItemIds.value.includes(item.id)).length,
 );
-const isItemSigning = (itemId: number) => signingItemIds.value.includes(itemId);
-
-const toggleItemSelection = (item: GeneratedFileItem, checked: boolean) => {
-    if (!props.signatureEnabled) {
-        return;
+const selectAllState = computed<boolean | 'indeterminate'>(() => {
+    if (itemsData.value.data.length === 0 || selectedVisibleCount.value === 0) {
+        return false;
     }
 
-    const key = rowKey(item);
-    selectedKeys.value = checked
-        ? Array.from(new Set([...selectedKeys.value, key]))
-        : selectedKeys.value.filter((value) => value !== key);
-};
-
-const toggleAllVisibleSelection = (checked: boolean) => {
-    if (!props.signatureEnabled) {
-        return;
+    if (selectedVisibleCount.value === itemsData.value.data.length) {
+        return true;
     }
 
-    if (!checked) {
-        selectedKeys.value = selectedKeys.value.filter(
-            (value) => !visibleSelectableItems.value.some((item) => rowKey(item) === value),
-        );
-        return;
-    }
-
-    selectedKeys.value = Array.from(
-        new Set([...selectedKeys.value, ...visibleSelectableItems.value.map((item) => rowKey(item))]),
-    );
-};
-
-const selectedTargets = computed(() =>
-    itemsData.value.data
-        .filter((item) => isItemSelected(item) && item.pdf_available && !item.signature_applied)
-        .map((item) => ({ batch_id: item.batch_id, item_id: item.id, row_number: item.row_number })),
-);
-
-const canBulkSign = computed(() => selectedTargets.value.length > 0 && !signingBulk.value);
-const bulkSignButtonLabel = computed(() => {
-    if (signingBulk.value) {
-        return 'Applying...';
-    }
-
-    const countLabel = selectedTargets.value.length > 0 ? ` (${selectedTargets.value.length})` : '';
-    return `Add Signature (Bulk)${countLabel}`;
+    return 'indeterminate';
 });
 
-const statusBadgeVariant = (status: string): 'default' | 'secondary' | 'destructive' | 'outline' => {
-    if (status === 'failed') {
-        return 'destructive';
+const canDeleteSelected = computed(
+    () => selectedItemIds.value.length > 0 && !deletingItems.value,
+);
+const canDownloadSelected = computed(
+    () => selectedItemIds.value.length > 0 && !exportQueueing.value,
+);
+const exportBusy = computed(
+    () => exportState.value.status === 'queued' || exportState.value.status === 'processing' || exportQueueing.value,
+);
+
+const formatDateTime = (value: string | null): string => {
+    if (!value) {
+        return '-';
     }
 
-    if (status === 'pdf_done' || status === 'completed') {
-        return 'default';
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+        return value;
     }
 
-    if (status === 'processing' || status === 'docx_done') {
-        return 'secondary';
-    }
-
-    return 'outline';
+    return parsed.toLocaleString();
 };
+
+const generatedAt = (item: GeneratedFileItem): string | null => item.signature_applied_at ?? item.updated_at;
 
 const buildItemsUrl = (page = itemsData.value.current_page) => {
     const query: Record<string, string> = {
@@ -218,15 +137,8 @@ const buildItemsUrl = (page = itemsData.value.current_page) => {
         per_page: String(itemsData.value.per_page),
         sort_by: itemsSortBy.value,
         sort_direction: itemsSortDirection.value,
-        files_only: '1',
+        completed_only: '1',
     };
-
-    if (itemStatusFilter.value !== 'all') {
-        query.status = itemStatusFilter.value;
-    }
-    if (props.signatureEnabled && itemSignatureFilter.value !== 'all') {
-        query.signature_filter = itemSignatureFilter.value;
-    }
 
     if (companySearch.value.trim() !== '') {
         query.company_search = companySearch.value.trim();
@@ -259,152 +171,179 @@ const loadItems = async (page = itemsData.value.current_page) => {
 
     try {
         itemsData.value = await getApi<PaginatedResponse<GeneratedFileItem>>(buildItemsUrl(page));
-        selectedKeys.value = selectedKeys.value.filter((value) =>
-            itemsData.value.data.some((item) => rowKey(item) === value),
-        );
     } finally {
         itemsLoading.value = false;
     }
 };
 
-const applySignatureSingle = async (item: GeneratedFileItem) => {
-    if (!props.signatureEnabled) {
+const toggleItemSelection = (itemId: number, checked: boolean | 'indeterminate') => {
+    if (checked === 'indeterminate') {
         return;
     }
 
-    if (!item.pdf_available || item.signature_applied || isItemSigning(item.id)) {
+    if (checked) {
+        selectedItemIds.value = Array.from(new Set([...selectedItemIds.value, itemId]));
         return;
     }
-    signDialogMode.value = 'single';
-    signDialogTarget.value = item;
-    signDialogOpen.value = true;
-    signDialogError.value = null;
-    presidentSignatureFile.value = null;
+
+    selectedItemIds.value = selectedItemIds.value.filter((id) => id !== itemId);
 };
 
-const applySignatureBulk = async () => {
-    if (!props.signatureEnabled) {
+const toggleAllVisibleRows = (checked: boolean | 'indeterminate') => {
+    if (checked === 'indeterminate') {
         return;
     }
 
-    if (!canBulkSign.value) {
+    if (checked) {
+        selectedItemIds.value = Array.from(new Set([
+            ...selectedItemIds.value,
+            ...itemsData.value.data.map((item) => item.id),
+        ]));
         return;
     }
 
-    signDialogMode.value = 'bulk';
-    signDialogTarget.value = null;
-    signDialogOpen.value = true;
-    signDialogError.value = null;
-    presidentSignatureFile.value = null;
+    const visibleIds = new Set(itemsData.value.data.map((item) => item.id));
+    selectedItemIds.value = selectedItemIds.value.filter((id) => !visibleIds.has(id));
 };
 
-const onPresidentSignatureFileChange = (event: Event) => {
-    if (!props.signatureEnabled) {
-        return;
+const postJson = async <T>(url: string, payload: unknown): Promise<T> => {
+    const response = await fetch(url, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest',
+            'X-XSRF-TOKEN': csrfToken(),
+        },
+        body: JSON.stringify(payload),
+    });
+
+    if (response.status === 422 || response.status === 409) {
+        const errorPayload = (await response.json()) as {
+            message?: string;
+            export_state?: CompletedExportState;
+        };
+
+        if (errorPayload.export_state) {
+            exportState.value = errorPayload.export_state;
+        }
+
+        throw new Error(errorPayload.message ?? 'Request failed.');
     }
 
-    const input = event.target as HTMLInputElement;
-    presidentSignatureFile.value = input.files?.[0] ?? null;
-    signDialogError.value = null;
+    if (!response.ok) {
+        throw new Error(`Request failed with status ${response.status}`);
+    }
+
+    return (await response.json()) as T;
 };
 
-const submitSignatureDialog = async () => {
-    if (!props.signatureEnabled) {
+const deleteJson = async <T>(url: string, payload: unknown): Promise<T> => {
+    const response = await fetch(url, {
+        method: 'DELETE',
+        credentials: 'same-origin',
+        headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest',
+            'X-XSRF-TOKEN': csrfToken(),
+        },
+        body: JSON.stringify(payload),
+    });
+
+    if (response.status === 422) {
+        const errorPayload = (await response.json()) as { message?: string };
+        throw new Error(errorPayload.message ?? 'Validation failed.');
+    }
+
+    if (!response.ok) {
+        throw new Error(`Request failed with status ${response.status}`);
+    }
+
+    return (await response.json()) as T;
+};
+
+const queueCompletedExport = async (itemIds?: number[]) => {
+    if (exportBusy.value) {
         return;
     }
 
-    if (!presidentSignatureFile.value) {
-        signDialogError.value = 'President signature image is required.';
-        return;
-    }
-
-    signDialogSubmitting.value = true;
-    signDialogError.value = null;
+    exportQueueing.value = true;
 
     try {
-        if (signDialogMode.value === 'single' && signDialogTarget.value) {
-            const item = signDialogTarget.value;
-            signingItemIds.value = [...signingItemIds.value, item.id];
+        const payload = await postJson<{
+            message: string;
+            export_state: CompletedExportState;
+        }>('/document-generator/completed/download', {
+            company_search: companySearch.value.trim() || undefined,
+            sort_by: itemsSortBy.value,
+            sort_direction: itemsSortDirection.value,
+            item_ids: itemIds && itemIds.length > 0 ? itemIds : undefined,
+        });
 
-            const formData = new FormData();
-            formData.append('president_signature_file', presidentSignatureFile.value);
-
-            const payload = await sendPostFormData<{
-                message: string;
-                item: GeneratedFileItem;
-                pdf_url: string;
-            }>(
-                documentGeneratorRoutes.batches.items.signature.url({
-                    batch: item.batch_id,
-                    item: item.id,
-                }),
-                formData,
-            );
-
-            showNotice('success', 'Signature applied', `Row ${item.row_number} was signed.`);
-            await loadItems(itemsData.value.current_page);
-            signDialogOpen.value = false;
-
-            if (payload.pdf_url) {
-                window.open(payload.pdf_url, '_blank', 'noopener,noreferrer');
-            }
-        }
-
-        if (signDialogMode.value === 'bulk') {
-            signingBulk.value = true;
-            const formData = new FormData();
-            formData.append('president_signature_file', presidentSignatureFile.value);
-            selectedTargets.value.forEach((target, index) => {
-                formData.append(`targets[${index}][batch_id]`, String(target.batch_id));
-                formData.append(`targets[${index}][item_id]`, String(target.item_id));
-            });
-
-            const payload = await sendPostFormData<{
-                results: Array<{ batch_id: number; item_id: number; success: boolean; message?: string }>;
-            }>(documentGeneratorRoutes.items.signature.bulk.url(), formData);
-
-            const successCount = payload.results.filter((result) => result.success).length;
-            const failedCount = payload.results.length - successCount;
-
-            if (failedCount === 0) {
-                showNotice('success', 'Bulk signature complete', `${successCount} file(s) signed.`);
-            } else {
-                showNotice(
-                    'error',
-                    'Bulk signature completed with errors',
-                    `${successCount} signed, ${failedCount} failed. Please retry failed files one by one.`,
-                );
-            }
-
-            selectedKeys.value = [];
-            await loadItems(itemsData.value.current_page);
-            signDialogOpen.value = false;
-        }
+        exportState.value = payload.export_state;
+        toast.success(payload.message);
     } catch (error) {
-        const message = error instanceof Error ? error.message : 'Unable to apply signatures.';
-        signDialogError.value = message;
-        showNotice('error', 'Signature failed', message);
+        toast.error(error instanceof Error ? error.message : 'Unable to queue completed files export.');
     } finally {
-        signDialogSubmitting.value = false;
-        signingBulk.value = false;
-        if (signDialogTarget.value) {
-            signingItemIds.value = signingItemIds.value.filter((id) => id !== signDialogTarget.value?.id);
-        }
+        exportQueueing.value = false;
     }
 };
 
-const onItemStatusChange = async (value: string) => {
-    itemStatusFilter.value = value;
-    await loadItems(1);
+const pollExportState = async () => {
+    try {
+        const state = await getApi<CompletedExportState>('/document-generator/completed/download/state');
+        const previousStatus = exportState.value.status;
+        exportState.value = state;
+
+        if (state.status === 'ready' && previousStatus !== 'ready') {
+            toast.success('Completed files ZIP is ready to download.');
+        }
+
+        if (state.status === 'failed' && state.error) {
+            toast.error(state.error);
+        }
+    } catch {
+        // Ignore transient polling errors.
+    }
 };
 
-const onItemSignatureFilterChange = async (value: string) => {
-    if (!props.signatureEnabled) {
+const deleteCompletedItems = async (itemIds: number[]) => {
+    const uniqueIds = Array.from(new Set(itemIds));
+    if (uniqueIds.length === 0 || deletingItems.value) {
         return;
     }
 
-    itemSignatureFilter.value = value;
-    await loadItems(1);
+    deletingItems.value = true;
+
+    try {
+        const payload = await deleteJson<{
+            message: string;
+            deleted_count: number;
+        }>('/document-generator/completed/items', {
+            item_ids: uniqueIds,
+        });
+
+        selectedItemIds.value = selectedItemIds.value.filter((id) => !uniqueIds.includes(id));
+        await loadItems(itemsData.value.current_page);
+        toast.success(payload.message);
+    } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Unable to delete completed rows.');
+    } finally {
+        deletingItems.value = false;
+    }
+};
+
+const confirmDelete = (ids: number[]) => {
+    deleteConfirmIds.value = ids;
+    deleteConfirmOpen.value = true;
+};
+
+const handleConfirmedDelete = async () => {
+    deleteConfirmOpen.value = false;
+    await deleteCompletedItems(deleteConfirmIds.value);
+    deleteConfirmIds.value = [];
 };
 
 const onCompanySearchInput = (event: Event) => {
@@ -421,63 +360,23 @@ const onCompanySearchInput = (event: Event) => {
 };
 
 const itemColumns = computed<ColumnDef<GeneratedFileItem>[]>(() => [
-    ...(props.signatureEnabled
-        ? [{
-              id: 'select',
-              header: () =>
-                  h('input', {
-                      type: 'checkbox',
-                      checked: allVisibleSelected.value,
-                      onChange: (event: Event) => {
-                          const target = event.target as HTMLInputElement;
-                          toggleAllVisibleSelection(target.checked);
-                      },
-                  }),
-              enableSorting: false,
-              cell: ({ row }) =>
-                  h('input', {
-                      type: 'checkbox',
-                      disabled: !row.original.pdf_available || row.original.signature_applied,
-                      checked: isItemSelected(row.original),
-                      onChange: (event: Event) => {
-                          const target = event.target as HTMLInputElement;
-                          toggleItemSelection(row.original, target.checked);
-                      },
-                  }),
-          } satisfies ColumnDef<GeneratedFileItem>]
-        : []),
     {
-        id: 'batch_id',
-        accessorKey: 'batch_id',
-        header: 'Batch',
+        id: 'selection',
+        header: () =>
+            h(Checkbox, {
+                modelValue: selectAllState.value,
+                disabled: itemsData.value.data.length === 0 || deletingItems.value,
+                'aria-label': 'Select visible completed rows',
+                'onUpdate:modelValue': (value: boolean | 'indeterminate') => toggleAllVisibleRows(value),
+            }),
         enableSorting: false,
         cell: ({ row }) =>
-            h(
-                Link,
-                {
-                    href: generatedFilesRoutes.show.url({ batch: row.original.batch_id }),
-                    class: 'text-primary underline',
-                },
-                () => `#${row.original.batch_id}`,
-            ),
-    },
-    {
-        id: 'source_excel_name',
-        accessorKey: 'source_excel_name',
-        header: 'Excel',
-        enableSorting: false,
-    },
-    {
-        id: 'template_name',
-        accessorKey: 'template_name',
-        header: 'Template',
-        enableSorting: false,
-    },
-    {
-        id: 'row_number',
-        accessorKey: 'row_number',
-        header: 'Row',
-        enableSorting: true,
+            h(Checkbox, {
+                modelValue: selectedItemIds.value.includes(row.original.id),
+                disabled: deletingItems.value,
+                'aria-label': `Select completed row ${row.original.row_number}`,
+                'onUpdate:modelValue': (value: boolean | 'indeterminate') => toggleItemSelection(row.original.id, value),
+            }),
     },
     {
         id: 'company',
@@ -487,110 +386,204 @@ const itemColumns = computed<ColumnDef<GeneratedFileItem>[]>(() => [
         cell: ({ row }) => row.original.company || '-',
     },
     {
-        id: 'status',
-        accessorKey: 'status',
-        header: 'Status',
+        id: 'updated_at',
+        header: 'Generated',
         enableSorting: true,
-        cell: ({ row }) =>
-            h(
-                'div',
-                { class: 'flex items-center gap-2' },
-                [
-                    h(
-                        Badge,
-                        {
-                            variant: statusBadgeVariant(row.original.status),
-                        },
-                        () => row.original.status,
-                    ),
-                    row.original.signature_applied
-                        ? h(
-                              Badge,
-                              {
-                                  variant: 'secondary',
-                              },
-                              () => 'Signed',
-                          )
-                        : null,
-                ],
-            ),
+        accessorKey: 'updated_at',
+        cell: ({ row }) => formatDateTime(generatedAt(row.original)),
     },
     {
         id: 'actions',
-        header: 'Files',
+        header: 'Actions',
         enableSorting: false,
         cell: ({ row }) =>
-            h('div', { class: 'flex items-center gap-2' }, [
-                row.original.docx_available
-                    ? h(
-                          'a',
-                          {
-                              href: documentGeneratorRoutes.batches.items.download.url({
-                                  batch: row.original.batch_id,
-                                  item: row.original.id,
-                                  type: 'docx',
-                              }),
-                              class: 'text-primary text-sm underline',
-                          },
-                          'DOCX',
-                      )
-                    : h('span', { class: 'text-muted-foreground text-sm' }, 'DOCX'),
-                row.original.pdf_available
-                    ? h(
-                          'a',
-                          {
-                              href: documentGeneratorRoutes.batches.items.download.url({
-                                  batch: row.original.batch_id,
-                                  item: row.original.id,
-                                  type: 'pdf',
-                              }),
-                              class: 'text-primary text-sm underline',
-                              target: '_blank',
-                              rel: 'noopener noreferrer',
-                          },
-                          'Preview PDF',
-                      )
-                    : h('span', { class: 'text-muted-foreground text-sm' }, 'PDF'),
-                props.signatureEnabled
-                    ? h(
-                          Button,
-                          {
-                              variant: 'outline',
-                              size: 'sm',
-                              disabled: !row.original.pdf_available || row.original.signature_applied || isItemSigning(row.original.id),
-                              onClick: () => applySignatureSingle(row.original),
-                          },
-                          () => (row.original.signature_applied ? 'Signed' : isItemSigning(row.original.id) ? 'Signing...' : 'Add Signature'),
-                      )
-                    : null,
-            ]),
+            h(
+                DropdownMenu,
+                {},
+                {
+                    default: () => [
+                        h(
+                            DropdownMenuTrigger,
+                            { asChild: true },
+                            {
+                                default: () =>
+                                    h(
+                                        Button,
+                                        {
+                                            variant: 'ghost',
+                                            size: 'icon-sm',
+                                            'aria-label': 'Completed row actions',
+                                        },
+                                        {
+                                            default: () => h(MoreHorizontal, { class: 'size-4' }),
+                                        },
+                                    ),
+                            },
+                        ),
+                        h(
+                            DropdownMenuContent,
+                            { align: 'end', class: 'w-44' },
+                            {
+                                default: () => [
+                                    h(
+                                        DropdownMenuItem,
+                                        { asChild: true },
+                                        {
+                                            default: () =>
+                                                h(
+                                                    'a',
+                                                    {
+                                                        href: documentGeneratorRoutes.batches.items.download.url({
+                                                            batch: row.original.batch_id,
+                                                            item: row.original.id,
+                                                            type: 'pdf',
+                                                        }),
+                                                        target: '_blank',
+                                                        rel: 'noopener noreferrer',
+                                                        class: 'flex w-full items-center gap-2',
+                                                    },
+                                                    [h(Eye, { class: 'size-4' }), 'Preview'],
+                                                ),
+                                        },
+                                    ),
+                                    h(
+                                        DropdownMenuItem,
+                                        { asChild: true },
+                                        {
+                                            default: () =>
+                                                h(
+                                                    'a',
+                                                    {
+                                                        href: documentGeneratorRoutes.batches.items.download.url({
+                                                            batch: row.original.batch_id,
+                                                            item: row.original.id,
+                                                            type: 'pdf',
+                                                        }),
+                                                        class: 'flex w-full items-center gap-2',
+                                                    },
+                                                    [h(Download, { class: 'size-4' }), 'Download'],
+                                                ),
+                                        },
+                                    ),
+                                    h(
+                                        DropdownMenuItem,
+                                        {
+                                            disabled: deletingItems.value,
+                                            class: 'text-destructive focus:text-destructive',
+                                            onSelect: () => {
+                                                confirmDelete([row.original.id]);
+                                            },
+                                        },
+                                        {
+                                            default: () => [h(Trash2, { class: 'size-4' }), 'Delete'],
+                                        },
+                                    ),
+                                ],
+                            },
+                        ),
+                    ],
+                },
+            ),
     },
 ]);
+
+watch(
+    () => itemsData.value.data.map((item) => item.id),
+    (visibleIds) => {
+        const visibleSet = new Set(visibleIds);
+        selectedItemIds.value = selectedItemIds.value.filter((id) => visibleSet.has(id));
+    },
+    { immediate: true },
+);
+
+watch(
+    () => exportState.value.status,
+    (status) => {
+        if (exportPollTimeout) {
+            clearTimeout(exportPollTimeout);
+            exportPollTimeout = null;
+        }
+
+        if (status !== 'queued' && status !== 'processing') {
+            return;
+        }
+
+        exportPollTimeout = setTimeout(async () => {
+            await pollExportState();
+        }, 3000);
+    },
+    { immediate: true },
+);
+
+onBeforeUnmount(() => {
+    if (companySearchDebounce) {
+        clearTimeout(companySearchDebounce);
+    }
+
+    if (exportPollTimeout) {
+        clearTimeout(exportPollTimeout);
+    }
+});
 </script>
 
 <template>
-    <Head title="Generated Files" />
+    <Head title="Completed Files" />
 
     <AppLayout :breadcrumbs="breadcrumbs">
-        <div class="space-y-6 p-4">
-            <Card>
+        <div class="flex flex-1 flex-col gap-6 p-4 md:p-6">
+            <Card class="rounded-3xl">
+                <CardContent class="flex flex-col gap-5 p-6 md:flex-row md:items-center md:justify-between md:p-8">
+                    <div class="space-y-2">
+                        <p class="text-xs font-semibold tracking-[0.3em] text-teal-700 uppercase">
+                            AFS Workspace
+                        </p>
+                        <h1 class="text-3xl font-semibold tracking-tight text-foreground md:text-4xl">
+                            Completed Files
+                        </h1>
+                        <p class="max-w-3xl text-sm leading-7 text-muted-foreground">
+                            Review signed AFS PDFs, then preview, download, or clean up completed outputs.
+                        </p>
+                    </div>
+
+                    <div class="flex flex-wrap gap-2">
+                        <Button
+                            type="button"
+                            variant="secondary"
+                            :disabled="exportBusy"
+                            @click="void queueCompletedExport()"
+                        >
+                            <Download class="mr-2 size-4" />
+                            {{ exportBusy ? 'Preparing ZIP...' : 'Download all ZIP' }}
+                        </Button>
+                        <Button
+                            v-if="exportState.status === 'ready' && exportState.downloadUrl"
+                            type="button"
+                            as-child
+                        >
+                            <a :href="exportState.downloadUrl">
+                                <Download class="mr-2 size-4" />
+                                Download ZIP{{ exportState.itemCount ? ` (${exportState.itemCount})` : '' }}
+                            </a>
+                        </Button>
+                        <Button type="button" variant="outline" as-child>
+                            <a :href="documentGeneratorRoutes.index().url">
+                                <ArrowLeft class="mr-2 size-4" />
+                                Back to workspace
+                            </a>
+                        </Button>
+                    </div>
+                </CardContent>
+            </Card>
+
+            <Card class="rounded-3xl">
                 <CardHeader>
-                    <CardTitle>Generated Files</CardTitle>
+                    <CardTitle class="text-xl">Completed file table</CardTitle>
                     <CardDescription>
-                        One table view of generated outputs across all batches.
+                        Signed AFS outputs. Use bulk actions to download or delete completed rows.
                     </CardDescription>
                 </CardHeader>
                 <CardContent class="space-y-4">
-                    <div v-if="props.signatureEnabled" class="flex flex-wrap items-center justify-between gap-2">
-                        <p class="text-sm text-muted-foreground">
-                            Select PDF rows to apply signature in bulk.
-                        </p>
-                        <Button :disabled="!canBulkSign" @click="applySignatureBulk">
-                            {{ bulkSignButtonLabel }}
-                        </Button>
-                    </div>
-
-                    <div class="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+                    <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                         <div class="w-full max-w-[360px]">
                             <Label for="company-search" class="mb-2 block">Search company or TIN</Label>
                             <Input
@@ -601,39 +594,37 @@ const itemColumns = computed<ColumnDef<GeneratedFileItem>[]>(() => [
                             />
                         </div>
 
-                        <div class="flex w-full flex-wrap justify-start gap-3 lg:w-auto lg:justify-end">
-                            <div class="w-full min-w-[180px] sm:w-[220px]">
-                                <Label class="mb-2 block">Status</Label>
-                                <Select :model-value="itemStatusFilter" @update:model-value="(value) => onItemStatusChange(String(value))">
-                                    <SelectTrigger>
-                                        <SelectValue placeholder="All statuses" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="all">All</SelectItem>
-                                        <SelectItem value="queued">Queued</SelectItem>
-                                        <SelectItem value="processing">Processing</SelectItem>
-                                        <SelectItem value="docx_done">Docx Done</SelectItem>
-                                        <SelectItem value="pdf_done">Pdf Done</SelectItem>
-                                        <SelectItem value="failed">Failed</SelectItem>
-                                    </SelectContent>
-                                </Select>
-                            </div>
+                        <div class="flex flex-wrap gap-2">
+                            <Button
+                                type="button"
+                                variant="outline"
+                                class="gap-2"
+                                :disabled="!canDownloadSelected || exportBusy"
+                                @click="void queueCompletedExport(selectedItemIds)"
+                            >
+                                <Download class="size-4" />
+                                {{ selectedItemIds.length > 0 ? `Download selected (${selectedItemIds.length})` : 'Download selected' }}
+                            </Button>
 
-                            <div v-if="props.signatureEnabled" class="w-full min-w-[180px] sm:w-[220px]">
-                                <Label class="mb-2 block">Signature</Label>
-                                <Select :model-value="itemSignatureFilter" @update:model-value="(value) => onItemSignatureFilterChange(String(value))">
-                                    <SelectTrigger>
-                                        <SelectValue placeholder="All signatures" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="all">All</SelectItem>
-                                        <SelectItem value="signed">Signed</SelectItem>
-                                        <SelectItem value="unsigned">Unsigned</SelectItem>
-                                    </SelectContent>
-                                </Select>
-                            </div>
+                            <Button
+                                type="button"
+                                variant="destructive"
+                                class="gap-2"
+                                :disabled="!canDeleteSelected"
+                                @click="confirmDelete(selectedItemIds)"
+                            >
+                                <Trash2 class="size-4" />
+                                {{ selectedItemIds.length > 0 ? `Delete selected (${selectedItemIds.length})` : 'Delete selected' }}
+                            </Button>
                         </div>
                     </div>
+
+                    <p v-if="exportState.status === 'queued' || exportState.status === 'processing'" class="text-sm text-muted-foreground">
+                        Preparing completed ZIP export...
+                    </p>
+                    <p v-else-if="exportState.status === 'failed' && exportState.error" class="text-sm text-destructive">
+                        {{ exportState.error }}
+                    </p>
 
                     <DataTable
                         :columns="itemColumns"
@@ -642,47 +633,33 @@ const itemColumns = computed<ColumnDef<GeneratedFileItem>[]>(() => [
                         :loading="itemsLoading"
                         :sort-by="itemsSortBy"
                         :sort-direction="itemsSortDirection"
-                        empty-message="No generated files available."
+                        empty-message="No completed files available."
                         @page-change="loadItems"
                         @per-page-change="async (perPage) => { itemsData.per_page = perPage; await loadItems(1); }"
                         @sort-change="async (column, direction) => { itemsSortBy = column; itemsSortDirection = direction; await loadItems(1); }"
                     />
                 </CardContent>
             </Card>
-
-            <Dialog v-if="props.signatureEnabled" :open="signDialogOpen" @update:open="(open) => { signDialogOpen = open; }">
-                <DialogContent class="sm:max-w-lg">
-                    <DialogHeader>
-                        <DialogTitle>
-                            {{ signDialogMode === 'bulk' ? 'Bulk Apply Signature' : 'Apply Signature' }}
-                        </DialogTitle>
-                        <DialogDescription>
-                            Upload President signature image. Getor default signature will be applied automatically.
-                        </DialogDescription>
-                    </DialogHeader>
-
-                    <div class="grid gap-2 py-2">
-                        <Label for="generated-files-president-signature">President Signature Image</Label>
-                        <Input
-                            id="generated-files-president-signature"
-                            type="file"
-                            accept=".png,.jpg,.jpeg,.webp"
-                            @change="onPresidentSignatureFileChange"
-                        />
-                    </div>
-
-                    <p v-if="signDialogError" class="text-sm text-destructive">
-                        {{ signDialogError }}
-                    </p>
-
-                    <DialogFooter>
-                        <Button variant="outline" @click="signDialogOpen = false">Cancel</Button>
-                        <Button :disabled="signDialogSubmitting" @click="submitSignatureDialog">
-                            {{ signDialogMode === 'bulk' ? 'Apply Bulk' : 'Apply' }}
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
         </div>
     </AppLayout>
+
+    <AlertDialog v-model:open="deleteConfirmOpen">
+        <AlertDialogContent>
+            <AlertDialogHeader>
+                <AlertDialogTitle>Delete {{ deleteConfirmIds.length === 1 ? 'file' : 'files' }}?</AlertDialogTitle>
+                <AlertDialogDescription>
+                    This will permanently delete {{ deleteConfirmIds.length === 1 ? 'this file' : `${deleteConfirmIds.length} files` }}. This action cannot be undone.
+                </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                    class="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    @click="handleConfirmedDelete"
+                >
+                    Delete
+                </AlertDialogAction>
+            </AlertDialogFooter>
+        </AlertDialogContent>
+    </AlertDialog>
 </template>

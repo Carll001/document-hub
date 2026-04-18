@@ -2,8 +2,6 @@
 import { router } from '@inertiajs/vue3';
 import {
     ArrowUpDown,
-    ChevronLeft,
-    ChevronRight,
     Download,
     Eye,
     MoreHorizontal,
@@ -13,7 +11,7 @@ import {
     Trash2,
     Upload,
 } from 'lucide-vue-next';
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -77,31 +75,8 @@ const emit = defineEmits<{
 const searchValue = ref(props.filters.search);
 const searchTimeoutId = ref<number | null>(null);
 const selectedRowIds = ref<string[]>([]);
+const tableTop = ref<HTMLElement | null>(null);
 const paginationControls = ref<HTMLElement | null>(null);
-
-type PaginationItem = number | 'ellipsis-start' | 'ellipsis-end';
-
-const paginationItems = computed<PaginationItem[]>(() => {
-    const { currentPage, lastPage } = props.pagination;
-
-    if (lastPage <= 1) {
-        return [1];
-    }
-
-    if (lastPage <= 7) {
-        return Array.from({ length: lastPage }, (_, index) => index + 1);
-    }
-
-    if (currentPage <= 4) {
-        return [1, 2, 3, 4, 5, 'ellipsis-end', lastPage];
-    }
-
-    if (currentPage >= lastPage - 3) {
-        return [1, 'ellipsis-start', lastPage - 4, lastPage - 3, lastPage - 2, lastPage - 1, lastPage];
-    }
-
-    return [1, 'ellipsis-start', currentPage - 1, currentPage, currentPage + 1, 'ellipsis-end', lastPage];
-});
 
 const canBulkDelete = computed(
     () =>
@@ -132,6 +107,8 @@ const selectAllState = computed<boolean | 'indeterminate'>(() => {
 
     return 'indeterminate';
 });
+const showingFrom = computed(() => props.pagination.total === 0 ? 0 : (props.pagination.from ?? 0));
+const showingTo = computed(() => props.pagination.total === 0 ? 0 : (props.pagination.to ?? 0));
 
 watch(
     () => props.filters.search,
@@ -183,13 +160,6 @@ function visitIndex(overrides: Partial<{ page: number; search: string; sort: For
         {
             preserveScroll: true,
             preserveState: true,
-            onSuccess: () => {
-                void nextTick(() => {
-                    paginationControls.value?.scrollIntoView({
-                        block: 'end',
-                    });
-                });
-            },
         },
     );
 }
@@ -326,7 +296,7 @@ function autoReceiptLabel(row: Form1702ExBatchRow): string | null {
                 <Input
                     v-model="searchValue"
                     type="search"
-                    placeholder="Search taxpayer, TIN, recipient, or status"
+                    placeholder="Search company, TIN, recipient, or status"
                     class="pl-10"
                 />
             </div>
@@ -366,7 +336,7 @@ function autoReceiptLabel(row: Form1702ExBatchRow): string | null {
             </div>
         </div>
 
-        <div class="overflow-hidden rounded-2xl border bg-background">
+        <div ref="tableTop" class="overflow-hidden rounded-2xl border bg-background">
             <Table>
                 <TableHeader>
                     <TableRow>
@@ -379,8 +349,7 @@ function autoReceiptLabel(row: Form1702ExBatchRow): string | null {
                             />
                         </TableHead>
                         <TableHead class="w-[1%]">#</TableHead>
-                        <TableHead>File name</TableHead>
-                        <TableHead>Taxpayer</TableHead>
+                        <TableHead>Company</TableHead>
                         <TableHead>TIN</TableHead>
                         <TableHead>
                             Accepted receipts from
@@ -389,7 +358,6 @@ function autoReceiptLabel(row: Form1702ExBatchRow): string | null {
                             <Button
                                 type="button"
                                 variant="ghost"
-                               
                                 class="h-auto px-0 font-medium"
                                 @click="toggleSort('uploadedAt')"
                             >
@@ -401,23 +369,10 @@ function autoReceiptLabel(row: Form1702ExBatchRow): string | null {
                             <Button
                                 type="button"
                                 variant="ghost"
-                               
-                                class=" font-medium"
+                                class="h-auto px-0 font-medium"
                                 @click="toggleSort('pdfStatus')"
                             >
                                 PDF status
-                                <ArrowUpDown class="ml-2 size-4 text-muted-foreground" />
-                            </Button>
-                        </TableHead>
-                        <TableHead>
-                            <Button
-                                type="button"
-                                variant="ghost"
-                               
-                                class="h-auto px-0 font-medium"
-                                @click="toggleSort('generatedAt')"
-                            >
-                                Generated
                                 <ArrowUpDown class="ml-2 size-4 text-muted-foreground" />
                             </Button>
                         </TableHead>
@@ -444,23 +399,6 @@ function autoReceiptLabel(row: Form1702ExBatchRow): string | null {
                                 }}
                             </TableCell>
                             <TableCell>
-                                <div class="space-y-1">
-                                    <p
-                                        class="max-w-[16rem] truncate text-sm text-foreground"
-                                        :title="row.fileName"
-                                    >
-                                        {{ row.fileName }}
-                                    </p>
-                                    <p
-                                        v-if="row.hasReceipt && row.receiptFileName"
-                                        class="max-w-[16rem] truncate text-xs text-muted-foreground"
-                                        :title="row.receiptFileName"
-                                    >
-                                        Receipt: {{ row.receiptFileName }}
-                                    </p>
-                                </div>
-                            </TableCell>
-                            <TableCell>
                                 <p class="font-medium text-foreground">
                                     {{ row.taxpayerName }}
                                 </p>
@@ -472,10 +410,10 @@ function autoReceiptLabel(row: Form1702ExBatchRow): string | null {
                                 {{ row.tin || '-' }}
                             </TableCell>
                             <TableCell class="text-sm text-muted-foreground">
-                                {{ formatDateTime(row.uploadedAt) }}
+                                {{ formatDateTime(row.receiptAcceptanceStartDate) }}
                             </TableCell>
                             <TableCell class="text-sm text-muted-foreground">
-                                {{ formatDateTime(row.receiptAcceptanceStartDate) }}
+                                {{ formatDateTime(row.uploadedAt) }}
                             </TableCell>
                             <TableCell>
                                 <div class="space-y-2">
@@ -526,9 +464,6 @@ function autoReceiptLabel(row: Form1702ExBatchRow): string | null {
                                         {{ row.receiptJobError }}
                                     </p>
                                 </div>
-                            </TableCell>
-                            <TableCell class="text-sm text-muted-foreground">
-                                {{ formatDateTime(row.generatedAt) }}
                             </TableCell>
                             <TableCell>
                                 <div class="flex justify-end">
@@ -616,7 +551,7 @@ function autoReceiptLabel(row: Form1702ExBatchRow): string | null {
                         </TableRow>
                     </template>
 
-                    <TableEmpty v-else :colspan="10">
+                    <TableEmpty v-else :colspan="9">
                         {{
                             props.pagination.total === 0
                                 ? 'No imported rows yet.'
@@ -628,53 +563,37 @@ function autoReceiptLabel(row: Form1702ExBatchRow): string | null {
         </div>
 
         <div
-            v-if="props.pagination.lastPage > 1"
             ref="paginationControls"
-            class="flex flex-wrap items-center justify-center gap-2 pt-2"
+            class="flex flex-col gap-3 pt-2 md:flex-row md:items-center md:justify-between"
         >
-            <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                class="gap-2"
-                :disabled="props.pagination.currentPage <= 1"
-                @click="visitPage(props.pagination.currentPage - 1)"
-            >
-                <ChevronLeft class="size-4" />
-                Previous
-            </Button>
+            <div class="text-sm text-muted-foreground">
+                Showing {{ showingFrom }} to {{ showingTo }} of {{ props.pagination.total }} rows
+            </div>
 
-            <template v-for="item in paginationItems" :key="String(item)">
+            <div
+                v-if="props.pagination.lastPage > 1"
+                class="flex items-center gap-2"
+            >
                 <Button
-                    v-if="typeof item === 'number'"
                     type="button"
+                    variant="outline"
                     size="sm"
-                    :variant="item === props.pagination.currentPage ? 'default' : 'outline'"
-                    :aria-current="item === props.pagination.currentPage ? 'page' : undefined"
-                    @click="visitPage(item)"
+                    :disabled="props.pagination.currentPage <= 1"
+                    @click="visitPage(props.pagination.currentPage - 1)"
                 >
-                    {{ item }}
+                    Previous
                 </Button>
-                <span
-                    v-else
-                    class="px-1 text-sm text-muted-foreground"
-                    aria-hidden="true"
+                <span class="text-sm">Page {{ props.pagination.currentPage }} / {{ props.pagination.lastPage }}</span>
+                <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    :disabled="props.pagination.currentPage >= props.pagination.lastPage"
+                    @click="visitPage(props.pagination.currentPage + 1)"
                 >
-                    ...
-                </span>
-            </template>
-
-            <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                class="gap-2"
-                :disabled="props.pagination.currentPage >= props.pagination.lastPage"
-                @click="visitPage(props.pagination.currentPage + 1)"
-            >
-                Next
-                <ChevronRight class="size-4" />
-            </Button>
+                    Next
+                </Button>
+            </div>
         </div>
     </div>
 </template>

@@ -803,7 +803,7 @@ function submitRemoveReceipt(): void {
                             variant="secondary"
                             @click="router.get(props.completedFilesUrl)"
                         >
-                            Completed Files ({{ props.completedCount }})
+                            Completed Files
                         </Button>
                         <Button type="button" variant="outline" @click="openSettingsDialog">
                             <Settings2 class="mr-2 size-4" />
