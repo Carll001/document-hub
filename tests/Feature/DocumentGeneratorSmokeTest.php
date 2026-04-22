@@ -361,7 +361,7 @@ class DocumentGeneratorSmokeTest extends TestCase
             'status' => 'pdf_done',
             'pdf_path' => "document-generator/{$staff->id}/batch-{$batch->id}/row-2.pdf",
         ]);
-        Storage::disk('local')->put((string) $item->pdf_path, 'fake-pdf');
+        Storage::disk('s3')->put((string) $item->pdf_path, 'fake-pdf');
 
         DocumentGeneratorSignature::query()->create([
             'user_id' => $staff->id,
@@ -393,7 +393,7 @@ class DocumentGeneratorSmokeTest extends TestCase
             'page8_width' => 40,
             'page8_height' => 16,
         ]);
-        Storage::disk('local')->put("document-generator/{$staff->id}/signature/processed-getor.png", 'getor-signature');
+        Storage::disk('s3')->put("document-generator/{$staff->id}/signature/processed-getor.png", 'getor-signature');
 
         $this->actingAs($staff)
             ->postJson(route('document-generator.batches.items.signature', [$batch, $item]), [])
@@ -412,7 +412,7 @@ class DocumentGeneratorSmokeTest extends TestCase
             'status' => 'pdf_done',
             'pdf_path' => "document-generator/{$staff->id}/batch-{$batch->id}/row-2.pdf",
         ]);
-        Storage::disk('local')->put((string) $item->pdf_path, 'fake-pdf');
+        Storage::disk('s3')->put((string) $item->pdf_path, 'fake-pdf');
 
         DocumentGeneratorSignature::query()->create([
             'user_id' => $staff->id,
@@ -444,7 +444,7 @@ class DocumentGeneratorSmokeTest extends TestCase
             'page8_width' => 40,
             'page8_height' => 16,
         ]);
-        Storage::disk('local')->put("document-generator/{$staff->id}/signature/processed-getor.png", 'getor-signature');
+        Storage::disk('s3')->put("document-generator/{$staff->id}/signature/processed-getor.png", 'getor-signature');
 
         $stampService = Mockery::mock(PdfSignatureStampService::class);
         $stampService->shouldReceive('stampFileWithPageLayouts')
@@ -488,8 +488,8 @@ class DocumentGeneratorSmokeTest extends TestCase
             'status' => 'pdf_done',
             'pdf_path' => "document-generator/{$staff->id}/batch-{$batch->id}/row-3.pdf",
         ]);
-        Storage::disk('local')->put((string) $firstItem->pdf_path, 'fake-pdf-1');
-        Storage::disk('local')->put((string) $secondItem->pdf_path, 'fake-pdf-2');
+        Storage::disk('s3')->put((string) $firstItem->pdf_path, 'fake-pdf-1');
+        Storage::disk('s3')->put((string) $secondItem->pdf_path, 'fake-pdf-2');
 
         DocumentGeneratorSignature::query()->create([
             'user_id' => $staff->id,
@@ -521,7 +521,7 @@ class DocumentGeneratorSmokeTest extends TestCase
             'page8_width' => 40,
             'page8_height' => 16,
         ]);
-        Storage::disk('local')->put("document-generator/{$staff->id}/signature/processed-getor.png", 'getor-signature');
+        Storage::disk('s3')->put("document-generator/{$staff->id}/signature/processed-getor.png", 'getor-signature');
 
         $this->actingAs($staff)
             ->postJson(route('document-generator.items.signature.bulk'), [
@@ -563,7 +563,7 @@ class DocumentGeneratorSmokeTest extends TestCase
             'status' => 'pdf_done',
             'pdf_path' => "document-generator/{$staff->id}/batch-{$batch->id}/row-2.pdf",
         ]);
-        Storage::disk('local')->put((string) $item->pdf_path, 'fake-pdf');
+        Storage::disk('s3')->put((string) $item->pdf_path, 'fake-pdf');
 
         DocumentGeneratorSignature::query()->create([
             'user_id' => $staff->id,
@@ -603,7 +603,7 @@ class DocumentGeneratorSmokeTest extends TestCase
             'page8_width' => 40,
             'page8_height' => 16,
         ]);
-        Storage::disk('local')->put("document-generator/{$staff->id}/signature/processed-getor.png", 'getor-signature');
+        Storage::disk('s3')->put("document-generator/{$staff->id}/signature/processed-getor.png", 'getor-signature');
 
         $locator = Mockery::mock(PdfTextAnchorLocatorService::class);
         $locator->shouldReceive('locateWithDiagnostics')
@@ -643,7 +643,7 @@ class DocumentGeneratorSmokeTest extends TestCase
             'status' => 'pdf_done',
             'pdf_path' => "document-generator/{$staff->id}/batch-{$batch->id}/row-2.pdf",
         ]);
-        Storage::disk('local')->put((string) $item->pdf_path, 'fake-pdf');
+        Storage::disk('s3')->put((string) $item->pdf_path, 'fake-pdf');
 
         DocumentGeneratorSignature::query()->create([
             'user_id' => $staff->id,
@@ -680,7 +680,7 @@ class DocumentGeneratorSmokeTest extends TestCase
             'page8_width' => 40,
             'page8_height' => 16,
         ]);
-        Storage::disk('local')->put("document-generator/{$staff->id}/signature/processed-getor.png", 'getor-signature');
+        Storage::disk('s3')->put("document-generator/{$staff->id}/signature/processed-getor.png", 'getor-signature');
 
         $locator = Mockery::mock(PdfTextAnchorLocatorService::class);
         $locator->shouldReceive('locateWithDiagnostics')
@@ -716,8 +716,8 @@ class DocumentGeneratorSmokeTest extends TestCase
             'docx_path' => "document-generator/{$staff->id}/batch-{$batch->id}/row-2.docx",
             'pdf_path' => "document-generator/{$staff->id}/batch-{$batch->id}/row-2.pdf",
         ]);
-        Storage::disk('local')->put((string) $item->docx_path, 'fake-docx');
-        Storage::disk('local')->put((string) $item->pdf_path, 'fake-pdf');
+        Storage::disk('s3')->put((string) $item->docx_path, 'fake-docx');
+        Storage::disk('s3')->put((string) $item->pdf_path, 'fake-pdf');
 
         DocumentGeneratorSignature::query()->create([
             'user_id' => $staff->id,
@@ -749,7 +749,7 @@ class DocumentGeneratorSmokeTest extends TestCase
             'page8_width' => 40,
             'page8_height' => 16,
         ]);
-        Storage::disk('local')->put("document-generator/{$staff->id}/signature/processed-getor.png", 'getor-signature');
+        Storage::disk('s3')->put("document-generator/{$staff->id}/signature/processed-getor.png", 'getor-signature');
 
         $stampService = Mockery::mock(PdfSignatureStampService::class);
         $stampService->shouldReceive('stampFileWithPageLayouts')->times(4)->andReturnNull();
@@ -780,7 +780,7 @@ class DocumentGeneratorSmokeTest extends TestCase
             'status' => 'pdf_done',
             'pdf_path' => "document-generator/{$staff->id}/batch-{$batch->id}/row-2.pdf",
         ]);
-        Storage::disk('local')->put((string) $item->pdf_path, 'fake-pdf');
+        Storage::disk('s3')->put((string) $item->pdf_path, 'fake-pdf');
 
         config()->set('services.document_generator.signature_enabled', false);
 

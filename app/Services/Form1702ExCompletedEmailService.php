@@ -196,7 +196,7 @@ class Form1702ExCompletedEmailService
     {
         $generatedPdfPath = (string) ($row->generated_pdf_storage_path ?? '');
 
-        return $generatedPdfPath !== '' && Storage::disk('local')->exists($generatedPdfPath);
+        return $generatedPdfPath !== '' && Storage::disk('s3')->exists($generatedPdfPath);
     }
 
     private function completionSignature(Form1702ExBatchRow $row, string $recipientEmail): ?string

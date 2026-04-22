@@ -27,7 +27,7 @@ class Form1702ExRowReceiptService
         array $submittedValues,
     ): void {
         $row->loadMissing('batch');
-        $disk = Storage::disk('local');
+        $disk = Storage::disk('s3');
         $generatedPdfPath = (string) ($row->generated_pdf_storage_path ?? '');
 
         if ($generatedPdfPath === '' || ! $disk->exists($generatedPdfPath)) {
@@ -106,7 +106,7 @@ class Form1702ExRowReceiptService
         UploadedFile $uploadedReceipt,
     ): void {
         $row->loadMissing('batch');
-        $disk = Storage::disk('local');
+        $disk = Storage::disk('s3');
         $generatedPdfPath = (string) ($row->generated_pdf_storage_path ?? '');
 
         if ($generatedPdfPath === '' || ! $disk->exists($generatedPdfPath)) {
@@ -169,7 +169,7 @@ class Form1702ExRowReceiptService
 
     public function removeReceipt(Form1702ExBatchRow $row): void
     {
-        $disk = Storage::disk('local');
+        $disk = Storage::disk('s3');
         $previousReceiptPath = $row->receipt_storage_path;
 
         $this->pdfMergeService->removeForm1702ExReceipt($row);

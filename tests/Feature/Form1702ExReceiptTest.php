@@ -49,10 +49,10 @@ class Form1702ExReceiptTest extends TestCase
             ->latestReceiptTemplatePdf($staff->id);
 
         $this->assertNotNull($latestReceiptTemplate);
-        Storage::disk('local')->assertExists($latestReceiptTemplate['storagePath']);
+        Storage::disk('s3')->assertExists($latestReceiptTemplate['storagePath']);
 
         $receiptText = app(PdfTextExtractionService::class)->extractText(
-            Storage::disk('local')->path($latestReceiptTemplate['storagePath']),
+            Storage::disk('s3')->path($latestReceiptTemplate['storagePath']),
         );
 
         $this->assertStringContainsStringIgnoringCase(
@@ -132,13 +132,13 @@ class Form1702ExReceiptTest extends TestCase
         $this->assertSame($expectedReceiptFileName, $row->receipt_file_name);
         $this->assertNotNull($row->receipt_storage_path);
         $this->assertNotNull($row->receipt_file_size);
-        Storage::disk('local')->assertExists((string) $row->receipt_storage_path);
+        Storage::disk('s3')->assertExists((string) $row->receipt_storage_path);
 
         $receiptText = app(PdfTextExtractionService::class)->extractText(
-            Storage::disk('local')->path((string) $row->receipt_storage_path),
+            Storage::disk('s3')->path((string) $row->receipt_storage_path),
         );
         $mergedText = app(PdfTextExtractionService::class)->extractText(
-            Storage::disk('local')->path((string) $row->generated_pdf_storage_path),
+            Storage::disk('s3')->path((string) $row->generated_pdf_storage_path),
         );
 
         $this->assertStringContainsStringIgnoringCase(
@@ -195,7 +195,7 @@ class Form1702ExReceiptTest extends TestCase
         $this->assertNotNull($row->receipt_file_name);
         $this->assertNotNull($row->receipt_storage_path);
         $this->assertNotNull($row->receipt_file_size);
-        Storage::disk('local')->assertExists((string) $row->receipt_storage_path);
+        Storage::disk('s3')->assertExists((string) $row->receipt_storage_path);
 
         $this->actingAs($staff)
             ->get(route('forms.1702-ex.index'))
@@ -359,7 +359,7 @@ class Form1702ExReceiptTest extends TestCase
         Mail::assertNotQueued(Form1702ExCompletedRowsEmail::class);
 
         $receiptText = app(PdfTextExtractionService::class)->extractText(
-            Storage::disk('local')->path((string) $row->receipt_storage_path),
+            Storage::disk('s3')->path((string) $row->receipt_storage_path),
         );
 
         $this->assertStringContainsString('010803043000-1702EXv2018C-122025.xml', $receiptText);
@@ -921,8 +921,8 @@ class Form1702ExReceiptTest extends TestCase
         $receiptStoragePath = (string) $row->receipt_storage_path;
         $receiptBasePath = $row->receiptBaseStoragePath();
 
-        Storage::disk('local')->assertExists($receiptStoragePath);
-        Storage::disk('local')->assertExists($receiptBasePath);
+        Storage::disk('s3')->assertExists($receiptStoragePath);
+        Storage::disk('s3')->assertExists($receiptBasePath);
 
         $this->actingAs($staff)
             ->delete(route('forms.1702-ex.rows.receipt.destroy', [
@@ -938,11 +938,11 @@ class Form1702ExReceiptTest extends TestCase
         $this->assertNull($row->receipt_file_size);
         $this->assertNull($row->receipt_job_status);
         $this->assertNull($row->receipt_job_error);
-        Storage::disk('local')->assertMissing($receiptStoragePath);
-        Storage::disk('local')->assertMissing($receiptBasePath);
+        Storage::disk('s3')->assertMissing($receiptStoragePath);
+        Storage::disk('s3')->assertMissing($receiptBasePath);
 
         $restoredText = app(PdfTextExtractionService::class)->extractText(
-            Storage::disk('local')->path((string) $row->generated_pdf_storage_path),
+            Storage::disk('s3')->path((string) $row->generated_pdf_storage_path),
         );
 
         $this->assertStringContainsString('FOUNDATION FOR COMMUNITY GROWTH, INC.', $restoredText);
@@ -989,9 +989,9 @@ class Form1702ExReceiptTest extends TestCase
         $this->assertNull($row->receipt_file_size);
         $this->assertNull($row->receipt_job_status);
         $this->assertNull($row->receipt_job_error);
-        Storage::disk('local')->assertMissing($generatedPdfPath);
-        Storage::disk('local')->assertMissing($receiptStoragePath);
-        Storage::disk('local')->assertMissing($receiptBasePath);
+        Storage::disk('s3')->assertMissing($generatedPdfPath);
+        Storage::disk('s3')->assertMissing($receiptStoragePath);
+        Storage::disk('s3')->assertMissing($receiptBasePath);
 
         Queue::assertPushed(ProcessForm1702ExBatchRows::class, function (ProcessForm1702ExBatchRows $job) use ($row): bool {
             return $job->rowIds === [$row->id];

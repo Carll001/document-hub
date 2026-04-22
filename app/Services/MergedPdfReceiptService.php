@@ -30,7 +30,7 @@ class MergedPdfReceiptService
         array $placeholders,
         array $submittedValues,
     ): void {
-        $disk = Storage::disk('local');
+        $disk = Storage::disk('s3');
 
         if (! $disk->exists($mergedPdf->storage_path)) {
             throw new RuntimeException("The saved PDF {$mergedPdf->file_name} is no longer available.");

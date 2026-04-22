@@ -222,7 +222,7 @@ class Form1702ExController extends Controller
             $state['status'] === Form1702ExCompletedExportService::STATUS_READY
                 && is_array($cached)
                 && is_string($cached['storagePath'] ?? null)
-                && Storage::disk('local')->exists($cached['storagePath']),
+                && Storage::disk('s3')->exists($cached['storagePath']),
             404,
         );
 
@@ -230,7 +230,7 @@ class Form1702ExController extends Controller
         $downloadName = 'form1702ex-completed-files.zip';
 
         return response()->download(
-            Storage::disk('local')->path($storagePath),
+            Storage::disk('s3')->path($storagePath),
             $downloadName,
             ['Content-Type' => 'application/zip'],
         )->deleteFileAfterSend(true);
@@ -291,12 +291,12 @@ class Form1702ExController extends Controller
             $state['status'] === Form1702ExRowsExportService::STATUS_READY
                 && is_array($cached)
                 && is_string($cached['storagePath'] ?? null)
-                && Storage::disk('local')->exists($cached['storagePath']),
+                && Storage::disk('s3')->exists($cached['storagePath']),
             404,
         );
 
         return response()->download(
-            Storage::disk('local')->path((string) $cached['storagePath']),
+            Storage::disk('s3')->path((string) $cached['storagePath']),
             'form1702ex-unmatched-rows.xlsx',
             ['Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
         )->deleteFileAfterSend(true);
@@ -512,7 +512,7 @@ class Form1702ExController extends Controller
                 ->with('error', 'This completed row has no recipients.');
         }
 
-        $disk = Storage::disk('local');
+        $disk = Storage::disk('s3');
 
         /** @var UploadedFile|null $extraAttachment */
         $extraAttachment = $validated['extraAttachment'] ?? null;
@@ -954,7 +954,7 @@ class Form1702ExController extends Controller
         $this->ensureAccessibleRow($request, $form1702ExBatch, $form1702ExBatchRow);
         abort_unless(filled($form1702ExBatchRow->generated_pdf_storage_path), 404);
 
-        return Storage::disk('local')->response(
+        return Storage::disk('s3')->response(
             $form1702ExBatchRow->generated_pdf_storage_path,
             $form1702ExBatchRow->generated_pdf_file_name ?? 'form1702ex.pdf',
             [
@@ -972,7 +972,7 @@ class Form1702ExController extends Controller
         $this->ensureAccessibleStandaloneRow($request, $form1702ExBatchRow);
         abort_unless(filled($form1702ExBatchRow->generated_pdf_storage_path), 404);
 
-        return Storage::disk('local')->response(
+        return Storage::disk('s3')->response(
             $form1702ExBatchRow->generated_pdf_storage_path,
             $form1702ExBatchRow->generated_pdf_file_name ?? 'form1702ex.pdf',
             [
@@ -991,7 +991,7 @@ class Form1702ExController extends Controller
         $this->ensureAccessibleRow($request, $form1702ExBatch, $form1702ExBatchRow);
         abort_unless(filled($form1702ExBatchRow->generated_pdf_storage_path), 404);
 
-        return Storage::disk('local')->download(
+        return Storage::disk('s3')->download(
             $form1702ExBatchRow->generated_pdf_storage_path,
             $form1702ExBatchRow->generated_pdf_file_name ?? 'form1702ex.pdf',
         );
@@ -1004,7 +1004,7 @@ class Form1702ExController extends Controller
         $this->ensureAccessibleStandaloneRow($request, $form1702ExBatchRow);
         abort_unless(filled($form1702ExBatchRow->generated_pdf_storage_path), 404);
 
-        return Storage::disk('local')->download(
+        return Storage::disk('s3')->download(
             $form1702ExBatchRow->generated_pdf_storage_path,
             $form1702ExBatchRow->generated_pdf_file_name ?? 'form1702ex.pdf',
         );
@@ -1287,11 +1287,11 @@ class Form1702ExController extends Controller
         abort_unless(
             filled($form1702ExBatchRow->receipt_storage_path)
                 && filled($form1702ExBatchRow->receipt_file_name)
-                && Storage::disk('local')->exists($form1702ExBatchRow->receipt_storage_path),
+                && Storage::disk('s3')->exists($form1702ExBatchRow->receipt_storage_path),
             404,
         );
 
-        return Storage::disk('local')->download(
+        return Storage::disk('s3')->download(
             $form1702ExBatchRow->receipt_storage_path,
             $form1702ExBatchRow->receipt_file_name,
         );
@@ -1305,11 +1305,11 @@ class Form1702ExController extends Controller
         abort_unless(
             filled($form1702ExBatchRow->receipt_storage_path)
                 && filled($form1702ExBatchRow->receipt_file_name)
-                && Storage::disk('local')->exists($form1702ExBatchRow->receipt_storage_path),
+                && Storage::disk('s3')->exists($form1702ExBatchRow->receipt_storage_path),
             404,
         );
 
-        return Storage::disk('local')->download(
+        return Storage::disk('s3')->download(
             $form1702ExBatchRow->receipt_storage_path,
             $form1702ExBatchRow->receipt_file_name,
         );

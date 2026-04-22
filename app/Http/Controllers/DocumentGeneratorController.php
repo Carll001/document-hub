@@ -162,12 +162,12 @@ class DocumentGeneratorController extends Controller
 
             $originalPath = $uploaded->store("document-generator/{$user->id}/signature", 'local');
             $processedTempPath = $signatureImageService->processToTransparentPng(
-                Storage::disk('local')->path($originalPath),
+                Storage::disk('s3')->path($originalPath),
             );
 
             $processedPath = "document-generator/{$user->id}/signature/processed-".Str::uuid().'.png';
             $processedFile = new File($processedTempPath);
-            Storage::disk('local')->putFileAs(
+            Storage::disk('s3')->putFileAs(
                 "document-generator/{$user->id}/signature",
                 $processedFile,
                 basename($processedPath),
@@ -284,11 +284,11 @@ class DocumentGeneratorController extends Controller
         }
 
         $path = $signature->processed_signature_path;
-        if (! Storage::disk('local')->exists($path)) {
+        if (! Storage::disk('s3')->exists($path)) {
             abort(404);
         }
 
-        return response()->file(Storage::disk('local')->path($path), [
+        return response()->file(Storage::disk('s3')->path($path), [
             'Content-Type' => 'image/png',
             'Cache-Control' => 'no-cache, no-store, must-revalidate',
             'Pragma' => 'no-cache',
@@ -401,14 +401,14 @@ class DocumentGeneratorController extends Controller
             $state['status'] === DocumentGeneratorCompletedExportService::STATUS_READY
                 && is_array($cached)
                 && is_string($cached['storagePath'] ?? null)
-                && Storage::disk('local')->exists($cached['storagePath']),
+                && Storage::disk('s3')->exists($cached['storagePath']),
             404,
         );
 
         $storagePath = (string) $cached['storagePath'];
 
         return response()->download(
-            Storage::disk('local')->path($storagePath),
+            Storage::disk('s3')->path($storagePath),
             'afs-completed-files.zip',
             ['Content-Type' => 'application/zip'],
         )->deleteFileAfterSend(true);
@@ -526,7 +526,7 @@ class DocumentGeneratorController extends Controller
         $defaultTemplate = $resolvedTemplates['default'];
         $yearTemplatePayload = $resolvedTemplates['year_templates'];
 
-        $extracted = $excelExtractionService->extract(Storage::disk('local')->path($excelPath), $sheetIndex);
+        $extracted = $excelExtractionService->extract(Storage::disk('s3')->path($excelPath), $sheetIndex);
         $headers = $extracted['headers'];
         $rows = $extracted['rows'];
         $previousWorkbookPath = $this->resolvePreviousWorkbookPath($request->user()->id);
@@ -729,18 +729,18 @@ class DocumentGeneratorController extends Controller
         }
 
         $path = $type === 'docx' ? $item->docx_path : $item->pdf_path;
-        if (! is_string($path) || $path === '' || ! Storage::disk('local')->exists($path)) {
+        if (! is_string($path) || $path === '' || ! Storage::disk('s3')->exists($path)) {
             abort(404);
         }
 
         if ($type === 'pdf') {
-            return response()->file(Storage::disk('local')->path($path), [
+            return response()->file(Storage::disk('s3')->path($path), [
                 'Content-Type' => 'application/pdf',
                 'Content-Disposition' => "inline; filename=\"batch-{$batch->id}-row-{$item->row_number}.pdf\"",
             ]);
         }
 
-        return Storage::disk('local')->download($path, "batch-{$batch->id}-row-{$item->row_number}.docx");
+        return Storage::disk('s3')->download($path, "batch-{$batch->id}-row-{$item->row_number}.docx");
     }
 
     public function showItem(Request $request, DocumentBatch $batch, DocumentBatchItem $item): JsonResponse
@@ -1003,8 +1003,8 @@ class DocumentGeneratorController extends Controller
             $lockedBatch->save();
 
             foreach ([$oldDocxPath, $oldPdfPath] as $path) {
-                if (is_string($path) && $path !== '' && Storage::disk('local')->exists($path)) {
-                    Storage::disk('local')->delete($path);
+                if (is_string($path) && $path !== '' && Storage::disk('s3')->exists($path)) {
+                    Storage::disk('s3')->delete($path);
                 }
             }
 
@@ -1652,7 +1652,7 @@ class DocumentGeneratorController extends Controller
 
     private function resolvePreviousWorkbookPath(int $userId): ?string
     {
-        $disk = Storage::disk('local');
+        $disk = Storage::disk('s3');
 
         /** @var \Illuminate\Support\Collection<int, DocumentBatch> $previousBatches */
         $previousBatches = DocumentBatch::query()
@@ -1900,7 +1900,7 @@ class DocumentGeneratorController extends Controller
         $filename = pathinfo($templateName, PATHINFO_FILENAME);
         $targetPath = "document-generator/{$userId}/uploads/{$filename}-".Str::uuid().($extension !== '' ? ".{$extension}" : '');
 
-        Storage::disk('local')->copy($sourcePath, $targetPath);
+        Storage::disk('s3')->copy($sourcePath, $targetPath);
 
         return $targetPath;
     }
@@ -2008,7 +2008,7 @@ class DocumentGeneratorController extends Controller
             ]);
         }
 
-        if (! Storage::disk('local')->exists($signature->processed_signature_path)) {
+        if (! Storage::disk('s3')->exists($signature->processed_signature_path)) {
             throw \Illuminate\Validation\ValidationException::withMessages([
                 'signature' => ['Processed signature file is missing on disk. Please upload again.'],
             ]);
@@ -2181,12 +2181,12 @@ class DocumentGeneratorController extends Controller
             return false;
         }
 
-        if (! Storage::disk('local')->exists($item->docx_path)) {
+        if (! Storage::disk('s3')->exists($item->docx_path)) {
             return false;
         }
 
         try {
-            $docxPath = Storage::disk('local')->path($item->docx_path);
+            $docxPath = Storage::disk('s3')->path($item->docx_path);
             return $docxTemplateService->hasSignatureImagePlaceholders($docxPath);
         } catch (\Throwable) {
             return false;
@@ -2204,12 +2204,12 @@ class DocumentGeneratorController extends Controller
             throw new \RuntimeException('DOCX file is not available for this item.');
         }
 
-        if (! Storage::disk('local')->exists($item->docx_path)) {
+        if (! Storage::disk('s3')->exists($item->docx_path)) {
             throw new \RuntimeException('DOCX file is missing on disk.');
         }
 
-        $docxPath = Storage::disk('local')->path($item->docx_path);
-        $getorSignatureImagePath = Storage::disk('local')->path($signature->processed_signature_path);
+        $docxPath = Storage::disk('s3')->path($item->docx_path);
+        $getorSignatureImagePath = Storage::disk('s3')->path($signature->processed_signature_path);
 
         $page2Layout = $this->signatureLayout($signature, 'page2');
         $page4Layout = $this->signatureLayout($signature, 'page4');
@@ -2229,7 +2229,7 @@ class DocumentGeneratorController extends Controller
 
         $convertedPdfPath = $pdfConversionService->convertDocxToPdf($docxPath);
         $expectedPdfRelativePath = $this->expectedPdfRelativePath($item);
-        $expectedPdfAbsolutePath = Storage::disk('local')->path($expectedPdfRelativePath);
+        $expectedPdfAbsolutePath = Storage::disk('s3')->path($expectedPdfRelativePath);
 
         if ($convertedPdfPath !== $expectedPdfAbsolutePath && is_file($convertedPdfPath)) {
             @rename($convertedPdfPath, $expectedPdfAbsolutePath);
@@ -2300,8 +2300,8 @@ class DocumentGeneratorController extends Controller
     private function deleteSignatureFiles(array $paths): void
     {
         foreach (array_values(array_unique($paths)) as $path) {
-            if (Storage::disk('local')->exists($path)) {
-                Storage::disk('local')->delete($path);
+            if (Storage::disk('s3')->exists($path)) {
+                Storage::disk('s3')->delete($path);
             }
         }
     }
@@ -2318,8 +2318,8 @@ class DocumentGeneratorController extends Controller
         );
 
         foreach ($uniquePaths as $path) {
-            if (Storage::disk('local')->exists($path)) {
-                Storage::disk('local')->delete($path);
+            if (Storage::disk('s3')->exists($path)) {
+                Storage::disk('s3')->delete($path);
             }
         }
     }

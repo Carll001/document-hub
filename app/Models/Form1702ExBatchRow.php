@@ -75,15 +75,15 @@ class Form1702ExBatchRow extends Model
             $baseStoragePath = $row->receiptBaseStoragePath();
 
             if (filled($row->generated_pdf_storage_path)) {
-                Storage::disk('local')->delete($row->generated_pdf_storage_path);
+                Storage::disk('s3')->delete($row->generated_pdf_storage_path);
             }
 
             if (filled($row->receipt_storage_path)) {
-                Storage::disk('local')->delete($row->receipt_storage_path);
+                Storage::disk('s3')->delete($row->receipt_storage_path);
             }
 
-            if ($baseStoragePath !== '' && Storage::disk('local')->exists($baseStoragePath)) {
-                Storage::disk('local')->delete($baseStoragePath);
+            if ($baseStoragePath !== '' && Storage::disk('s3')->exists($baseStoragePath)) {
+                Storage::disk('s3')->delete($baseStoragePath);
             }
         });
     }

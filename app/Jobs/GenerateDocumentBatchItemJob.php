@@ -55,13 +55,13 @@ class GenerateDocumentBatchItemJob implements ShouldQueue
             $docxRelativePath = "{$baseDir}/row-{$item->row_number}.docx";
             $pdfRelativePath = "{$baseDir}/row-{$item->row_number}.pdf";
 
-            Storage::disk('local')->makeDirectory($baseDir);
+            Storage::disk('s3')->makeDirectory($baseDir);
 
             /** @var array<string, string> $rowData */
             $rowData = $item->row_data ?? [];
             $template = $this->resolveTemplateForRow($batch, $rowData);
-            $templatePath = Storage::disk('local')->path($template->template_path);
-            $docxPath = Storage::disk('local')->path($docxRelativePath);
+            $templatePath = Storage::disk('s3')->path($template->template_path);
+            $docxPath = Storage::disk('s3')->path($docxRelativePath);
             $templateRowData = $this->buildTemplateRowData(
                 $batch,
                 $rowData,
@@ -152,7 +152,7 @@ class GenerateDocumentBatchItemJob implements ShouldQueue
 
     private function storePdfAsExpectedPath(string $absolutePdfPath, string $expectedRelativePath): string
     {
-        $absoluteExpectedPath = Storage::disk('local')->path($expectedRelativePath);
+        $absoluteExpectedPath = Storage::disk('s3')->path($expectedRelativePath);
         if ($absolutePdfPath !== $absoluteExpectedPath && file_exists($absolutePdfPath)) {
             @rename($absolutePdfPath, $absoluteExpectedPath);
         }
@@ -252,11 +252,11 @@ class GenerateDocumentBatchItemJob implements ShouldQueue
             return null;
         }
 
-        if (! Storage::disk('local')->exists($previousBatch->excel_path)) {
+        if (! Storage::disk('s3')->exists($previousBatch->excel_path)) {
             return null;
         }
 
-        $rows = $excelExtractionService->extract(Storage::disk('local')->path($previousBatch->excel_path), 0)['rows'];
+        $rows = $excelExtractionService->extract(Storage::disk('s3')->path($previousBatch->excel_path), 0)['rows'];
         foreach ($rows as $previousRowData) {
             if (trim($this->extractCompanyFromRowData($previousRowData)) === $company) {
                 return $previousRowData;
@@ -394,7 +394,7 @@ class GenerateDocumentBatchItemJob implements ShouldQueue
             throw new \RuntimeException("No template configured for year {$year}.");
         }
 
-        if (! Storage::disk('local')->exists($template->template_path)) {
+        if (! Storage::disk('s3')->exists($template->template_path)) {
             throw new \RuntimeException("Template file is missing for year {$year}.");
         }
 

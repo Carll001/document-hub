@@ -58,7 +58,7 @@ class BulkDocMergeTest extends TestCase
         $this->assertSame('Client-summary.pdf', $summary->file_name);
 
         $dimensions = $this->mergedPdfDimensions(
-            Storage::disk('local')->path($invoice->storage_path),
+            Storage::disk('s3')->path($invoice->storage_path),
         );
 
         $this->assertCount(3, $dimensions);
@@ -211,7 +211,7 @@ class BulkDocMergeTest extends TestCase
         $this->assertSame('Prepared for internal filing', $mergedPdf->footer_text);
 
         $pdfText = app(PdfTextExtractionService::class)->extractText(
-            Storage::disk('local')->path($mergedPdf->storage_path),
+            Storage::disk('s3')->path($mergedPdf->storage_path),
         );
 
         $this->assertStringContainsString('123-456-789-000', $pdfText);
@@ -427,7 +427,7 @@ class BulkDocMergeTest extends TestCase
             'error_message' => 'The PDF invoice.pdf is missing from PAGE 2.',
         ]);
 
-        Storage::disk('local')->put(
+        Storage::disk('s3')->put(
             $mergedPdf->storage_path,
             $this->makePdfContents(),
         );

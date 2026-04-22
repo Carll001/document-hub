@@ -129,7 +129,7 @@ class DocMergeBatchService
     {
         $batch->loadMissing(['mergedPdfs']);
 
-        $disk = Storage::disk('local');
+        $disk = Storage::disk('s3');
         $temporaryZipPath = storage_path('app/tmp/doc-merge-batch-'.Str::uuid().'.zip');
 
         if (! is_dir(dirname($temporaryZipPath))) {
@@ -187,7 +187,7 @@ class DocMergeBatchService
      */
     public function storedPageFolders(DocMergeBatch $batch): array
     {
-        $disk = Storage::disk('local');
+        $disk = Storage::disk('s3');
         /** @var Collection<int, DocMergeBatchSourceFile> $sourceFiles */
         $sourceFiles = $batch->sourceFiles()
             ->orderBy('page_folder_number')
@@ -258,7 +258,7 @@ class DocMergeBatchService
         array $pageFolders,
         ?ZipArchive $zip = null,
     ): int {
-        $disk = Storage::disk('local');
+        $disk = Storage::disk('s3');
         $touchedPageFolderNumbers = array_map(
             static fn (array $pageFolder): int => $pageFolder['number'],
             $pageFolders,
@@ -330,7 +330,7 @@ class DocMergeBatchService
             });
 
             if ($existingSourceFiles->isNotEmpty()) {
-                $disk = Storage::disk('local');
+                $disk = Storage::disk('s3');
 
                 foreach ($existingSourceFiles as $existingSourceFile) {
                     $disk->delete($existingSourceFile->storage_path);

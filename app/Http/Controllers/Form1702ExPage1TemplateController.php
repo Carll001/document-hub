@@ -57,7 +57,7 @@ class Form1702ExPage1TemplateController extends Controller
         $latestExport = $this->latestExport($request);
         abort_unless(is_array($latestExport), 404);
 
-        return Storage::disk('local')->response(
+        return Storage::disk('s3')->response(
             $latestExport['storagePath'],
             $latestExport['fileName'],
             [
@@ -73,7 +73,7 @@ class Form1702ExPage1TemplateController extends Controller
         $latestExport = $this->latestExport($request);
         abort_unless(is_array($latestExport), 404);
 
-        return Storage::disk('local')->download(
+        return Storage::disk('s3')->download(
             $latestExport['storagePath'],
             $latestExport['fileName'],
         );

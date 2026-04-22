@@ -56,7 +56,7 @@ class DocumentGeneratorCompletedExportService
 
         if ($status === self::STATUS_READY) {
             $storagePath = is_string($state['storagePath'] ?? null) ? $state['storagePath'] : null;
-            if ($storagePath === null || ! Storage::disk('local')->exists($storagePath)) {
+            if ($storagePath === null || ! Storage::disk('s3')->exists($storagePath)) {
                 $this->forgetState($userId);
 
                 return $this->emptyState();
@@ -91,7 +91,7 @@ class DocumentGeneratorCompletedExportService
         if (is_array($cached)) {
             $storagePath = $cached['storagePath'] ?? null;
             if (is_string($storagePath) && $storagePath !== '') {
-                Storage::disk('local')->delete($storagePath);
+                Storage::disk('s3')->delete($storagePath);
             }
         }
 
@@ -105,11 +105,11 @@ class DocumentGeneratorCompletedExportService
     public function buildZip(Collection $items, int $userId): array
     {
         $directory = "tmp/document-generator-afs-completed-exports/user-{$userId}";
-        Storage::disk('local')->makeDirectory($directory);
+        Storage::disk('s3')->makeDirectory($directory);
 
         $fileName = 'afs-completed-files-'.Str::uuid().'.zip';
         $storagePath = "{$directory}/{$fileName}";
-        $archivePath = Storage::disk('local')->path($storagePath);
+        $archivePath = Storage::disk('s3')->path($storagePath);
 
         $archive = new ZipArchive;
         if ($archive->open($archivePath, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
@@ -117,7 +117,7 @@ class DocumentGeneratorCompletedExportService
         }
 
         $usedPaths = [];
-        $disk = Storage::disk('local');
+        $disk = Storage::disk('s3');
         $includedItems = 0;
 
         foreach ($items as $item) {

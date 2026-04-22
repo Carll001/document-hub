@@ -569,7 +569,7 @@ class DocMergeBatchController extends Controller
     {
         $template = ConfirmationTemplate::shared();
         $storagePath = $template?->storage_path;
-        $disk = Storage::disk('local');
+        $disk = Storage::disk('s3');
 
         if (! filled($storagePath) || ! $disk->exists($storagePath)) {
             return [

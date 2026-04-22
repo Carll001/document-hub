@@ -557,7 +557,7 @@ class EmailSyncTest extends TestCase
             'file_size' => 21,
         ]);
 
-        Storage::disk('local')->put($attachment->storage_path, 'Attachment body text');
+        Storage::disk('s3')->put($attachment->storage_path, 'Attachment body text');
 
         $this->actingAs($user)
             ->get(route('email-sync.attachments.download', [
@@ -599,7 +599,7 @@ class EmailSyncTest extends TestCase
             'file_size' => 16,
         ]);
 
-        Storage::disk('local')->put($attachment->storage_path, 'fake-image-bytes');
+        Storage::disk('s3')->put($attachment->storage_path, 'fake-image-bytes');
 
         $this->actingAs($user)
             ->get(route('email-sync.rendered', ['syncedEmail' => $email]))
@@ -832,7 +832,7 @@ class EmailSyncTest extends TestCase
             'file_size' => 21,
         ]);
 
-        Storage::disk('local')->put($attachment->storage_path, 'Attachment body text');
+        Storage::disk('s3')->put($attachment->storage_path, 'Attachment body text');
 
         $this->actingAs($viewer)
             ->get(route('email-sync.attachments.download', [

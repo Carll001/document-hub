@@ -35,7 +35,7 @@ class PdfMergeServiceTest extends TestCase
             ]);
         } finally {
             $this->assertDatabaseCount('merged_pdfs', 0);
-            $this->assertSame([], Storage::disk('local')->allFiles('doc-merge/'.$user->id));
+            $this->assertSame([], Storage::disk('s3')->allFiles('doc-merge/'.$user->id));
         }
     }
 

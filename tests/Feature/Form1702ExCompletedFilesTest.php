@@ -397,8 +397,8 @@ class Form1702ExCompletedFilesTest extends TestCase
             ->assertSessionHas('success', 'Completed file cancelled and removed.');
 
         $this->assertNull($completedRow->fresh());
-        Storage::disk('local')->assertMissing($generatedPdfPath);
-        Storage::disk('local')->assertMissing($receiptPath);
+        Storage::disk('s3')->assertMissing($generatedPdfPath);
+        Storage::disk('s3')->assertMissing($receiptPath);
 
         $syncedEmail->refresh();
 
@@ -786,18 +786,18 @@ class Form1702ExCompletedFilesTest extends TestCase
         $generatedPdfPath = 'forms/'.$batch->user_id.'/1702-ex/batches/'.$batch->id.'/'.uniqid('generated-', true).'.pdf';
         $receiptPath = 'forms/'.$batch->user_id.'/1702-ex/receipts/'.$batch->id.'/'.uniqid('receipt-', true).'.pdf';
 
-        Storage::disk('local')->put($generatedPdfPath, 'fake completed pdf');
-        Storage::disk('local')->put($receiptPath, 'fake receipt pdf');
+        Storage::disk('s3')->put($generatedPdfPath, 'fake completed pdf');
+        Storage::disk('s3')->put($receiptPath, 'fake receipt pdf');
 
         return $this->createBatchRow($batch, array_replace([
             'pdf_status' => Form1702ExBatchRow::PDF_STATUS_GENERATED,
             'generated_pdf_file_name' => 'completed-row.pdf',
             'generated_pdf_storage_path' => $generatedPdfPath,
-            'generated_pdf_file_size' => Storage::disk('local')->size($generatedPdfPath),
+            'generated_pdf_file_size' => Storage::disk('s3')->size($generatedPdfPath),
             'generated_at' => now(),
             'receipt_file_name' => 'completed-row-receipt.pdf',
             'receipt_storage_path' => $receiptPath,
-            'receipt_file_size' => Storage::disk('local')->size($receiptPath),
+            'receipt_file_size' => Storage::disk('s3')->size($receiptPath),
         ], $overrides));
     }
 

@@ -62,11 +62,11 @@ class ClientPortalController extends Controller
 
         abort_unless(
             filled($row->generated_pdf_storage_path)
-            && Storage::disk('local')->exists((string) $row->generated_pdf_storage_path),
+            && Storage::disk('s3')->exists((string) $row->generated_pdf_storage_path),
             404,
         );
 
-        return Storage::disk('local')->response(
+        return Storage::disk('s3')->response(
             (string) $row->generated_pdf_storage_path,
             (string) ($row->generated_pdf_file_name ?? '1702-ex.pdf'),
             [
@@ -82,11 +82,11 @@ class ClientPortalController extends Controller
 
         abort_unless(
             filled($row->generated_pdf_storage_path)
-            && Storage::disk('local')->exists((string) $row->generated_pdf_storage_path),
+            && Storage::disk('s3')->exists((string) $row->generated_pdf_storage_path),
             404,
         );
 
-        return Storage::disk('local')->download(
+        return Storage::disk('s3')->download(
             (string) $row->generated_pdf_storage_path,
             (string) ($row->generated_pdf_file_name ?? '1702-ex.pdf'),
         );

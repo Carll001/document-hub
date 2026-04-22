@@ -36,7 +36,7 @@ class DocMergeBatch extends Model
             $batch->bulkMergeFailures()->delete();
             $batch->sourceFiles()->get()->each->delete();
 
-            Storage::disk('local')->deleteDirectory(
+            Storage::disk('s3')->deleteDirectory(
                 sprintf('doc-merge/%d/batches/%d', $batch->user_id, $batch->id),
             );
         });

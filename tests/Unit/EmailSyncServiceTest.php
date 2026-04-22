@@ -59,7 +59,7 @@ class EmailSyncServiceTest extends TestCase
 
         $attachment = SyncedEmailAttachment::query()->firstOrFail();
 
-        Storage::disk('local')->assertExists($attachment->storage_path);
+        Storage::disk('s3')->assertExists($attachment->storage_path);
     }
 
     public function test_incremental_sync_only_fetches_uids_newer_than_the_latest_saved_email()

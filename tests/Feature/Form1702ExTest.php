@@ -318,18 +318,18 @@ class Form1702ExTest extends TestCase
         $generatedPdfPath = 'forms/'.$staff->id.'/1702-ex/batches/'.$batch->id.'/completed-row.pdf';
         $receiptPath = 'forms/'.$staff->id.'/1702-ex/receipts/'.$batch->id.'/completed-row-receipt.pdf';
 
-        Storage::disk('local')->put($generatedPdfPath, 'fake generated pdf');
-        Storage::disk('local')->put($receiptPath, 'fake receipt pdf');
+        Storage::disk('s3')->put($generatedPdfPath, 'fake generated pdf');
+        Storage::disk('s3')->put($receiptPath, 'fake receipt pdf');
 
         $receiptOwner = $this->createBatchRow($batch, [
             'pdf_status' => Form1702ExBatchRow::PDF_STATUS_GENERATED,
             'generated_pdf_file_name' => 'completed-row.pdf',
             'generated_pdf_storage_path' => $generatedPdfPath,
-            'generated_pdf_file_size' => Storage::disk('local')->size($generatedPdfPath),
+            'generated_pdf_file_size' => Storage::disk('s3')->size($generatedPdfPath),
             'generated_at' => now(),
             'receipt_file_name' => 'completed-row-receipt.pdf',
             'receipt_storage_path' => $receiptPath,
-            'receipt_file_size' => Storage::disk('local')->size($receiptPath),
+            'receipt_file_size' => Storage::disk('s3')->size($receiptPath),
             'payload' => array_replace($this->validPayload(), [
                 'tin' => '0101112220000',
             ]),
@@ -653,7 +653,7 @@ class Form1702ExTest extends TestCase
         ]);
         $oldStoragePath = 'forms/'.$staff->id.'/1702-ex/batches/'.$batch->id.'/old-row.pdf';
 
-        Storage::disk('local')->put($oldStoragePath, 'old pdf');
+        Storage::disk('s3')->put($oldStoragePath, 'old pdf');
 
         $oldRow = $this->createBatchRow($batch, [
             'source_name' => 'old.csv',
@@ -662,7 +662,7 @@ class Form1702ExTest extends TestCase
             'pdf_status' => Form1702ExBatchRow::PDF_STATUS_GENERATED,
             'generated_pdf_file_name' => 'old-row.pdf',
             'generated_pdf_storage_path' => $oldStoragePath,
-            'generated_pdf_file_size' => Storage::disk('local')->size($oldStoragePath),
+            'generated_pdf_file_size' => Storage::disk('s3')->size($oldStoragePath),
             'generated_at' => Carbon::parse('2026-04-08 09:05:00'),
         ]);
 
@@ -687,7 +687,7 @@ class Form1702ExTest extends TestCase
         $this->assertDatabaseMissing('form_1702_ex_batch_rows', [
             'id' => $oldRow->id,
         ]);
-        Storage::disk('local')->assertMissing($oldStoragePath);
+        Storage::disk('s3')->assertMissing($oldStoragePath);
         $this->assertSame(1, $batch->rows()->count());
     }
 
@@ -776,13 +776,13 @@ class Form1702ExTest extends TestCase
         ]);
         $storagePath = 'forms/'.$owner->id.'/1702-ex/batches/'.$batch->id.'/secure-row.pdf';
 
-        Storage::disk('local')->put($storagePath, 'secured pdf');
+        Storage::disk('s3')->put($storagePath, 'secured pdf');
 
         $row = $this->createBatchRow($batch, [
             'pdf_status' => Form1702ExBatchRow::PDF_STATUS_GENERATED,
             'generated_pdf_file_name' => 'secure-row.pdf',
             'generated_pdf_storage_path' => $storagePath,
-            'generated_pdf_file_size' => Storage::disk('local')->size($storagePath),
+            'generated_pdf_file_size' => Storage::disk('s3')->size($storagePath),
             'generated_at' => now(),
         ]);
 
@@ -884,7 +884,7 @@ class Form1702ExTest extends TestCase
         ]);
 
         $completedPath = 'forms/'.$staff->id.'/1702-ex/batches/'.$batch->id.'/completed-export.pdf';
-        Storage::disk('local')->put($completedPath, 'completed pdf');
+        Storage::disk('s3')->put($completedPath, 'completed pdf');
 
         $this->createBatchRow($batch, [
             'source_name' => 'import-completed.csv',
@@ -896,7 +896,7 @@ class Form1702ExTest extends TestCase
             'pdf_status' => Form1702ExBatchRow::PDF_STATUS_GENERATED,
             'generated_pdf_file_name' => 'completed-export.pdf',
             'generated_pdf_storage_path' => $completedPath,
-            'generated_pdf_file_size' => Storage::disk('local')->size($completedPath),
+            'generated_pdf_file_size' => Storage::disk('s3')->size($completedPath),
             'generated_at' => Carbon::parse('2026-04-12 09:15:00'),
             'receipt_file_name' => 'completed-receipt.pdf',
             'receipt_storage_path' => 'forms/'.$staff->id.'/1702-ex/receipts/'.$batch->id.'/completed-receipt.pdf',

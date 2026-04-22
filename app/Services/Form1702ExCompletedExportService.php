@@ -51,7 +51,7 @@ class Form1702ExCompletedExportService
         if ($status === self::STATUS_READY) {
             $storagePath = is_string($state['storagePath'] ?? null) ? $state['storagePath'] : null;
 
-            if ($storagePath === null || ! Storage::disk('local')->exists($storagePath)) {
+            if ($storagePath === null || ! Storage::disk('s3')->exists($storagePath)) {
                 $this->forgetState($userId);
 
                 return $this->emptyState();
@@ -82,7 +82,7 @@ class Form1702ExCompletedExportService
             $storagePath = $cached['storagePath'] ?? null;
 
             if (is_string($storagePath) && $storagePath !== '') {
-                Storage::disk('local')->delete($storagePath);
+                Storage::disk('s3')->delete($storagePath);
             }
         }
 
@@ -96,11 +96,11 @@ class Form1702ExCompletedExportService
     public function buildZip(Collection $rows, int $userId): array
     {
         $directory = "tmp/form-1702-ex-completed-exports/user-{$userId}";
-        Storage::disk('local')->makeDirectory($directory);
+        Storage::disk('s3')->makeDirectory($directory);
 
         $fileName = '1702-ex-completed-files-'.Str::uuid().'.zip';
         $storagePath = "{$directory}/{$fileName}";
-        $archivePath = Storage::disk('local')->path($storagePath);
+        $archivePath = Storage::disk('s3')->path($storagePath);
 
         $archive = new ZipArchive;
 
@@ -109,7 +109,7 @@ class Form1702ExCompletedExportService
         }
 
         $usedPaths = [];
-        $disk = Storage::disk('local');
+        $disk = Storage::disk('s3');
         $includedRows = 0;
 
         foreach ($rows as $row) {

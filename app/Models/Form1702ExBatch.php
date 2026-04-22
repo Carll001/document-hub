@@ -63,7 +63,7 @@ class Form1702ExBatch extends Model
             $batch->rows()->get()->each->delete();
 
             if (filled($batch->import_source_path)) {
-                Storage::disk('local')->delete((string) $batch->import_source_path);
+                Storage::disk('s3')->delete((string) $batch->import_source_path);
             }
         });
     }

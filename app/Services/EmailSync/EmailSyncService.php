@@ -184,7 +184,7 @@ class EmailSyncService
      */
     private function syncAttachments(SyncedEmail $email, array $attachments): void
     {
-        $disk = Storage::disk('local');
+        $disk = Storage::disk('s3');
         $directory = "email-sync/shared/{$email->id}";
 
         $disk->deleteDirectory($directory);

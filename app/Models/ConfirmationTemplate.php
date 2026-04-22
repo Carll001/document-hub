@@ -27,7 +27,7 @@ class ConfirmationTemplate extends Model
     {
         static::deleting(function (self $template): void {
             if (filled($template->storage_path)) {
-                Storage::disk('local')->delete($template->storage_path);
+                Storage::disk('s3')->delete($template->storage_path);
             }
         });
     }

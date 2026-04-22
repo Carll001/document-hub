@@ -194,7 +194,7 @@ class EmailSyncController extends Controller
     {
         $this->abortUnlessOwnsAttachment($request, $syncedEmail, $attachment);
 
-        return Storage::disk('local')->download(
+        return Storage::disk('s3')->download(
             $attachment->storage_path,
             $attachment->file_name,
         );
@@ -204,7 +204,7 @@ class EmailSyncController extends Controller
     {
         $this->abortUnlessOwnsAttachment($request, $syncedEmail, $attachment);
 
-        return Storage::disk('local')->response(
+        return Storage::disk('s3')->response(
             $attachment->storage_path,
             $attachment->file_name,
             [

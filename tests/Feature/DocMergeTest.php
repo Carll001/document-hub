@@ -105,7 +105,7 @@ class DocMergeTest extends TestCase
         $this->assertNotNull($sharedTemplate->storage_path);
         $this->assertNotNull($sharedTemplate->file_size);
         $this->assertSame($user->id, $sharedTemplate->uploaded_by_user_id);
-        Storage::disk('local')->assertExists($sharedTemplate->storage_path);
+        Storage::disk('s3')->assertExists($sharedTemplate->storage_path);
 
         $this->actingAs($user)
             ->get(route('doc-merge.index'))
@@ -142,7 +142,7 @@ class DocMergeTest extends TestCase
             'source_file_names' => ['quote.pdf', 'invoice.pdf'],
         ]);
 
-        Storage::disk('local')->put(
+        Storage::disk('s3')->put(
             $otherMergedPdf->storage_path,
             $this->makePdfContents([[210.0, 297.0]]),
         );
@@ -242,7 +242,7 @@ class DocMergeTest extends TestCase
             'tin_number' => '123-456-789-000',
         ]);
 
-        Storage::disk('local')->put(
+        Storage::disk('s3')->put(
             $mergedPdf->storage_path,
             $this->makePdfContents([[210.0, 297.0]]),
         );
@@ -292,19 +292,19 @@ class DocMergeTest extends TestCase
             'invoice.pdf',
             'Receipt: expense-packet-receipt.pdf',
         ], $mergedPdf->source_file_names);
-        Storage::disk('local')->assertExists($mergedPdf->receipt_storage_path);
+        Storage::disk('s3')->assertExists($mergedPdf->receipt_storage_path);
         $this->assertCount(
             2,
             $this->mergedPdfDimensions(
-                Storage::disk('local')->path($mergedPdf->storage_path),
+                Storage::disk('s3')->path($mergedPdf->storage_path),
             ),
         );
 
         $receiptText = app(PdfTextExtractionService::class)->extractText(
-            Storage::disk('local')->path($mergedPdf->receipt_storage_path),
+            Storage::disk('s3')->path($mergedPdf->receipt_storage_path),
         );
         $mergedText = app(PdfTextExtractionService::class)->extractText(
-            Storage::disk('local')->path($mergedPdf->storage_path),
+            Storage::disk('s3')->path($mergedPdf->storage_path),
         );
 
         $this->assertStringContainsString('Acme Corp', $receiptText);
@@ -335,7 +335,7 @@ class DocMergeTest extends TestCase
             'source_file_names' => ['quote.pdf', 'invoice.pdf'],
         ]);
 
-        Storage::disk('local')->put(
+        Storage::disk('s3')->put(
             $mergedPdf->storage_path,
             $this->makePdfContents([[210.0, 297.0]]),
         );
@@ -391,7 +391,7 @@ class DocMergeTest extends TestCase
         $this->assertSame('custom-merged.pdf', $mergedPdf->file_name);
         $this->assertSame(2, $mergedPdf->source_count);
         $this->assertSame(['intro.pdf', 'appendix.pdf'], $mergedPdf->source_file_names);
-        Storage::disk('local')->assertExists($mergedPdf->storage_path);
+        Storage::disk('s3')->assertExists($mergedPdf->storage_path);
     }
 
     public function test_authenticated_users_can_extract_a_tin_number_and_apply_footer_text()
@@ -428,7 +428,7 @@ class DocMergeTest extends TestCase
         $this->assertSame('Prepared for internal filing', $mergedPdf->footer_text);
 
         $pdfText = app(PdfTextExtractionService::class)->extractText(
-            Storage::disk('local')->path($mergedPdf->storage_path),
+            Storage::disk('s3')->path($mergedPdf->storage_path),
         );
 
         $this->assertStringContainsString('123-456-789-000', $pdfText);
@@ -470,7 +470,7 @@ class DocMergeTest extends TestCase
             ->assertSessionHas('success', 'Merged PDF saved as ordered-output.pdf.');
 
         $mergedPdf = MergedPdf::query()->firstOrFail();
-        $dimensions = $this->mergedPdfDimensions(Storage::disk('local')->path($mergedPdf->storage_path));
+        $dimensions = $this->mergedPdfDimensions(Storage::disk('s3')->path($mergedPdf->storage_path));
 
         $this->assertCount(4, $dimensions);
         $this->assertGreaterThan($dimensions[0]['height'], $dimensions[0]['width']);
@@ -496,13 +496,13 @@ class DocMergeTest extends TestCase
             'source_file_names' => ['part-a.pdf', 'part-b.pdf'],
         ]);
 
-        Storage::disk('local')->put(
+        Storage::disk('s3')->put(
             $original->storage_path,
             $this->makePdfContents([[210.0, 297.0], [210.0, 297.0]]),
         );
 
         $original->update([
-            'file_size' => Storage::disk('local')->size($original->storage_path),
+            'file_size' => Storage::disk('s3')->size($original->storage_path),
         ]);
 
         $this->actingAs($user)
@@ -605,7 +605,7 @@ class DocMergeTest extends TestCase
             'source_file_names' => ['foreign.pdf'],
         ]);
 
-        Storage::disk('local')->put(
+        Storage::disk('s3')->put(
             $foreignMergedPdf->storage_path,
             $this->makePdfContents(),
         );
@@ -641,7 +641,7 @@ class DocMergeTest extends TestCase
             'source_file_names' => ['a.pdf', 'b.pdf'],
         ]);
 
-        Storage::disk('local')->put(
+        Storage::disk('s3')->put(
             $mergedPdf->storage_path,
             $this->makePdfContents(),
         );
@@ -673,7 +673,7 @@ class DocMergeTest extends TestCase
             'source_file_names' => ['a.pdf', 'b.pdf'],
         ]);
 
-        Storage::disk('local')->put(
+        Storage::disk('s3')->put(
             $mergedPdf->storage_path,
             $this->makePdfContents(),
         );
@@ -705,11 +705,11 @@ class DocMergeTest extends TestCase
             'receipt_file_size' => 1234,
         ]);
 
-        Storage::disk('local')->put(
+        Storage::disk('s3')->put(
             $mergedPdf->storage_path,
             $this->makePdfContents(),
         );
-        Storage::disk('local')->put(
+        Storage::disk('s3')->put(
             $mergedPdf->receipt_storage_path,
             'receipt contents',
         );
@@ -726,8 +726,8 @@ class DocMergeTest extends TestCase
         $this->assertDatabaseMissing('merged_pdfs', [
             'id' => $mergedPdf->id,
         ]);
-        Storage::disk('local')->assertMissing($mergedPdf->storage_path);
-        Storage::disk('local')->assertMissing($mergedPdf->receipt_storage_path);
+        Storage::disk('s3')->assertMissing($mergedPdf->storage_path);
+        Storage::disk('s3')->assertMissing($mergedPdf->receipt_storage_path);
     }
 
     public function test_authenticated_users_can_bulk_delete_saved_merged_pdfs()
@@ -753,11 +753,11 @@ class DocMergeTest extends TestCase
             'source_file_names' => ['c.pdf', 'd.pdf'],
         ]);
 
-        Storage::disk('local')->put(
+        Storage::disk('s3')->put(
             $firstMergedPdf->storage_path,
             $this->makePdfContents(),
         );
-        Storage::disk('local')->put(
+        Storage::disk('s3')->put(
             $secondMergedPdf->storage_path,
             $this->makePdfContents(),
         );
@@ -804,11 +804,11 @@ class DocMergeTest extends TestCase
             'source_file_names' => ['c.pdf', 'd.pdf'],
         ]);
 
-        Storage::disk('local')->put(
+        Storage::disk('s3')->put(
             $ownedMergedPdf->storage_path,
             $this->makePdfContents(),
         );
-        Storage::disk('local')->put(
+        Storage::disk('s3')->put(
             $foreignMergedPdf->storage_path,
             $this->makePdfContents(),
         );
@@ -849,7 +849,7 @@ class DocMergeTest extends TestCase
             'source_file_names' => ['quote.pdf', 'invoice.pdf'],
         ]);
 
-        Storage::disk('local')->put(
+        Storage::disk('s3')->put(
             $mergedPdf->storage_path,
             $this->makePdfContents([[210.0, 297.0]]),
         );
@@ -886,11 +886,11 @@ class DocMergeTest extends TestCase
             ['quote.pdf', 'invoice.pdf', 'Receipt: expense-packet-receipt.pdf'],
             $mergedPdf->source_file_names,
         );
-        Storage::disk('local')->assertExists($mergedPdf->receipt_storage_path);
+        Storage::disk('s3')->assertExists($mergedPdf->receipt_storage_path);
         $this->assertCount(
             2,
             $this->mergedPdfDimensions(
-                Storage::disk('local')->path($mergedPdf->storage_path),
+                Storage::disk('s3')->path($mergedPdf->storage_path),
             ),
         );
 
@@ -898,7 +898,7 @@ class DocMergeTest extends TestCase
         $this->assertStringContainsString(
             'Acme Corp',
             app(PdfTextExtractionService::class)->extractText(
-                Storage::disk('local')->path($mergedPdf->receipt_storage_path),
+                Storage::disk('s3')->path($mergedPdf->receipt_storage_path),
             ),
         );
 
@@ -929,16 +929,16 @@ class DocMergeTest extends TestCase
             ['quote.pdf', 'invoice.pdf', 'Receipt: expense-packet-receipt.pdf'],
             $mergedPdf->source_file_names,
         );
-        Storage::disk('local')->assertMissing($firstReceiptPath);
-        Storage::disk('local')->assertExists($mergedPdf->receipt_storage_path);
+        Storage::disk('s3')->assertMissing($firstReceiptPath);
+        Storage::disk('s3')->assertExists($mergedPdf->receipt_storage_path);
         $this->assertCount(
             2,
             $this->mergedPdfDimensions(
-                Storage::disk('local')->path($mergedPdf->storage_path),
+                Storage::disk('s3')->path($mergedPdf->storage_path),
             ),
         );
         $updatedReceiptText = app(PdfTextExtractionService::class)->extractText(
-            Storage::disk('local')->path($mergedPdf->receipt_storage_path),
+            Storage::disk('s3')->path($mergedPdf->receipt_storage_path),
         );
 
         $this->assertStringContainsString('Globex', $updatedReceiptText);
@@ -1001,7 +1001,7 @@ class DocMergeTest extends TestCase
         $mergedPdf->refresh();
 
         $withReceiptText = app(PdfTextExtractionService::class)->extractText(
-            Storage::disk('local')->path($mergedPdf->storage_path),
+            Storage::disk('s3')->path($mergedPdf->storage_path),
         );
 
         $this->assertSame('123-456-789-000', $mergedPdf->tin_number);
@@ -1018,7 +1018,7 @@ class DocMergeTest extends TestCase
         $mergedPdf->refresh();
 
         $restoredText = app(PdfTextExtractionService::class)->extractText(
-            Storage::disk('local')->path($mergedPdf->storage_path),
+            Storage::disk('s3')->path($mergedPdf->storage_path),
         );
 
         $this->assertSame('123-456-789-000', $mergedPdf->tin_number);
@@ -1042,7 +1042,7 @@ class DocMergeTest extends TestCase
             'source_file_names' => ['quote.pdf', 'invoice.pdf'],
         ]);
 
-        Storage::disk('local')->put(
+        Storage::disk('s3')->put(
             $mergedPdf->storage_path,
             $this->makePdfContents([[210.0, 297.0]]),
         );
@@ -1078,11 +1078,11 @@ class DocMergeTest extends TestCase
             'receipt_file_size' => 12345,
         ]);
 
-        Storage::disk('local')->put(
+        Storage::disk('s3')->put(
             $mergedPdf->storage_path,
             $this->makePdfContents(),
         );
-        Storage::disk('local')->put(
+        Storage::disk('s3')->put(
             $mergedPdf->receipt_storage_path,
             'receipt contents',
         );
@@ -1112,7 +1112,7 @@ class DocMergeTest extends TestCase
             'source_file_names' => ['quote.pdf', 'invoice.pdf'],
         ]);
 
-        Storage::disk('local')->put(
+        Storage::disk('s3')->put(
             $mergedPdf->storage_path,
             $this->makePdfContents([[210.0, 297.0]]),
         );
@@ -1144,7 +1144,7 @@ class DocMergeTest extends TestCase
         $this->assertCount(
             2,
             $this->mergedPdfDimensions(
-                Storage::disk('local')->path($mergedPdf->storage_path),
+                Storage::disk('s3')->path($mergedPdf->storage_path),
             ),
         );
 
@@ -1163,10 +1163,10 @@ class DocMergeTest extends TestCase
         $this->assertCount(
             1,
             $this->mergedPdfDimensions(
-                Storage::disk('local')->path($mergedPdf->storage_path),
+                Storage::disk('s3')->path($mergedPdf->storage_path),
             ),
         );
-        Storage::disk('local')->assertMissing((string) $receiptStoragePath);
+        Storage::disk('s3')->assertMissing((string) $receiptStoragePath);
     }
 
     public function test_receipt_generation_returns_a_friendly_error_when_pdf_conversion_fails()
@@ -1184,7 +1184,7 @@ class DocMergeTest extends TestCase
             'source_file_names' => ['quote.pdf', 'invoice.pdf'],
         ]);
 
-        Storage::disk('local')->put(
+        Storage::disk('s3')->put(
             $mergedPdf->storage_path,
             $this->makePdfContents([[210.0, 297.0]]),
         );
@@ -1256,13 +1256,13 @@ class DocMergeTest extends TestCase
             'source_file_names' => ['chapter-1.pdf', 'chapter-2.pdf'],
         ]);
 
-        Storage::disk('local')->put(
+        Storage::disk('s3')->put(
             $mergedPdf->storage_path,
             $this->makePdfContents([[210.0, 297.0], [210.0, 297.0]]),
         );
 
         $mergedPdf->update([
-            'file_size' => Storage::disk('local')->size($mergedPdf->storage_path),
+            'file_size' => Storage::disk('s3')->size($mergedPdf->storage_path),
         ]);
 
         $cases = [
@@ -1442,7 +1442,7 @@ class DocMergeTest extends TestCase
             'source_file_names' => ['page-1.pdf', 'page-2.pdf'],
         ]);
 
-        Storage::disk('local')->put(
+        Storage::disk('s3')->put(
             $mergedPdf->storage_path,
             $this->makePdfContents(),
         );

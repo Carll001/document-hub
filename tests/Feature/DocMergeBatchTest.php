@@ -131,13 +131,13 @@ class DocMergeBatchTest extends TestCase
         ]);
         $storagePath = 'doc-merge/shared/confirmation-template/shared-template.docx';
 
-        Storage::disk('local')->put($storagePath, 'placeholder');
+        Storage::disk('s3')->put($storagePath, 'placeholder');
 
         ConfirmationTemplate::query()->create([
             'key' => ConfirmationTemplate::SHARED_KEY,
             'file_name' => 'shared-template.docx',
             'storage_path' => $storagePath,
-            'file_size' => Storage::disk('local')->size($storagePath),
+            'file_size' => Storage::disk('s3')->size($storagePath),
             'uploaded_by_user_id' => $uploader->id,
         ]);
 
@@ -339,7 +339,7 @@ class DocMergeBatchTest extends TestCase
         $this->assertNull($batch->processing_status);
         $this->assertNull($batch->processing_error);
         $this->assertNotNull($batch->last_processed_at);
-        Storage::disk('local')->assertExists($mergedPdf->storage_path);
+        Storage::disk('s3')->assertExists($mergedPdf->storage_path);
     }
 
     public function test_batch_processing_jobs_record_failures_and_leave_last_processed_at_unchanged(): void
@@ -462,11 +462,11 @@ class DocMergeBatchTest extends TestCase
             'source_file_names' => ['Outside 1.pdf', 'Outside 2.pdf'],
         ]);
 
-        Storage::disk('local')->put(
+        Storage::disk('s3')->put(
             $mergedPdf->storage_path,
             $this->makePdfContents(),
         );
-        Storage::disk('local')->put(
+        Storage::disk('s3')->put(
             $outsideBatchPdf->storage_path,
             $this->makePdfContents(),
         );

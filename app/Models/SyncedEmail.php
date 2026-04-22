@@ -43,7 +43,7 @@ class SyncedEmail extends Model
     protected static function booted(): void
     {
         static::deleting(function (self $email): void {
-            Storage::disk('local')->deleteDirectory("email-sync/shared/{$email->id}");
+            Storage::disk('s3')->deleteDirectory("email-sync/shared/{$email->id}");
         });
     }
 

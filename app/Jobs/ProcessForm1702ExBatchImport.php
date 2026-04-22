@@ -49,7 +49,7 @@ class ProcessForm1702ExBatchImport implements ShouldQueue
             $importSourcePath = $batch->import_source_path;
             $importSourceName = $batch->import_source_name;
 
-            if (! is_string($importSourcePath) || $importSourcePath === '' || ! Storage::disk('local')->exists($importSourcePath)) {
+            if (! is_string($importSourcePath) || $importSourcePath === '' || ! Storage::disk('s3')->exists($importSourcePath)) {
                 throw new \RuntimeException('The uploaded spreadsheet could not be found. Please upload it again.');
             }
 
@@ -63,7 +63,7 @@ class ProcessForm1702ExBatchImport implements ShouldQueue
             $basePayload['footer_printed_date'] = $batch->footer_printed_date;
 
             $import = $form1702ExImportService->importStoredFile(
-                Storage::disk('local')->path($importSourcePath),
+                Storage::disk('s3')->path($importSourcePath),
                 $importSourceName,
                 $basePayload,
             );
@@ -111,7 +111,7 @@ class ProcessForm1702ExBatchImport implements ShouldQueue
             $batch->refresh();
 
             if (is_string($batch->import_source_path) && $batch->import_source_path !== '') {
-                Storage::disk('local')->delete($batch->import_source_path);
+                Storage::disk('s3')->delete($batch->import_source_path);
 
                 $batch->forceFill([
                     'import_source_path' => null,

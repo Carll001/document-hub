@@ -319,7 +319,7 @@ class DocMergeController extends Controller
         /** @var UploadedFile $template */
         $template = $validated['template'];
         $user = $request->user();
-        $disk = Storage::disk('local');
+        $disk = Storage::disk('s3');
         $sharedTemplate = ConfirmationTemplate::query()
             ->firstOrNew(['key' => ConfirmationTemplate::SHARED_KEY]);
         $safeFileName = $this->safeDocxFilename(
@@ -391,7 +391,7 @@ class DocMergeController extends Controller
      */
     public function downloadConfirmationTemplate(Request $request): StreamedResponse
     {
-        $disk = Storage::disk('local');
+        $disk = Storage::disk('s3');
         $template = ConfirmationTemplate::shared();
 
         abort_unless(
@@ -415,7 +415,7 @@ class DocMergeController extends Controller
     {
         abort_unless($mergedPdf->user->is($request->user()), 404);
 
-        return Storage::disk('local')->download(
+        return Storage::disk('s3')->download(
             $mergedPdf->storage_path,
             $mergedPdf->file_name,
         );
@@ -428,7 +428,7 @@ class DocMergeController extends Controller
     {
         abort_unless($mergedPdf->user->is($request->user()), 404);
 
-        return Storage::disk('local')->response(
+        return Storage::disk('s3')->response(
             $mergedPdf->storage_path,
             $mergedPdf->file_name,
             [
@@ -567,11 +567,11 @@ class DocMergeController extends Controller
         abort_unless(
             filled($mergedPdf->receipt_storage_path)
                 && filled($mergedPdf->receipt_file_name)
-                && Storage::disk('local')->exists($mergedPdf->receipt_storage_path),
+                && Storage::disk('s3')->exists($mergedPdf->receipt_storage_path),
             404,
         );
 
-        return Storage::disk('local')->download(
+        return Storage::disk('s3')->download(
             $mergedPdf->receipt_storage_path,
             $mergedPdf->receipt_file_name,
         );
@@ -602,7 +602,7 @@ class DocMergeController extends Controller
                 ->with('error', "There is no receipt attached to {$mergedPdf->file_name}.");
         }
 
-        $disk = Storage::disk('local');
+        $disk = Storage::disk('s3');
         $previousReceiptPath = $mergedPdf->receipt_storage_path;
 
         try {
@@ -657,7 +657,7 @@ class DocMergeController extends Controller
         $recipientEmail = trim((string) $validated['recipientEmail']);
         $subject = $this->normalizeOptionalText($validated['subject'] ?? null);
         $message = $this->normalizeOptionalText($validated['message'] ?? null);
-        $disk = Storage::disk('local');
+        $disk = Storage::disk('s3');
 
         if (! $disk->exists($mergedPdf->storage_path)) {
             return $this->redirectToMergedPdfContext($mergedPdf)
@@ -828,7 +828,7 @@ class DocMergeController extends Controller
     {
         $template = ConfirmationTemplate::shared();
         $storagePath = $template?->storage_path;
-        $disk = Storage::disk('local');
+        $disk = Storage::disk('s3');
 
         if (! filled($storagePath) || ! $disk->exists($storagePath)) {
             return [
@@ -873,7 +873,7 @@ class DocMergeController extends Controller
         $resolvedSources = [];
         $uploadIndex = 0;
         $errors = [];
-        $disk = Storage::disk('local');
+        $disk = Storage::disk('s3');
 
         foreach ($validated['sources'] as $index => $source) {
             $sourceType = $source['type'];
@@ -1063,7 +1063,7 @@ class DocMergeController extends Controller
     private function storedConfirmationTemplatePath(): ?string
     {
         $storagePath = ConfirmationTemplate::shared()?->storage_path;
-        $disk = Storage::disk('local');
+        $disk = Storage::disk('s3');
 
         if (! filled($storagePath) || ! $disk->exists($storagePath)) {
             return null;
@@ -1078,7 +1078,7 @@ class DocMergeController extends Controller
     private function storedConfirmationTemplateStoragePath(): ?string
     {
         $storagePath = ConfirmationTemplate::shared()?->storage_path;
-        $disk = Storage::disk('local');
+        $disk = Storage::disk('s3');
 
         if (! filled($storagePath) || ! $disk->exists($storagePath)) {
             return null;

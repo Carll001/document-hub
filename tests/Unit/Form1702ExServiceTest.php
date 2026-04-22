@@ -50,10 +50,10 @@ class Form1702ExServiceTest extends TestCase
 
         $this->assertSame(Form1702ExBatchRow::PDF_STATUS_GENERATED, $generatedRow->pdf_status);
         $this->assertNotNull($generatedRow->generated_pdf_storage_path);
-        Storage::disk('local')->assertExists((string) $generatedRow->generated_pdf_storage_path);
+        Storage::disk('s3')->assertExists((string) $generatedRow->generated_pdf_storage_path);
 
         $pdfText = app(PdfTextExtractionService::class)->extractText(
-            Storage::disk('local')->path((string) $generatedRow->generated_pdf_storage_path),
+            Storage::disk('s3')->path((string) $generatedRow->generated_pdf_storage_path),
         );
 
         $this->assertStringContainsString('FOUNDATION FOR COMMUNITY GROWTH, INC.', $pdfText);

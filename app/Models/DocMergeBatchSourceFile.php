@@ -27,7 +27,7 @@ class DocMergeBatchSourceFile extends Model
     protected static function booted(): void
     {
         static::deleting(function (self $sourceFile): void {
-            Storage::disk('local')->delete($sourceFile->storage_path);
+            Storage::disk('s3')->delete($sourceFile->storage_path);
         });
     }
 

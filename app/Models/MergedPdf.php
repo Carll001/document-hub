@@ -40,7 +40,7 @@ class MergedPdf extends Model
     protected static function booted(): void
     {
         static::deleting(function (self $mergedPdf): void {
-            $disk = Storage::disk('local');
+            $disk = Storage::disk('s3');
 
             $disk->delete($mergedPdf->storage_path);
             $disk->deleteDirectory(

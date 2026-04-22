@@ -43,7 +43,7 @@ class PdfMergeService
             throw new RuntimeException('Select at least two PDF files to merge.');
         }
 
-        $disk = Storage::disk('local');
+        $disk = Storage::disk('s3');
         $normalizedOutputName = $this->normalizedOutputName($outputName);
         $normalizedFooterText = $this->normalizeFooterText($footerText);
         $tinNumber = $this->pdfTinExtractorService->extractTinNumber($normalizedSources);
@@ -146,7 +146,7 @@ class PdfMergeService
      */
     public function attachReceipt(MergedPdf $mergedPdf, string $receiptPath): void
     {
-        $disk = Storage::disk('local');
+        $disk = Storage::disk('s3');
         $normalizedFooterText = $this->normalizeFooterText($mergedPdf->footer_text);
 
         if (! $disk->exists($mergedPdf->storage_path)) {
@@ -222,7 +222,7 @@ class PdfMergeService
      */
     public function attachForm1702ExReceipt(Form1702ExBatchRow $row, string $receiptPath): void
     {
-        $disk = Storage::disk('local');
+        $disk = Storage::disk('s3');
         $generatedPdfPath = (string) ($row->generated_pdf_storage_path ?? '');
 
         if ($generatedPdfPath === '' || ! $disk->exists($generatedPdfPath)) {
@@ -274,7 +274,7 @@ class PdfMergeService
      */
     public function removeReceipt(MergedPdf $mergedPdf): void
     {
-        $disk = Storage::disk('local');
+        $disk = Storage::disk('s3');
         $baseStoragePath = $this->receiptBaseStoragePath($mergedPdf);
         $normalizedFooterText = $this->normalizeFooterText($mergedPdf->footer_text);
 
@@ -321,7 +321,7 @@ class PdfMergeService
      */
     public function removeForm1702ExReceipt(Form1702ExBatchRow $row): void
     {
-        $disk = Storage::disk('local');
+        $disk = Storage::disk('s3');
         $generatedPdfPath = (string) ($row->generated_pdf_storage_path ?? '');
         $baseStoragePath = $row->receiptBaseStoragePath();
 
