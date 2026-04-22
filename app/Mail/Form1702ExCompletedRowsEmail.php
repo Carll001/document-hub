@@ -50,7 +50,7 @@ class Form1702ExCompletedRowsEmail extends Mailable implements ShouldQueue
     public function attachments(): array
     {
         return array_map(
-            static fn (array $attachment): Attachment => Attachment::fromStorageDisk('local', $attachment['storagePath'])
+            static fn (array $attachment): Attachment => Attachment::fromStorageDisk('s3', $attachment['storagePath'])
                 ->as($attachment['fileName'])
                 ->withMime('application/pdf'),
             $this->attachmentsData,

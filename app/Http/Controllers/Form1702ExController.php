@@ -423,7 +423,7 @@ class Form1702ExController extends Controller
             $storedPath = $spreadsheet->storeAs(
                 'tmp/form-form1702ex-imports',
                 Str::uuid().($extension !== '' ? ".{$extension}" : ''),
-                'local',
+                's3',
             );
 
             $batch->forceFill([

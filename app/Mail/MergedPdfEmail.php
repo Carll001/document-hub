@@ -55,7 +55,7 @@ class MergedPdfEmail extends Mailable implements ShouldQueue
     public function attachments(): array
     {
         return [
-            Attachment::fromStorageDisk('local', $this->mergedPdf->storage_path)
+            Attachment::fromStorageDisk('s3', $this->mergedPdf->storage_path)
                 ->as($this->mergedPdf->file_name)
                 ->withMime('application/pdf'),
         ];

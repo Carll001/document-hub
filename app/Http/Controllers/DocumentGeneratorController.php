@@ -160,7 +160,7 @@ class DocumentGeneratorController extends Controller
                 $signature?->original_signature_path,
             ]);
 
-            $originalPath = $uploaded->store("document-generator/{$user->id}/signature", 'local');
+            $originalPath = $uploaded->store("document-generator/{$user->id}/signature", 's3');
             $processedTempPath = $signatureImageService->processToTransparentPng(
                 Storage::disk('s3')->path($originalPath),
             );
@@ -521,7 +521,7 @@ class DocumentGeneratorController extends Controller
             return response()->json(['message' => 'Files are required.'], 422);
         }
 
-        $excelPath = $excelFile->store("document-generator/{$request->user()->id}/uploads", 'local');
+        $excelPath = $excelFile->store("document-generator/{$request->user()->id}/uploads", 's3');
         $resolvedTemplates = $this->resolveTemplatesForBatch($request, $defaultTemplateFile);
         $defaultTemplate = $resolvedTemplates['default'];
         $yearTemplatePayload = $resolvedTemplates['year_templates'];
@@ -1149,7 +1149,7 @@ class DocumentGeneratorController extends Controller
 
         $defaultTemplate = DocumentGeneratorTemplate::query()->whereNull('year')->first();
         $oldPath = $defaultTemplate?->template_path;
-        $templatePath = $file->store('document-generator/global-templates', 'local');
+        $templatePath = $file->store('document-generator/global-templates', 's3');
         $templateName = $file->getClientOriginalName();
 
         if ($defaultTemplate) {
@@ -1203,7 +1203,7 @@ class DocumentGeneratorController extends Controller
         $oldPaths = array_values(array_filter([$batch->template_path, $defaultTemplate->template_path]));
 
         DB::transaction(function () use ($request, $batch, $defaultTemplate, $file): void {
-            $templatePath = $file->store("document-generator/{$request->user()->id}/uploads", 'local');
+            $templatePath = $file->store("document-generator/{$request->user()->id}/uploads", 's3');
             $templateName = $file->getClientOriginalName();
 
             $batch->forceFill([
@@ -1243,7 +1243,7 @@ class DocumentGeneratorController extends Controller
             'document_batch_id' => $batch->id,
             'year' => $year,
             'template_name' => $file->getClientOriginalName(),
-            'template_path' => $file->store("document-generator/{$request->user()->id}/uploads", 'local'),
+            'template_path' => $file->store("document-generator/{$request->user()->id}/uploads", 's3'),
         ]);
 
         return response()->json($this->templateMappingBatchPayload($batch->fresh('templates')), 201);
@@ -1275,7 +1275,7 @@ class DocumentGeneratorController extends Controller
             if ($file) {
                 $oldPath = $template->template_path;
                 $updates['template_name'] = $file->getClientOriginalName();
-                $updates['template_path'] = $file->store("document-generator/{$request->user()->id}/uploads", 'local');
+                $updates['template_path'] = $file->store("document-generator/{$request->user()->id}/uploads", 's3');
             }
 
             $template->forceFill($updates)->save();
@@ -1818,7 +1818,7 @@ class DocumentGeneratorController extends Controller
             $templates[] = [
                 'year' => (int) $year,
                 'template_name' => $file->getClientOriginalName(),
-                'template_path' => $file->store("document-generator/{$request->user()->id}/uploads", 'local'),
+                'template_path' => $file->store("document-generator/{$request->user()->id}/uploads", 's3'),
             ];
         }
 
@@ -1840,7 +1840,7 @@ class DocumentGeneratorController extends Controller
         if ($uploadedDefaultTemplateFile) {
             $defaultTemplate = [
                 'template_name' => $uploadedDefaultTemplateFile->getClientOriginalName(),
-                'template_path' => $uploadedDefaultTemplateFile->store("document-generator/{$request->user()->id}/uploads", 'local'),
+                'template_path' => $uploadedDefaultTemplateFile->store("document-generator/{$request->user()->id}/uploads", 's3'),
             ];
         }
 
