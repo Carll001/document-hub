@@ -15,7 +15,7 @@ return [
 
     'default' => env('FILESYSTEM_DISK', 'local'),
 
-    'document_storage_disk' => 's3',
+    'document_storage_disk' => env('DOCUMENT_STORAGE_DISK', 's3'),
 
     /*
     |--------------------------------------------------------------------------
@@ -61,19 +61,6 @@ return [
             'throw' => false,
             'report' => false,
         ],
-
-        'rustfs' => [
-            'driver' => 's3',
-            'key' => env('RUSTFS_ACCESS_KEY_ID'),
-            'secret' => env('RUSTFS_SECRET_ACCESS_KEY'),
-            'region' => env('RUSTFS_REGION', 'us-east-1'),
-            'bucket' => env('RUSTFS_BUCKET'),
-            'endpoint' => env('RUSTFS_ENDPOINT'),
-            'use_path_style_endpoint' => env('RUSTFS_USE_PATH_STYLE_ENDPOINT', true),
-            'throw' => false,
-            'report' => false,
-        ],
-
     ],
 
     /*
