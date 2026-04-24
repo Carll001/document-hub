@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
+use App\Http\Controllers\Concerns\BuildsPaginationPayload;
 use App\Models\Client;
 use App\Models\Company;
 use App\Models\Form1702ExBatchRow;
@@ -18,6 +19,8 @@ use Inertia\Response;
 
 class ClientController extends Controller
 {
+    use BuildsPaginationPayload;
+
     private const COMPANIES_PER_PAGE = 25;
 
     public function __construct(
@@ -295,28 +298,6 @@ class ClientController extends Controller
                 ];
             })
             ->all();
-    }
-
-    /**
-     * @return array{
-     *     currentPage: int,
-     *     lastPage: int,
-     *     perPage: int,
-     *     total: int,
-     *     from: int|null,
-     *     to: int|null
-     * }
-     */
-    private function paginationPayload(LengthAwarePaginator $page): array
-    {
-        return [
-            'currentPage' => $page->currentPage(),
-            'lastPage' => $page->lastPage(),
-            'perPage' => $page->perPage(),
-            'total' => $page->total(),
-            'from' => $page->firstItem(),
-            'to' => $page->lastItem(),
-        ];
     }
 
     private function applyCompleted1702ExScope($query): void

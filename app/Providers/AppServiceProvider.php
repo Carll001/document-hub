@@ -2,6 +2,8 @@
 
 namespace App\Providers;
 
+use App\Contracts\Services\DocumentBatchItemGenerationService as DocumentBatchItemGenerationServiceContract;
+use App\Services\DocumentBatchItemGenerationService;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
@@ -15,7 +17,10 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        //
+        $this->app->bind(
+            DocumentBatchItemGenerationServiceContract::class,
+            DocumentBatchItemGenerationService::class,
+        );
     }
 
     /**

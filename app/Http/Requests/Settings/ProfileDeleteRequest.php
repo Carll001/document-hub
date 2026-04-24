@@ -4,9 +4,9 @@ namespace App\Http\Requests\Settings;
 
 use App\Concerns\PasswordValidationRules;
 use Illuminate\Contracts\Validation\ValidationRule;
-use Illuminate\Foundation\Http\FormRequest;
+use App\Http\Requests\BaseFormRequest;
 
-class ProfileDeleteRequest extends FormRequest
+class ProfileDeleteRequest extends BaseFormRequest
 {
     use PasswordValidationRules;
 

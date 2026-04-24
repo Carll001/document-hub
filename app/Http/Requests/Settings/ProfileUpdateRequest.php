@@ -4,9 +4,9 @@ namespace App\Http\Requests\Settings;
 
 use App\Concerns\ProfileValidationRules;
 use Illuminate\Contracts\Validation\ValidationRule;
-use Illuminate\Foundation\Http\FormRequest;
+use App\Http\Requests\BaseFormRequest;
 
-class ProfileUpdateRequest extends FormRequest
+class ProfileUpdateRequest extends BaseFormRequest
 {
     use ProfileValidationRules;
 

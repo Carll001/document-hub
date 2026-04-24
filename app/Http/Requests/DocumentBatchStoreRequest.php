@@ -4,10 +4,10 @@ namespace App\Http\Requests;
 
 use App\Models\DocumentGeneratorTemplate;
 use Illuminate\Contracts\Validation\ValidationRule;
-use Illuminate\Foundation\Http\FormRequest;
+use App\Http\Requests\BaseFormRequest;
 use Illuminate\Validation\Validator;
 
-class DocumentBatchStoreRequest extends FormRequest
+class DocumentBatchStoreRequest extends BaseFormRequest
 {
     /**
      * Determine if the user is authorized to make this request.

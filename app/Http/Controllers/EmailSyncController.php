@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Controllers\Concerns\BuildsPaginationPayload;
 use App\Jobs\ProcessEmailSyncAccounts;
 use App\Models\EmailSyncAccount;
 use App\Models\SyncedEmail;
@@ -23,6 +24,8 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class EmailSyncController extends Controller
 {
+    use BuildsPaginationPayload;
+
     private const EMAILS_PER_PAGE = 25;
 
     public function index(Request $request): Response
@@ -678,18 +681,6 @@ class EmailSyncController extends Controller
                 ],
             ];
         })->all();
-    }
-
-    private function paginationPayload(LengthAwarePaginator $page): array
-    {
-        return [
-            'currentPage' => $page->currentPage(),
-            'lastPage' => $page->lastPage(),
-            'perPage' => $page->perPage(),
-            'total' => $page->total(),
-            'from' => $page->firstItem(),
-            'to' => $page->lastItem(),
-        ];
     }
 
     private function hasMeaningfulHtmlBody(?string $bodyHtml): bool

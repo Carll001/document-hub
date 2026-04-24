@@ -3,10 +3,10 @@
 namespace App\Http\Requests\Settings;
 
 use Illuminate\Contracts\Validation\ValidationRule;
-use Illuminate\Foundation\Http\FormRequest;
+use App\Http\Requests\BaseFormRequest;
 use Laravel\Fortify\InteractsWithTwoFactorState;
 
-class TwoFactorAuthenticationRequest extends FormRequest
+class TwoFactorAuthenticationRequest extends BaseFormRequest
 {
     use InteractsWithTwoFactorState;
 

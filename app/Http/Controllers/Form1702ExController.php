@@ -49,8 +49,7 @@ class Form1702ExController extends Controller
         private readonly Form1702ExRowsExportService $form1702ExRowsExportService,
         private readonly Form1702ExService $form1702ExService,
         private readonly Form1702ExRecipientEmailNormalizer $recipientEmailNormalizer,
-    ) {
-    }
+    ) {}
 
     public function index(Request $request): Response
     {
@@ -177,7 +176,7 @@ class Form1702ExController extends Controller
         );
 
         $rowUuids = collect($validated['rowIds'] ?? [])
-            ->filter(static fn (mixed $id): bool => is_string($id) && $id !== '')
+            ->filter(static fn(mixed $id): bool => is_string($id) && $id !== '')
             ->unique()
             ->values()
             ->all();
@@ -187,7 +186,7 @@ class Form1702ExController extends Controller
                 ->with('error', 'A completed files export is already processing.');
         }
 
-        if (! $query->when($rowUuids !== [], fn ($rowsQuery) => $rowsQuery->whereIn('uuid', $rowUuids))->exists()) {
+        if (! $query->when($rowUuids !== [], fn($rowsQuery) => $rowsQuery->whereIn('uuid', $rowUuids))->exists()) {
             return to_route('forms.form1702ex.completed.index', $this->completedRouteParameters($request))
                 ->with('error', 'No completed files matched this export request.');
         }
@@ -347,15 +346,15 @@ class Form1702ExController extends Controller
                     $form1702ExBatch->footer_printed_date,
                 ),
                 'receiptAcceptanceStartDate' => $form1702ExBatch->receipt_acceptance_start_date?->toDateString(),
-                'rows' => $rows->map(fn (Form1702ExBatchRow $row): array => $this->transformRow(
+                'rows' => $rows->map(fn(Form1702ExBatchRow $row): array => $this->transformRow(
                     $form1702ExBatch,
                     $row,
                 ))->all(),
                 'isProcessing' => $rows->contains(
-                    fn (Form1702ExBatchRow $row): bool => $row->isProcessing(),
+                    fn(Form1702ExBatchRow $row): bool => $row->isProcessing(),
                 ),
                 'hasActiveReceiptJobs' => $rows->contains(
-                    fn (Form1702ExBatchRow $row): bool => $row->receiptJobIsBusy(),
+                    fn(Form1702ExBatchRow $row): bool => $row->receiptJobIsBusy(),
                 ),
             ],
             'indexUrl' => route('forms.form1702ex.index'),
@@ -422,7 +421,7 @@ class Form1702ExController extends Controller
             $extension = Str::lower($spreadsheet->getClientOriginalExtension() ?: $spreadsheet->extension() ?: 'upload');
             $storedPath = $spreadsheet->storeAs(
                 'tmp/form-form1702ex-imports',
-                Str::uuid().($extension !== '' ? ".{$extension}" : ''),
+                Str::uuid() . ($extension !== '' ? ".{$extension}" : ''),
                 DocumentStorage::diskName(),
             );
 
@@ -451,7 +450,7 @@ class Form1702ExController extends Controller
             $batch->delete();
 
             return to_route('forms.form1702ex.index', $this->indexRouteParameters($request))
-                ->with('error', 'The bulk form1702ex file could not be imported right now.');
+                ->with('error', 'Error: ' . $exception->getMessage()); // 👈 temporary
         }
     }
 
@@ -463,7 +462,7 @@ class Form1702ExController extends Controller
         ]);
 
         $rowUuids = collect($validated['rowIds'])
-            ->filter(static fn (mixed $id): bool => is_string($id) && $id !== '')
+            ->filter(static fn(mixed $id): bool => is_string($id) && $id !== '')
             ->unique()
             ->values();
 
@@ -476,7 +475,7 @@ class Form1702ExController extends Controller
                 ->with('error', 'Select at least one imported row to delete.');
         }
 
-        if ($rows->contains(fn (Form1702ExBatchRow $row): bool => $row->isProcessing() || $row->receiptJobIsBusy())) {
+        if ($rows->contains(fn(Form1702ExBatchRow $row): bool => $row->isProcessing() || $row->receiptJobIsBusy())) {
             return to_route('forms.form1702ex.index', $this->indexRouteParameters($request))
                 ->with('error', 'Wait for queued or processing rows to finish before deleting them.');
         }
@@ -606,7 +605,7 @@ class Form1702ExController extends Controller
         ]);
 
         $rowUuids = collect($validated['rowIds'])
-            ->filter(static fn (mixed $id): bool => is_string($id) && $id !== '')
+            ->filter(static fn(mixed $id): bool => is_string($id) && $id !== '')
             ->unique()
             ->values();
 
@@ -704,7 +703,7 @@ class Form1702ExController extends Controller
         ]);
 
         $rowUuids = collect($validated['rowIds'])
-            ->filter(static fn (mixed $id): bool => is_string($id) && $id !== '')
+            ->filter(static fn(mixed $id): bool => is_string($id) && $id !== '')
             ->unique()
             ->values();
 
@@ -859,8 +858,8 @@ class Form1702ExController extends Controller
                 $import,
                 false,
             );
-            $processableRows = $rows->filter(fn (Form1702ExBatchRow $row): bool => ! $row->isSkippedDuplicate())->values();
-            $skippedCount = $rows->filter(fn (Form1702ExBatchRow $row): bool => $row->isSkippedDuplicate())->count();
+            $processableRows = $rows->filter(fn(Form1702ExBatchRow $row): bool => ! $row->isSkippedDuplicate())->values();
+            $skippedCount = $rows->filter(fn(Form1702ExBatchRow $row): bool => $row->isSkippedDuplicate())->count();
 
             if ($rows->isEmpty()) {
                 return to_route('forms.form1702ex.batches.show', [
@@ -872,7 +871,7 @@ class Form1702ExController extends Controller
                 ProcessForm1702ExBatchRows::dispatch(
                     $processableRows
                         ->pluck('id')
-                        ->map(static fn (mixed $id): int => (int) $id)
+                        ->map(static fn(mixed $id): int => (int) $id)
                         ->all(),
                 );
             }
@@ -921,7 +920,7 @@ class Form1702ExController extends Controller
         ]);
 
         $rowUuids = collect($validated['rowIds'])
-            ->filter(static fn (mixed $id): bool => is_string($id) && $id !== '')
+            ->filter(static fn(mixed $id): bool => is_string($id) && $id !== '')
             ->unique()
             ->values();
 
@@ -1537,7 +1536,7 @@ class Form1702ExController extends Controller
     ): void {
         abort_unless(
             $row->form_1702_ex_batch_id === $batch->id
-            && $batch->user->is($request->user()),
+                && $batch->user->is($request->user()),
             404,
         );
     }
@@ -1586,7 +1585,7 @@ class Form1702ExController extends Controller
     private function rowOwnershipQuery(Request $request)
     {
         return Form1702ExBatchRow::query()
-            ->whereHas('batch', fn ($query) => $query->whereBelongsTo($request->user()));
+            ->whereHas('batch', fn($query) => $query->whereBelongsTo($request->user()));
     }
 
     private function rowPage(
@@ -1599,7 +1598,7 @@ class Form1702ExController extends Controller
     ): LengthAwarePaginator {
         $query = Form1702ExBatchRow::query()
             ->with(['batch', 'client', 'company'])
-            ->whereHas('batch', fn ($batchQuery) => $batchQuery->whereBelongsTo($user));
+            ->whereHas('batch', fn($batchQuery) => $batchQuery->whereBelongsTo($user));
 
         $this->applyVisibleRowScope($query);
 
@@ -1609,7 +1608,7 @@ class Form1702ExController extends Controller
 
         if ($search !== '') {
             $query->where(function ($searchQuery) use ($search): void {
-                $like = '%'.$search.'%';
+                $like = '%' . $search . '%';
 
                 $searchQuery
                     ->where('generated_pdf_file_name', 'like', $like)
@@ -1625,7 +1624,7 @@ class Form1702ExController extends Controller
                     ->orWhere('receipt_job_status', 'like', $like)
                     ->orWhere('receipt_job_error', 'like', $like)
                     ->orWhere('pdf_error', 'like', $like)
-                    ->orWhereHas('client', fn ($clientQuery) => $clientQuery->where('name', 'like', $like))
+                    ->orWhereHas('client', fn($clientQuery) => $clientQuery->where('name', 'like', $like))
                     ->orWhereHas('company', function ($companyQuery) use ($like): void {
                         $companyQuery
                             ->where('name', 'like', $like)
@@ -1656,14 +1655,14 @@ class Form1702ExController extends Controller
     private function transformRows(Collection $rows, bool $useDirectRoutes): array
     {
         return $rows
-            ->map(fn (Form1702ExBatchRow $row): array => $this->transformRow($row->batch, $row, $useDirectRoutes))
+            ->map(fn(Form1702ExBatchRow $row): array => $this->transformRow($row->batch, $row, $useDirectRoutes))
             ->all();
     }
 
     private function completedCount($user): int
     {
         $query = Form1702ExBatchRow::query()
-            ->whereHas('batch', fn ($batchQuery) => $batchQuery->whereBelongsTo($user));
+            ->whereHas('batch', fn($batchQuery) => $batchQuery->whereBelongsTo($user));
 
         $this->applyVisibleRowScope($query);
 
@@ -1680,12 +1679,13 @@ class Form1702ExController extends Controller
                 Form1702ExBatch::IMPORT_STATUS_QUEUED,
                 Form1702ExBatch::IMPORT_STATUS_PROCESSING,
             ])
-            ->exists()) {
+            ->exists()
+        ) {
             return true;
         }
 
         return Form1702ExBatchRow::query()
-            ->whereHas('batch', fn ($batchQuery) => $batchQuery->whereBelongsTo($user))
+            ->whereHas('batch', fn($batchQuery) => $batchQuery->whereBelongsTo($user))
             ->whereNull('duplicate_resolution_status')
             ->where(function ($query): void {
                 $query
@@ -1873,7 +1873,7 @@ class Form1702ExController extends Controller
             'fileName' => filled($row->generated_pdf_file_name)
                 ? (string) $row->generated_pdf_file_name
                 : 'Not generated yet',
-            'taxpayerName' => (string) ($payload['taxpayer_name'] ?? $payload['registered_name'] ?? 'Row '.$row->source_row_number),
+            'taxpayerName' => (string) ($payload['taxpayer_name'] ?? $payload['registered_name'] ?? 'Row ' . $row->source_row_number),
             'clientName' => $row->client?->name
                 ?? (is_scalar($payload['client_name'] ?? null) ? (string) $payload['client_name'] : null),
             'companyName' => $row->company?->name
@@ -2004,7 +2004,7 @@ class Form1702ExController extends Controller
     {
         $query = Form1702ExBatchRow::query()
             ->with(['batch', 'client', 'company'])
-            ->whereHas('batch', fn ($batchQuery) => $batchQuery->whereBelongsTo($user));
+            ->whereHas('batch', fn($batchQuery) => $batchQuery->whereBelongsTo($user));
 
         $this->applyVisibleRowScope($query);
         $this->applyCompletedScope($query, $completed);
@@ -2013,7 +2013,7 @@ class Form1702ExController extends Controller
 
         if ($search !== '') {
             $query->where(function ($searchQuery) use ($search): void {
-                $like = '%'.$search.'%';
+                $like = '%' . $search . '%';
 
                 $searchQuery
                     ->where('generated_pdf_file_name', 'like', $like)
@@ -2029,7 +2029,7 @@ class Form1702ExController extends Controller
                     ->orWhere('receipt_job_status', 'like', $like)
                     ->orWhere('receipt_job_error', 'like', $like)
                     ->orWhere('pdf_error', 'like', $like)
-                    ->orWhereHas('client', fn ($clientQuery) => $clientQuery->where('name', 'like', $like))
+                    ->orWhereHas('client', fn($clientQuery) => $clientQuery->where('name', 'like', $like))
                     ->orWhereHas('company', function ($companyQuery) use ($like): void {
                         $companyQuery
                             ->where('name', 'like', $like)
@@ -2113,9 +2113,9 @@ class Form1702ExController extends Controller
         }
 
         return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-            .'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
-            .'<sheetData>'.implode('', $sheetRows).'</sheetData>'
-            .'</worksheet>';
+            . '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+            . '<sheetData>' . implode('', $sheetRows) . '</sheetData>'
+            . '</worksheet>';
     }
 
     /**
@@ -2126,7 +2126,7 @@ class Form1702ExController extends Controller
         $cells = [];
 
         foreach (array_values($values) as $index => $value) {
-            $reference = $this->xlsxColumnName($index + 1).$rowNumber;
+            $reference = $this->xlsxColumnName($index + 1) . $rowNumber;
             $style = $header ? ' s="1"' : '';
 
             $cells[] = sprintf(
@@ -2146,7 +2146,7 @@ class Form1702ExController extends Controller
 
         while ($index > 0) {
             $remainder = ($index - 1) % 26;
-            $name = chr(65 + $remainder).$name;
+            $name = chr(65 + $remainder) . $name;
             $index = intdiv($index - 1, 26);
         }
 
