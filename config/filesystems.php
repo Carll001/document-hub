@@ -15,7 +15,7 @@ return [
 
     'default' => env('FILESYSTEM_DISK', 'local'),
 
-    'document_storage_disk' => env('DOCUMENT_STORAGE_DISK', env('FILESYSTEM_DISK', 's3')),
+    'document_storage_disk' => 's3',
 
     /*
     |--------------------------------------------------------------------------
