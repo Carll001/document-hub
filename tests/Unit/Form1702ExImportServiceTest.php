@@ -13,10 +13,10 @@ use Tests\TestCase;
 
 class Form1702ExImportServiceTest extends TestCase
 {
-    public function test_import_stored_file_reads_csv_from_document_storage_disk(): void
+    public function test_import_stored_file_reads_csv_from_default(): void
     {
         Storage::fake('rustfs');
-        config()->set('filesystems.document_storage_disk', 'rustfs');
+        config()->set('filesystems.default', 'rustfs');
 
         $storagePath = 'tmp/form-form1702ex-imports/test-import.csv';
         Storage::disk('rustfs')->put($storagePath, implode("\n", [
@@ -35,10 +35,10 @@ class Form1702ExImportServiceTest extends TestCase
         $this->assertSame('0101112220000', $import['rows'][0]['payload']['tin'] ?? null);
     }
 
-    public function test_import_stored_file_reads_xlsx_from_document_storage_disk(): void
+    public function test_import_stored_file_reads_xlsx_from_default(): void
     {
         Storage::fake('rustfs');
-        config()->set('filesystems.document_storage_disk', 'rustfs');
+        config()->set('filesystems.default', 'rustfs');
 
         $spreadsheet = new Spreadsheet();
         $sheet = $spreadsheet->getActiveSheet();

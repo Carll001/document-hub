@@ -30,6 +30,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -418,14 +419,52 @@ class Form1702ExController extends Controller
         ])->save();
 
         try {
+            $documentDiskName = DocumentStorage::diskName();
+
+            if (! is_array(config("filesystems.disks.{$documentDiskName}"))) {
+                throw new \RuntimeException("Document storage disk [{$documentDiskName}] is not configured.");
+            }
+
             $extension = Str::lower($spreadsheet->getClientOriginalExtension() ?: $spreadsheet->extension() ?: 'upload');
-            $storedPath = $spreadsheet->storeAs(
-                'tmp/form-form1702ex-imports',
-                Str::uuid() . ($extension !== '' ? ".{$extension}" : ''),
-                DocumentStorage::diskName(),
-            );
+            $storedPath = null;
+
+            try {
+                $storedPath = $spreadsheet->storeAs(
+                    'tmp/form-form1702ex-imports',
+                    Str::uuid() . ($extension !== '' ? ".{$extension}" : ''),
+                    $documentDiskName,
+                );
+            } catch (\Throwable $storageException) {
+                Log::error('Form1702Ex import upload failed while writing to document storage.', [
+                    'exception_class' => $storageException::class,
+                    'exception_message' => $storageException->getMessage(),
+                    'filesystem_disk' => $documentDiskName,
+                    'filesystem_endpoint' => config("filesystems.disks.{$documentDiskName}.endpoint"),
+                    'filesystem_bucket' => config("filesystems.disks.{$documentDiskName}.bucket"),
+                    'upload_file_name' => $spreadsheet->getClientOriginalName(),
+                    'upload_size_bytes' => $spreadsheet->getSize(),
+                    'upload_mime_type' => $spreadsheet->getMimeType(),
+                    'receipt_acceptance_start_date' => $batch->receipt_acceptance_start_date,
+                    'user_id' => $user?->id,
+                ]);
+
+                throw $storageException;
+            }
 
             if (! DocumentStorage::isValidPath($storedPath)) {
+                Log::error('Form1702Ex import upload failed: storage returned an invalid path.', [
+                    'filesystem_disk' => $documentDiskName,
+                    'stored_path' => $storedPath,
+                    'stored_path_valid' => DocumentStorage::isValidPath($storedPath),
+                    'filesystem_endpoint' => config("filesystems.disks.{$documentDiskName}.endpoint"),
+                    'filesystem_bucket' => config("filesystems.disks.{$documentDiskName}.bucket"),
+                    'upload_file_name' => $spreadsheet->getClientOriginalName(),
+                    'upload_size_bytes' => $spreadsheet->getSize(),
+                    'upload_mime_type' => $spreadsheet->getMimeType(),
+                    'receipt_acceptance_start_date' => $batch->receipt_acceptance_start_date,
+                    'user_id' => $user?->id,
+                ]);
+
                 throw new \RuntimeException('The uploaded spreadsheet could not be saved. Please upload it again.');
             }
 

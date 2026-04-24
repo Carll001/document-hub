@@ -13,7 +13,7 @@ class ExcelExtractionServiceTest extends TestCase
     public function test_extract_from_document_storage_reads_tabular_rows(): void
     {
         Storage::fake('rustfs');
-        config()->set('filesystems.document_storage_disk', 'rustfs');
+        config()->set('filesystems.default', 'rustfs');
 
         $storagePath = 'document-generator/2/uploads/sample.csv';
         Storage::disk('rustfs')->put($storagePath, implode("\n", [
