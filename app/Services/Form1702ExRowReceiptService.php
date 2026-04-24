@@ -7,7 +7,6 @@ namespace App\Services;
 use App\Models\Form1702ExBatchRow;
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Http\UploadedFile;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use RuntimeException;
 
@@ -27,7 +26,7 @@ class Form1702ExRowReceiptService
         array $submittedValues,
     ): void {
         $row->loadMissing('batch');
-        $disk = Storage::disk('s3');
+        $disk = \App\Support\DocumentStorage::disk();
         $generatedPdfPath = (string) ($row->generated_pdf_storage_path ?? '');
 
         if ($generatedPdfPath === '' || ! $disk->exists($generatedPdfPath)) {
@@ -106,7 +105,7 @@ class Form1702ExRowReceiptService
         UploadedFile $uploadedReceipt,
     ): void {
         $row->loadMissing('batch');
-        $disk = Storage::disk('s3');
+        $disk = \App\Support\DocumentStorage::disk();
         $generatedPdfPath = (string) ($row->generated_pdf_storage_path ?? '');
 
         if ($generatedPdfPath === '' || ! $disk->exists($generatedPdfPath)) {
@@ -169,7 +168,7 @@ class Form1702ExRowReceiptService
 
     public function removeReceipt(Form1702ExBatchRow $row): void
     {
-        $disk = Storage::disk('s3');
+        $disk = \App\Support\DocumentStorage::disk();
         $previousReceiptPath = $row->receipt_storage_path;
 
         $this->pdfMergeService->removeForm1702ExReceipt($row);

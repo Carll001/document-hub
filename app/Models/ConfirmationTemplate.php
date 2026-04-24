@@ -7,7 +7,6 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Support\Facades\Storage;
 
 #[Fillable([
     'key',
@@ -27,7 +26,7 @@ class ConfirmationTemplate extends Model
     {
         static::deleting(function (self $template): void {
             if (filled($template->storage_path)) {
-                Storage::disk('s3')->delete($template->storage_path);
+                \App\Support\DocumentStorage::disk()->delete($template->storage_path);
             }
         });
     }

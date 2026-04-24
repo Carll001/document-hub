@@ -26,7 +26,6 @@ use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
@@ -160,14 +159,14 @@ class DocumentGeneratorController extends Controller
                 $signature?->original_signature_path,
             ]);
 
-            $originalPath = $uploaded->store("document-generator/{$user->id}/signature", 's3');
+            $originalPath = $uploaded->store("document-generator/{$user->id}/signature", \App\Support\DocumentStorage::diskName());
             $processedTempPath = $signatureImageService->processToTransparentPng(
-                Storage::disk('s3')->path($originalPath),
+                \App\Support\DocumentStorage::disk()->path($originalPath),
             );
 
             $processedPath = "document-generator/{$user->id}/signature/processed-".Str::uuid().'.png';
             $processedFile = new File($processedTempPath);
-            Storage::disk('s3')->putFileAs(
+            \App\Support\DocumentStorage::disk()->putFileAs(
                 "document-generator/{$user->id}/signature",
                 $processedFile,
                 basename($processedPath),
@@ -284,11 +283,11 @@ class DocumentGeneratorController extends Controller
         }
 
         $path = $signature->processed_signature_path;
-        if (! Storage::disk('s3')->exists($path)) {
+        if (! \App\Support\DocumentStorage::disk()->exists($path)) {
             abort(404);
         }
 
-        return response()->file(Storage::disk('s3')->path($path), [
+        return response()->file(\App\Support\DocumentStorage::disk()->path($path), [
             'Content-Type' => 'image/png',
             'Cache-Control' => 'no-cache, no-store, must-revalidate',
             'Pragma' => 'no-cache',
@@ -401,14 +400,14 @@ class DocumentGeneratorController extends Controller
             $state['status'] === DocumentGeneratorCompletedExportService::STATUS_READY
                 && is_array($cached)
                 && is_string($cached['storagePath'] ?? null)
-                && Storage::disk('s3')->exists($cached['storagePath']),
+                && \App\Support\DocumentStorage::disk()->exists($cached['storagePath']),
             404,
         );
 
         $storagePath = (string) $cached['storagePath'];
 
         return response()->download(
-            Storage::disk('s3')->path($storagePath),
+            \App\Support\DocumentStorage::disk()->path($storagePath),
             'afs-completed-files.zip',
             ['Content-Type' => 'application/zip'],
         )->deleteFileAfterSend(true);
@@ -521,18 +520,18 @@ class DocumentGeneratorController extends Controller
             return response()->json(['message' => 'Files are required.'], 422);
         }
 
-        $excelPath = $excelFile->store("document-generator/{$request->user()->id}/uploads", 's3');
+        $excelPath = $excelFile->store("document-generator/{$request->user()->id}/uploads", \App\Support\DocumentStorage::diskName());
         $resolvedTemplates = $this->resolveTemplatesForBatch($request, $defaultTemplateFile);
         $defaultTemplate = $resolvedTemplates['default'];
         $yearTemplatePayload = $resolvedTemplates['year_templates'];
 
-        $extracted = $excelExtractionService->extract(Storage::disk('s3')->path($excelPath), $sheetIndex);
+        $extracted = $excelExtractionService->extractFromDocumentStorage($excelPath, $sheetIndex);
         $headers = $extracted['headers'];
         $rows = $extracted['rows'];
         $previousWorkbookPath = $this->resolvePreviousWorkbookPath($request->user()->id);
 
         if ($previousWorkbookPath !== null) {
-            $previousWorkbookRows = $excelExtractionService->extract($previousWorkbookPath, $sheetIndex)['rows'];
+            $previousWorkbookRows = $excelExtractionService->extractFromDocumentStorage($previousWorkbookPath, $sheetIndex)['rows'];
             $rows = $this->enrichRowsWithPreviousWorkbookData($rows, $previousWorkbookRows);
             $headers = $this->mergeHeadersWithRows($headers, $rows);
         }
@@ -729,18 +728,18 @@ class DocumentGeneratorController extends Controller
         }
 
         $path = $type === 'docx' ? $item->docx_path : $item->pdf_path;
-        if (! is_string($path) || $path === '' || ! Storage::disk('s3')->exists($path)) {
+        if (! is_string($path) || $path === '' || ! \App\Support\DocumentStorage::disk()->exists($path)) {
             abort(404);
         }
 
         if ($type === 'pdf') {
-            return response()->file(Storage::disk('s3')->path($path), [
+            return response()->file(\App\Support\DocumentStorage::disk()->path($path), [
                 'Content-Type' => 'application/pdf',
                 'Content-Disposition' => "inline; filename=\"batch-{$batch->id}-row-{$item->row_number}.pdf\"",
             ]);
         }
 
-        return Storage::disk('s3')->download($path, "batch-{$batch->id}-row-{$item->row_number}.docx");
+        return \App\Support\DocumentStorage::disk()->download($path, "batch-{$batch->id}-row-{$item->row_number}.docx");
     }
 
     public function showItem(Request $request, DocumentBatch $batch, DocumentBatchItem $item): JsonResponse
@@ -1003,8 +1002,8 @@ class DocumentGeneratorController extends Controller
             $lockedBatch->save();
 
             foreach ([$oldDocxPath, $oldPdfPath] as $path) {
-                if (is_string($path) && $path !== '' && Storage::disk('s3')->exists($path)) {
-                    Storage::disk('s3')->delete($path);
+                if (is_string($path) && $path !== '' && \App\Support\DocumentStorage::disk()->exists($path)) {
+                    \App\Support\DocumentStorage::disk()->delete($path);
                 }
             }
 
@@ -1149,7 +1148,7 @@ class DocumentGeneratorController extends Controller
 
         $defaultTemplate = DocumentGeneratorTemplate::query()->whereNull('year')->first();
         $oldPath = $defaultTemplate?->template_path;
-        $templatePath = $file->store('document-generator/global-templates', 's3');
+        $templatePath = $file->store('document-generator/global-templates', \App\Support\DocumentStorage::diskName());
         $templateName = $file->getClientOriginalName();
 
         if ($defaultTemplate) {
@@ -1203,7 +1202,7 @@ class DocumentGeneratorController extends Controller
         $oldPaths = array_values(array_filter([$batch->template_path, $defaultTemplate->template_path]));
 
         DB::transaction(function () use ($request, $batch, $defaultTemplate, $file): void {
-            $templatePath = $file->store("document-generator/{$request->user()->id}/uploads", 's3');
+            $templatePath = $file->store("document-generator/{$request->user()->id}/uploads", \App\Support\DocumentStorage::diskName());
             $templateName = $file->getClientOriginalName();
 
             $batch->forceFill([
@@ -1243,7 +1242,7 @@ class DocumentGeneratorController extends Controller
             'document_batch_id' => $batch->id,
             'year' => $year,
             'template_name' => $file->getClientOriginalName(),
-            'template_path' => $file->store("document-generator/{$request->user()->id}/uploads", 's3'),
+            'template_path' => $file->store("document-generator/{$request->user()->id}/uploads", \App\Support\DocumentStorage::diskName()),
         ]);
 
         return response()->json($this->templateMappingBatchPayload($batch->fresh('templates')), 201);
@@ -1275,7 +1274,7 @@ class DocumentGeneratorController extends Controller
             if ($file) {
                 $oldPath = $template->template_path;
                 $updates['template_name'] = $file->getClientOriginalName();
-                $updates['template_path'] = $file->store("document-generator/{$request->user()->id}/uploads", 's3');
+                $updates['template_path'] = $file->store("document-generator/{$request->user()->id}/uploads", \App\Support\DocumentStorage::diskName());
             }
 
             $template->forceFill($updates)->save();
@@ -1652,7 +1651,7 @@ class DocumentGeneratorController extends Controller
 
     private function resolvePreviousWorkbookPath(int $userId): ?string
     {
-        $disk = Storage::disk('s3');
+        $disk = \App\Support\DocumentStorage::disk();
 
         /** @var \Illuminate\Support\Collection<int, DocumentBatch> $previousBatches */
         $previousBatches = DocumentBatch::query()
@@ -1671,7 +1670,7 @@ class DocumentGeneratorController extends Controller
                 continue;
             }
 
-            return $disk->path($excelPath);
+            return $excelPath;
         }
 
         return null;
@@ -1818,7 +1817,7 @@ class DocumentGeneratorController extends Controller
             $templates[] = [
                 'year' => (int) $year,
                 'template_name' => $file->getClientOriginalName(),
-                'template_path' => $file->store("document-generator/{$request->user()->id}/uploads", 's3'),
+                'template_path' => $file->store("document-generator/{$request->user()->id}/uploads", \App\Support\DocumentStorage::diskName()),
             ];
         }
 
@@ -1840,7 +1839,7 @@ class DocumentGeneratorController extends Controller
         if ($uploadedDefaultTemplateFile) {
             $defaultTemplate = [
                 'template_name' => $uploadedDefaultTemplateFile->getClientOriginalName(),
-                'template_path' => $uploadedDefaultTemplateFile->store("document-generator/{$request->user()->id}/uploads", 's3'),
+                'template_path' => $uploadedDefaultTemplateFile->store("document-generator/{$request->user()->id}/uploads", \App\Support\DocumentStorage::diskName()),
             ];
         }
 
@@ -1900,7 +1899,7 @@ class DocumentGeneratorController extends Controller
         $filename = pathinfo($templateName, PATHINFO_FILENAME);
         $targetPath = "document-generator/{$userId}/uploads/{$filename}-".Str::uuid().($extension !== '' ? ".{$extension}" : '');
 
-        Storage::disk('s3')->copy($sourcePath, $targetPath);
+        \App\Support\DocumentStorage::disk()->copy($sourcePath, $targetPath);
 
         return $targetPath;
     }
@@ -2008,7 +2007,7 @@ class DocumentGeneratorController extends Controller
             ]);
         }
 
-        if (! Storage::disk('s3')->exists($signature->processed_signature_path)) {
+        if (! \App\Support\DocumentStorage::disk()->exists($signature->processed_signature_path)) {
             throw \Illuminate\Validation\ValidationException::withMessages([
                 'signature' => ['Processed signature file is missing on disk. Please upload again.'],
             ]);
@@ -2181,12 +2180,12 @@ class DocumentGeneratorController extends Controller
             return false;
         }
 
-        if (! Storage::disk('s3')->exists($item->docx_path)) {
+        if (! \App\Support\DocumentStorage::disk()->exists($item->docx_path)) {
             return false;
         }
 
         try {
-            $docxPath = Storage::disk('s3')->path($item->docx_path);
+            $docxPath = \App\Support\DocumentStorage::disk()->path($item->docx_path);
             return $docxTemplateService->hasSignatureImagePlaceholders($docxPath);
         } catch (\Throwable) {
             return false;
@@ -2204,12 +2203,12 @@ class DocumentGeneratorController extends Controller
             throw new \RuntimeException('DOCX file is not available for this item.');
         }
 
-        if (! Storage::disk('s3')->exists($item->docx_path)) {
+        if (! \App\Support\DocumentStorage::disk()->exists($item->docx_path)) {
             throw new \RuntimeException('DOCX file is missing on disk.');
         }
 
-        $docxPath = Storage::disk('s3')->path($item->docx_path);
-        $getorSignatureImagePath = Storage::disk('s3')->path($signature->processed_signature_path);
+        $docxPath = \App\Support\DocumentStorage::disk()->path($item->docx_path);
+        $getorSignatureImagePath = \App\Support\DocumentStorage::disk()->path($signature->processed_signature_path);
 
         $page2Layout = $this->signatureLayout($signature, 'page2');
         $page4Layout = $this->signatureLayout($signature, 'page4');
@@ -2229,7 +2228,7 @@ class DocumentGeneratorController extends Controller
 
         $convertedPdfPath = $pdfConversionService->convertDocxToPdf($docxPath);
         $expectedPdfRelativePath = $this->expectedPdfRelativePath($item);
-        $expectedPdfAbsolutePath = Storage::disk('s3')->path($expectedPdfRelativePath);
+        $expectedPdfAbsolutePath = \App\Support\DocumentStorage::disk()->path($expectedPdfRelativePath);
 
         if ($convertedPdfPath !== $expectedPdfAbsolutePath && is_file($convertedPdfPath)) {
             @rename($convertedPdfPath, $expectedPdfAbsolutePath);
@@ -2300,8 +2299,8 @@ class DocumentGeneratorController extends Controller
     private function deleteSignatureFiles(array $paths): void
     {
         foreach (array_values(array_unique($paths)) as $path) {
-            if (Storage::disk('s3')->exists($path)) {
-                Storage::disk('s3')->delete($path);
+            if (\App\Support\DocumentStorage::disk()->exists($path)) {
+                \App\Support\DocumentStorage::disk()->delete($path);
             }
         }
     }
@@ -2318,8 +2317,8 @@ class DocumentGeneratorController extends Controller
         );
 
         foreach ($uniquePaths as $path) {
-            if (Storage::disk('s3')->exists($path)) {
-                Storage::disk('s3')->delete($path);
+            if (\App\Support\DocumentStorage::disk()->exists($path)) {
+                \App\Support\DocumentStorage::disk()->delete($path);
             }
         }
     }

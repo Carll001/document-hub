@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Support\DocumentStorage;
 use InvalidArgumentException;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
@@ -58,6 +59,48 @@ class ExcelExtractionService
             'headers' => $headers,
             'rows' => $rows,
         ];
+    }
+
+    /**
+     * @return array{
+     *     headers: list<string>,
+     *     rows: list<array<string, string>>,
+     * }
+     */
+    public function extractFromDocumentStorage(string $storagePath, int $sheetIndex = 0): array
+    {
+        $temporaryPath = tempnam(sys_get_temp_dir(), 'excel-extract-');
+        if ($temporaryPath === false) {
+            throw new InvalidArgumentException('A temporary file could not be created for Excel extraction.');
+        }
+
+        $stream = DocumentStorage::disk()->readStream($storagePath);
+        if (! is_resource($stream)) {
+            @unlink($temporaryPath);
+            throw new InvalidArgumentException('The Excel file could not be read from storage.');
+        }
+
+        $target = @fopen($temporaryPath, 'wb');
+        if (! is_resource($target)) {
+            fclose($stream);
+            @unlink($temporaryPath);
+            throw new InvalidArgumentException('A temporary file could not be opened for Excel extraction.');
+        }
+
+        try {
+            stream_copy_to_stream($stream, $target);
+        } finally {
+            fclose($stream);
+            fclose($target);
+        }
+
+        try {
+            return $this->extract($temporaryPath, $sheetIndex);
+        } finally {
+            if (is_file($temporaryPath)) {
+                @unlink($temporaryPath);
+            }
+        }
     }
 
 }

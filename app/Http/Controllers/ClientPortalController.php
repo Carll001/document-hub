@@ -7,7 +7,6 @@ namespace App\Http\Controllers;
 use App\Models\Client;
 use App\Models\Form1702ExBatchRow;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
 use Inertia\Inertia;
 use Inertia\Response;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
@@ -62,11 +61,11 @@ class ClientPortalController extends Controller
 
         abort_unless(
             filled($row->generated_pdf_storage_path)
-            && Storage::disk('s3')->exists((string) $row->generated_pdf_storage_path),
+            && \App\Support\DocumentStorage::disk()->exists((string) $row->generated_pdf_storage_path),
             404,
         );
 
-        return Storage::disk('s3')->response(
+        return \App\Support\DocumentStorage::disk()->response(
             (string) $row->generated_pdf_storage_path,
             (string) ($row->generated_pdf_file_name ?? '1702-ex.pdf'),
             [
@@ -82,11 +81,11 @@ class ClientPortalController extends Controller
 
         abort_unless(
             filled($row->generated_pdf_storage_path)
-            && Storage::disk('s3')->exists((string) $row->generated_pdf_storage_path),
+            && \App\Support\DocumentStorage::disk()->exists((string) $row->generated_pdf_storage_path),
             404,
         );
 
-        return Storage::disk('s3')->download(
+        return \App\Support\DocumentStorage::disk()->download(
             (string) $row->generated_pdf_storage_path,
             (string) ($row->generated_pdf_file_name ?? '1702-ex.pdf'),
         );

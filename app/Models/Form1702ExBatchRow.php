@@ -7,7 +7,6 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
 #[Fillable([
@@ -75,15 +74,15 @@ class Form1702ExBatchRow extends Model
             $baseStoragePath = $row->receiptBaseStoragePath();
 
             if (filled($row->generated_pdf_storage_path)) {
-                Storage::disk('s3')->delete($row->generated_pdf_storage_path);
+                \App\Support\DocumentStorage::disk()->delete($row->generated_pdf_storage_path);
             }
 
             if (filled($row->receipt_storage_path)) {
-                Storage::disk('s3')->delete($row->receipt_storage_path);
+                \App\Support\DocumentStorage::disk()->delete($row->receipt_storage_path);
             }
 
-            if ($baseStoragePath !== '' && Storage::disk('s3')->exists($baseStoragePath)) {
-                Storage::disk('s3')->delete($baseStoragePath);
+            if ($baseStoragePath !== '' && \App\Support\DocumentStorage::disk()->exists($baseStoragePath)) {
+                \App\Support\DocumentStorage::disk()->delete($baseStoragePath);
             }
         });
     }

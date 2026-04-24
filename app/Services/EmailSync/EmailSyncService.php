@@ -6,7 +6,6 @@ use App\Models\EmailSyncAccount;
 use App\Models\SyncedEmail;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use RuntimeException;
 
@@ -184,7 +183,7 @@ class EmailSyncService
      */
     private function syncAttachments(SyncedEmail $email, array $attachments): void
     {
-        $disk = Storage::disk('s3');
+        $disk = \App\Support\DocumentStorage::disk();
         $directory = "email-sync/shared/{$email->id}";
 
         $disk->deleteDirectory($directory);

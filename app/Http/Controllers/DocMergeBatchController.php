@@ -19,7 +19,6 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
@@ -569,7 +568,7 @@ class DocMergeBatchController extends Controller
     {
         $template = ConfirmationTemplate::shared();
         $storagePath = $template?->storage_path;
-        $disk = Storage::disk('s3');
+        $disk = \App\Support\DocumentStorage::disk();
 
         if (! filled($storagePath) || ! $disk->exists($storagePath)) {
             return [

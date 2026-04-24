@@ -6,7 +6,6 @@ namespace App\Services;
 
 use App\Models\MergedPdf;
 use Illuminate\Filesystem\FilesystemAdapter;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use RuntimeException;
 
@@ -30,7 +29,7 @@ class MergedPdfReceiptService
         array $placeholders,
         array $submittedValues,
     ): void {
-        $disk = Storage::disk('s3');
+        $disk = \App\Support\DocumentStorage::disk();
 
         if (! $disk->exists($mergedPdf->storage_path)) {
             throw new RuntimeException("The saved PDF {$mergedPdf->file_name} is no longer available.");

@@ -8,12 +8,12 @@ use App\Models\Form1702ExBatch;
 use App\Models\Form1702ExBatchRow;
 use App\Services\Form1702ExBatchService;
 use App\Services\Form1702ExImportService;
+use App\Support\DocumentStorage;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 
 class ProcessForm1702ExBatchImport implements ShouldQueue
@@ -49,7 +49,7 @@ class ProcessForm1702ExBatchImport implements ShouldQueue
             $importSourcePath = $batch->import_source_path;
             $importSourceName = $batch->import_source_name;
 
-            if (! is_string($importSourcePath) || $importSourcePath === '' || ! Storage::disk('s3')->exists($importSourcePath)) {
+            if (! DocumentStorage::isValidPath($importSourcePath) || ! DocumentStorage::disk()->exists($importSourcePath)) {
                 throw new \RuntimeException('The uploaded spreadsheet could not be found. Please upload it again.');
             }
 
@@ -63,7 +63,7 @@ class ProcessForm1702ExBatchImport implements ShouldQueue
             $basePayload['footer_printed_date'] = $batch->footer_printed_date;
 
             $import = $form1702ExImportService->importStoredFile(
-                Storage::disk('s3')->path($importSourcePath),
+                $importSourcePath,
                 $importSourceName,
                 $basePayload,
             );
@@ -110,8 +110,10 @@ class ProcessForm1702ExBatchImport implements ShouldQueue
         } finally {
             $batch->refresh();
 
-            if (is_string($batch->import_source_path) && $batch->import_source_path !== '') {
-                Storage::disk('s3')->delete($batch->import_source_path);
+            if (is_string($batch->import_source_path) && trim($batch->import_source_path) !== '') {
+                if (DocumentStorage::isValidPath($batch->import_source_path)) {
+                    DocumentStorage::disk()->delete($batch->import_source_path);
+                }
 
                 $batch->forceFill([
                     'import_source_path' => null,

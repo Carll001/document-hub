@@ -8,7 +8,6 @@ use App\Models\Form1702ExBatch;
 use App\Models\Form1702ExBatchRow;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use ZipArchive;
 
@@ -51,7 +50,7 @@ class Form1702ExRowsExportService
         if ($status === self::STATUS_READY) {
             $storagePath = is_string($state['storagePath'] ?? null) ? $state['storagePath'] : null;
 
-            if ($storagePath === null || ! Storage::disk('s3')->exists($storagePath)) {
+            if ($storagePath === null || ! \App\Support\DocumentStorage::disk()->exists($storagePath)) {
                 $this->forgetState($userId);
 
                 return $this->emptyState();
@@ -82,7 +81,7 @@ class Form1702ExRowsExportService
             $storagePath = $cached['storagePath'] ?? null;
 
             if (is_string($storagePath) && $storagePath !== '') {
-                Storage::disk('s3')->delete($storagePath);
+                \App\Support\DocumentStorage::disk()->delete($storagePath);
             }
         }
 
@@ -96,11 +95,11 @@ class Form1702ExRowsExportService
     public function buildXlsx(Collection $rows, int $userId): array
     {
         $directory = "tmp/form-1702-ex-rows-exports/user-{$userId}";
-        Storage::disk('s3')->makeDirectory($directory);
+        \App\Support\DocumentStorage::disk()->makeDirectory($directory);
 
         $fileName = '1702-ex-unmatched-rows-'.Str::uuid().'.xlsx';
         $storagePath = "{$directory}/{$fileName}";
-        $archivePath = Storage::disk('s3')->path($storagePath);
+        $archivePath = \App\Support\DocumentStorage::disk()->path($storagePath);
 
         $headers = [
             'File name',

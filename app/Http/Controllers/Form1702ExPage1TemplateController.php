@@ -7,7 +7,6 @@ namespace App\Http\Controllers;
 use App\Services\Form1702ExService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\View\View;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
@@ -57,7 +56,7 @@ class Form1702ExPage1TemplateController extends Controller
         $latestExport = $this->latestExport($request);
         abort_unless(is_array($latestExport), 404);
 
-        return Storage::disk('s3')->response(
+        return \App\Support\DocumentStorage::disk()->response(
             $latestExport['storagePath'],
             $latestExport['fileName'],
             [
@@ -73,7 +72,7 @@ class Form1702ExPage1TemplateController extends Controller
         $latestExport = $this->latestExport($request);
         abort_unless(is_array($latestExport), 404);
 
-        return Storage::disk('s3')->download(
+        return \App\Support\DocumentStorage::disk()->download(
             $latestExport['storagePath'],
             $latestExport['fileName'],
         );

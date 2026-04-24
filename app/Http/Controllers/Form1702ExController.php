@@ -20,6 +20,7 @@ use App\Services\Form1702ExImportService;
 use App\Services\Form1702ExRowReceiptService;
 use App\Services\Form1702ExRowsExportService;
 use App\Services\Form1702ExService;
+use App\Support\DocumentStorage;
 use App\Support\Form1702ExRecipientEmailNormalizer;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Http\RedirectResponse;
@@ -27,7 +28,6 @@ use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -222,7 +222,7 @@ class Form1702ExController extends Controller
             $state['status'] === Form1702ExCompletedExportService::STATUS_READY
                 && is_array($cached)
                 && is_string($cached['storagePath'] ?? null)
-                && Storage::disk('s3')->exists($cached['storagePath']),
+                && DocumentStorage::disk()->exists($cached['storagePath']),
             404,
         );
 
@@ -230,7 +230,7 @@ class Form1702ExController extends Controller
         $downloadName = 'form1702ex-completed-files.zip';
 
         return response()->download(
-            Storage::disk('s3')->path($storagePath),
+            DocumentStorage::disk()->path($storagePath),
             $downloadName,
             ['Content-Type' => 'application/zip'],
         )->deleteFileAfterSend(true);
@@ -291,12 +291,12 @@ class Form1702ExController extends Controller
             $state['status'] === Form1702ExRowsExportService::STATUS_READY
                 && is_array($cached)
                 && is_string($cached['storagePath'] ?? null)
-                && Storage::disk('s3')->exists($cached['storagePath']),
+                && DocumentStorage::disk()->exists($cached['storagePath']),
             404,
         );
 
         return response()->download(
-            Storage::disk('s3')->path((string) $cached['storagePath']),
+            DocumentStorage::disk()->path((string) $cached['storagePath']),
             'form1702ex-unmatched-rows.xlsx',
             ['Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
         )->deleteFileAfterSend(true);
@@ -423,13 +423,17 @@ class Form1702ExController extends Controller
             $storedPath = $spreadsheet->storeAs(
                 'tmp/form-form1702ex-imports',
                 Str::uuid().($extension !== '' ? ".{$extension}" : ''),
-                's3',
+                DocumentStorage::diskName(),
             );
+
+            if (! DocumentStorage::isValidPath($storedPath)) {
+                throw new \RuntimeException('The uploaded spreadsheet could not be saved. Please upload it again.');
+            }
 
             $batch->forceFill([
                 'import_status' => Form1702ExBatch::IMPORT_STATUS_QUEUED,
                 'import_error' => null,
-                'import_source_path' => $storedPath,
+                'import_source_path' => trim((string) $storedPath),
                 'import_source_name' => $spreadsheet->getClientOriginalName(),
                 'import_completed_at' => null,
             ])->save();
@@ -512,7 +516,7 @@ class Form1702ExController extends Controller
                 ->with('error', 'This completed row has no recipients.');
         }
 
-        $disk = Storage::disk('s3');
+        $disk = DocumentStorage::disk();
 
         /** @var UploadedFile|null $extraAttachment */
         $extraAttachment = $validated['extraAttachment'] ?? null;
@@ -954,7 +958,7 @@ class Form1702ExController extends Controller
         $this->ensureAccessibleRow($request, $form1702ExBatch, $form1702ExBatchRow);
         abort_unless(filled($form1702ExBatchRow->generated_pdf_storage_path), 404);
 
-        return Storage::disk('s3')->response(
+        return DocumentStorage::disk()->response(
             $form1702ExBatchRow->generated_pdf_storage_path,
             $form1702ExBatchRow->generated_pdf_file_name ?? 'form1702ex.pdf',
             [
@@ -972,7 +976,7 @@ class Form1702ExController extends Controller
         $this->ensureAccessibleStandaloneRow($request, $form1702ExBatchRow);
         abort_unless(filled($form1702ExBatchRow->generated_pdf_storage_path), 404);
 
-        return Storage::disk('s3')->response(
+        return DocumentStorage::disk()->response(
             $form1702ExBatchRow->generated_pdf_storage_path,
             $form1702ExBatchRow->generated_pdf_file_name ?? 'form1702ex.pdf',
             [
@@ -991,7 +995,7 @@ class Form1702ExController extends Controller
         $this->ensureAccessibleRow($request, $form1702ExBatch, $form1702ExBatchRow);
         abort_unless(filled($form1702ExBatchRow->generated_pdf_storage_path), 404);
 
-        return Storage::disk('s3')->download(
+        return DocumentStorage::disk()->download(
             $form1702ExBatchRow->generated_pdf_storage_path,
             $form1702ExBatchRow->generated_pdf_file_name ?? 'form1702ex.pdf',
         );
@@ -1004,7 +1008,7 @@ class Form1702ExController extends Controller
         $this->ensureAccessibleStandaloneRow($request, $form1702ExBatchRow);
         abort_unless(filled($form1702ExBatchRow->generated_pdf_storage_path), 404);
 
-        return Storage::disk('s3')->download(
+        return DocumentStorage::disk()->download(
             $form1702ExBatchRow->generated_pdf_storage_path,
             $form1702ExBatchRow->generated_pdf_file_name ?? 'form1702ex.pdf',
         );
@@ -1287,11 +1291,11 @@ class Form1702ExController extends Controller
         abort_unless(
             filled($form1702ExBatchRow->receipt_storage_path)
                 && filled($form1702ExBatchRow->receipt_file_name)
-                && Storage::disk('s3')->exists($form1702ExBatchRow->receipt_storage_path),
+                && DocumentStorage::disk()->exists($form1702ExBatchRow->receipt_storage_path),
             404,
         );
 
-        return Storage::disk('s3')->download(
+        return DocumentStorage::disk()->download(
             $form1702ExBatchRow->receipt_storage_path,
             $form1702ExBatchRow->receipt_file_name,
         );
@@ -1305,11 +1309,11 @@ class Form1702ExController extends Controller
         abort_unless(
             filled($form1702ExBatchRow->receipt_storage_path)
                 && filled($form1702ExBatchRow->receipt_file_name)
-                && Storage::disk('s3')->exists($form1702ExBatchRow->receipt_storage_path),
+                && DocumentStorage::disk()->exists($form1702ExBatchRow->receipt_storage_path),
             404,
         );
 
-        return Storage::disk('s3')->download(
+        return DocumentStorage::disk()->download(
             $form1702ExBatchRow->receipt_storage_path,
             $form1702ExBatchRow->receipt_file_name,
         );

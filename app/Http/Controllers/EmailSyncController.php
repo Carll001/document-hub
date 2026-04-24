@@ -15,7 +15,6 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response as HttpResponse;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Inertia\Inertia;
@@ -194,7 +193,7 @@ class EmailSyncController extends Controller
     {
         $this->abortUnlessOwnsAttachment($request, $syncedEmail, $attachment);
 
-        return Storage::disk('s3')->download(
+        return \App\Support\DocumentStorage::disk()->download(
             $attachment->storage_path,
             $attachment->file_name,
         );
@@ -204,7 +203,7 @@ class EmailSyncController extends Controller
     {
         $this->abortUnlessOwnsAttachment($request, $syncedEmail, $attachment);
 
-        return Storage::disk('s3')->response(
+        return \App\Support\DocumentStorage::disk()->response(
             $attachment->storage_path,
             $attachment->file_name,
             [

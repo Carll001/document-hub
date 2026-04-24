@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature;
 
 use App\Enums\UserRole;
+use App\Jobs\ProcessForm1702ExBatchImport;
 use App\Jobs\ProcessForm1702ExBatchRows;
 use App\Jobs\ProcessForm1702ExRowsExport;
 use App\Mail\ClientCredentialsEmail;
@@ -151,6 +152,47 @@ class Form1702ExTest extends TestCase
 
         $this->assertSame('09/04/2024', $row->payload['effectivity_from'] ?? null);
         $this->assertSame('09/04/2026', $row->payload['effectivity_to'] ?? null);
+    }
+
+    public function test_direct_upload_fails_cleanly_when_uploaded_file_cannot_be_persisted(): void
+    {
+        Queue::fake();
+
+        $staff = User::factory()->create();
+        $tempPath = tempnam(sys_get_temp_dir(), 'form1702ex-');
+        $this->assertIsString($tempPath);
+        file_put_contents($tempPath, "registered_name,tin\nAlpha,0101112220000\n");
+
+        $upload = new class($tempPath) extends UploadedFile
+        {
+            public function __construct(string $path)
+            {
+                parent::__construct(
+                    $path,
+                    '1702-ex-import.csv',
+                    'text/csv',
+                    null,
+                    true,
+                );
+            }
+
+            public function storeAs($path, $name = null, $options = []): false|string
+            {
+                return false;
+            }
+        };
+
+        $this->actingAs($staff)
+            ->post(route('forms.1702-ex.import.store'), [
+                'spreadsheet' => $upload,
+                'receiptAcceptanceStartDate' => '2026-04-10',
+            ])
+            ->assertRedirect(route('forms.1702-ex.index'))
+            ->assertSessionHas('error', 'The bulk form1702ex file could not be imported right now.');
+
+        $this->assertSame(0, Form1702ExBatch::query()->whereBelongsTo($staff)->count());
+        Queue::assertNotPushed(ProcessForm1702ExBatchImport::class);
+        Queue::assertNotPushed(ProcessForm1702ExBatchRows::class);
     }
 
     public function test_direct_upload_uses_split_date_headers_for_target_pdf_dates(): void

@@ -8,7 +8,6 @@ use App\Models\Form1702ExBatchRow;
 use App\Models\User;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use ZipArchive;
 
@@ -51,7 +50,7 @@ class Form1702ExCompletedExportService
         if ($status === self::STATUS_READY) {
             $storagePath = is_string($state['storagePath'] ?? null) ? $state['storagePath'] : null;
 
-            if ($storagePath === null || ! Storage::disk('s3')->exists($storagePath)) {
+            if ($storagePath === null || ! \App\Support\DocumentStorage::disk()->exists($storagePath)) {
                 $this->forgetState($userId);
 
                 return $this->emptyState();
@@ -82,7 +81,7 @@ class Form1702ExCompletedExportService
             $storagePath = $cached['storagePath'] ?? null;
 
             if (is_string($storagePath) && $storagePath !== '') {
-                Storage::disk('s3')->delete($storagePath);
+                \App\Support\DocumentStorage::disk()->delete($storagePath);
             }
         }
 
@@ -96,11 +95,11 @@ class Form1702ExCompletedExportService
     public function buildZip(Collection $rows, int $userId): array
     {
         $directory = "tmp/form-1702-ex-completed-exports/user-{$userId}";
-        Storage::disk('s3')->makeDirectory($directory);
+        \App\Support\DocumentStorage::disk()->makeDirectory($directory);
 
         $fileName = '1702-ex-completed-files-'.Str::uuid().'.zip';
         $storagePath = "{$directory}/{$fileName}";
-        $archivePath = Storage::disk('s3')->path($storagePath);
+        $archivePath = \App\Support\DocumentStorage::disk()->path($storagePath);
 
         $archive = new ZipArchive;
 
@@ -109,7 +108,7 @@ class Form1702ExCompletedExportService
         }
 
         $usedPaths = [];
-        $disk = Storage::disk('s3');
+        $disk = \App\Support\DocumentStorage::disk();
         $includedRows = 0;
 
         foreach ($rows as $row) {

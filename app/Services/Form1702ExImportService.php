@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Support\DocumentStorage;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
@@ -56,8 +57,45 @@ class Form1702ExImportService
     public function importStoredFile(string $path, string $sourceName, array $basePayload): array
     {
         $extension = Str::lower(pathinfo($sourceName, PATHINFO_EXTENSION));
+        $temporaryPath = $this->temporaryImportPath($sourceName);
+        $contents = DocumentStorage::disk()->get($path);
+        if (! is_string($contents) || $contents === '') {
+            throw new RuntimeException('The uploaded spreadsheet could not be read. Please upload it again.');
+        }
 
-        return $this->importFromPath($path, $sourceName, $extension, $basePayload);
+        if (@file_put_contents($temporaryPath, $contents) === false || ! is_file($temporaryPath) || filesize($temporaryPath) === 0) {
+            throw new RuntimeException('A temporary import file could not be created.');
+        }
+
+        try {
+            return $this->importFromPath($temporaryPath, $sourceName, $extension, $basePayload);
+        } finally {
+            if (is_file($temporaryPath)) {
+                @unlink($temporaryPath);
+            }
+        }
+    }
+
+    private function temporaryImportPath(string $sourceName): string
+    {
+        $temporaryPath = tempnam(sys_get_temp_dir(), 'form1702ex-import-');
+
+        if ($temporaryPath === false) {
+            throw new RuntimeException('A temporary import file could not be created.');
+        }
+
+        $extension = Str::lower(pathinfo($sourceName, PATHINFO_EXTENSION));
+        if ($extension === '') {
+            return $temporaryPath;
+        }
+
+        $withExtension = $temporaryPath.'.'.$extension;
+        if (! @rename($temporaryPath, $withExtension)) {
+            @unlink($temporaryPath);
+            throw new RuntimeException('A temporary import file could not be created.');
+        }
+
+        return $withExtension;
     }
 
     /**

@@ -11,7 +11,6 @@ use App\Models\Form1702ExBatchRow;
 use App\Support\Form1702ExRecipientEmailNormalizer;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Mail;
-use Illuminate\Support\Facades\Storage;
 
 class Form1702ExCompletedEmailService
 {
@@ -196,7 +195,7 @@ class Form1702ExCompletedEmailService
     {
         $generatedPdfPath = (string) ($row->generated_pdf_storage_path ?? '');
 
-        return $generatedPdfPath !== '' && Storage::disk('s3')->exists($generatedPdfPath);
+        return $generatedPdfPath !== '' && \App\Support\DocumentStorage::disk()->exists($generatedPdfPath);
     }
 
     private function completionSignature(Form1702ExBatchRow $row, string $recipientEmail): ?string

@@ -8,7 +8,6 @@ use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
 #[Fillable([
@@ -63,7 +62,7 @@ class Form1702ExBatch extends Model
             $batch->rows()->get()->each->delete();
 
             if (filled($batch->import_source_path)) {
-                Storage::disk('s3')->delete((string) $batch->import_source_path);
+                \App\Support\DocumentStorage::disk()->delete((string) $batch->import_source_path);
             }
         });
     }

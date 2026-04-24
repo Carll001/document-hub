@@ -7,7 +7,6 @@ namespace App\Services;
 use App\Models\DocumentBatchItem;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use ZipArchive;
 
@@ -56,7 +55,7 @@ class DocumentGeneratorCompletedExportService
 
         if ($status === self::STATUS_READY) {
             $storagePath = is_string($state['storagePath'] ?? null) ? $state['storagePath'] : null;
-            if ($storagePath === null || ! Storage::disk('s3')->exists($storagePath)) {
+            if ($storagePath === null || ! \App\Support\DocumentStorage::disk()->exists($storagePath)) {
                 $this->forgetState($userId);
 
                 return $this->emptyState();
@@ -91,7 +90,7 @@ class DocumentGeneratorCompletedExportService
         if (is_array($cached)) {
             $storagePath = $cached['storagePath'] ?? null;
             if (is_string($storagePath) && $storagePath !== '') {
-                Storage::disk('s3')->delete($storagePath);
+                \App\Support\DocumentStorage::disk()->delete($storagePath);
             }
         }
 
@@ -105,11 +104,11 @@ class DocumentGeneratorCompletedExportService
     public function buildZip(Collection $items, int $userId): array
     {
         $directory = "tmp/document-generator-afs-completed-exports/user-{$userId}";
-        Storage::disk('s3')->makeDirectory($directory);
+        \App\Support\DocumentStorage::disk()->makeDirectory($directory);
 
         $fileName = 'afs-completed-files-'.Str::uuid().'.zip';
         $storagePath = "{$directory}/{$fileName}";
-        $archivePath = Storage::disk('s3')->path($storagePath);
+        $archivePath = \App\Support\DocumentStorage::disk()->path($storagePath);
 
         $archive = new ZipArchive;
         if ($archive->open($archivePath, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
@@ -117,7 +116,7 @@ class DocumentGeneratorCompletedExportService
         }
 
         $usedPaths = [];
-        $disk = Storage::disk('s3');
+        $disk = \App\Support\DocumentStorage::disk();
         $includedItems = 0;
 
         foreach ($items as $item) {

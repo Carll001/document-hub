@@ -8,7 +8,6 @@ use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use Illuminate\Support\Facades\Storage;
 
 #[Fillable([
     'user_id',
@@ -36,7 +35,7 @@ class DocMergeBatch extends Model
             $batch->bulkMergeFailures()->delete();
             $batch->sourceFiles()->get()->each->delete();
 
-            Storage::disk('s3')->deleteDirectory(
+            \App\Support\DocumentStorage::disk()->deleteDirectory(
                 sprintf('doc-merge/%d/batches/%d', $batch->user_id, $batch->id),
             );
         });

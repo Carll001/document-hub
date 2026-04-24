@@ -9,7 +9,6 @@ use App\Support\Form1702ExFieldValueFormatter;
 use App\Support\FormPdfFpdi;
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use RuntimeException;
 
@@ -232,7 +231,7 @@ class Form1702ExService
     public function clearGeneratedPdf(Form1702ExBatchRow $row): Form1702ExBatchRow
     {
         if (filled($row->generated_pdf_storage_path)) {
-            Storage::disk('s3')->delete($row->generated_pdf_storage_path);
+            \App\Support\DocumentStorage::disk()->delete($row->generated_pdf_storage_path);
         }
 
         $row->forceFill([
@@ -248,7 +247,7 @@ class Form1702ExService
 
     public function clearReceipt(Form1702ExBatchRow $row): Form1702ExBatchRow
     {
-        $disk = Storage::disk('s3');
+        $disk = \App\Support\DocumentStorage::disk();
         $baseStoragePath = $row->receiptBaseStoragePath();
 
         if (filled($row->receipt_storage_path)) {
@@ -273,7 +272,7 @@ class Form1702ExService
 
     public function generateBatchRowPdf(Form1702ExBatchRow $row): Form1702ExBatchRow
     {
-        $disk = Storage::disk('s3');
+        $disk = \App\Support\DocumentStorage::disk();
         $temporaryOutputPath = storage_path('app/tmp/form-1702-ex-'.Str::uuid().'.pdf');
 
         if (! is_dir(dirname($temporaryOutputPath))) {
@@ -326,7 +325,7 @@ class Form1702ExService
     {
         $schema = $this->receiptFieldSchema();
         $payload = $this->receiptMockPayload();
-        $disk = Storage::disk('s3');
+        $disk = \App\Support\DocumentStorage::disk();
         $temporaryOutputPath = storage_path('app/tmp/form-1702-ex-receipt-'.Str::uuid().'.pdf');
 
         if (! is_dir(dirname($temporaryOutputPath))) {
@@ -403,7 +402,7 @@ class Form1702ExService
     {
         $schema = $this->page2FieldSchema();
         $payload = $this->page2MockPayload();
-        $disk = Storage::disk('s3');
+        $disk = \App\Support\DocumentStorage::disk();
         $temporaryOutputPath = storage_path('app/tmp/form-1702-ex-page2-'.Str::uuid().'.pdf');
 
         if (! is_dir(dirname($temporaryOutputPath))) {
@@ -467,7 +466,7 @@ class Form1702ExService
     {
         $schema = $this->page3FieldSchema();
         $payload = $this->page3MockPayload();
-        $disk = Storage::disk('s3');
+        $disk = \App\Support\DocumentStorage::disk();
         $temporaryOutputPath = storage_path('app/tmp/form-1702-ex-page3-'.Str::uuid().'.pdf');
 
         if (! is_dir(dirname($temporaryOutputPath))) {
@@ -531,7 +530,7 @@ class Form1702ExService
     {
         $schema = $this->fieldSchema();
         $payload = $this->mockPayload();
-        $disk = Storage::disk('s3');
+        $disk = \App\Support\DocumentStorage::disk();
         $temporaryOutputPath = storage_path('app/tmp/form-1702-ex-page1-'.Str::uuid().'.pdf');
 
         if (! is_dir(dirname($temporaryOutputPath))) {
@@ -823,7 +822,7 @@ class Form1702ExService
      */
     private function storedPdfDetails(string $storagePath, string $fileName): ?array
     {
-        $disk = Storage::disk('s3');
+        $disk = \App\Support\DocumentStorage::disk();
 
         if (! $disk->exists($storagePath)) {
             return null;

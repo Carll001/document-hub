@@ -13,7 +13,7 @@ use Carbon\CarbonImmutable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Throwable;
 
 class GenerateDocumentBatchItemJob implements ShouldQueue
@@ -55,71 +55,86 @@ class GenerateDocumentBatchItemJob implements ShouldQueue
             $docxRelativePath = "{$baseDir}/row-{$item->row_number}.docx";
             $pdfRelativePath = "{$baseDir}/row-{$item->row_number}.pdf";
 
-            Storage::disk('s3')->makeDirectory($baseDir);
+            \App\Support\DocumentStorage::disk()->makeDirectory($baseDir);
 
             /** @var array<string, string> $rowData */
             $rowData = $item->row_data ?? [];
             $template = $this->resolveTemplateForRow($batch, $rowData);
-            $templatePath = Storage::disk('s3')->path($template->template_path);
-            $docxPath = Storage::disk('s3')->path($docxRelativePath);
-            $templateRowData = $this->buildTemplateRowData(
-                $batch,
-                $rowData,
-                $templatePath,
-                $template->year,
-                $docxTemplateService,
-                $excelExtractionService
-            );
+            $templatePath = $this->copyStorageFileToTemporaryPath($template->template_path, '.docx');
+            $docxPath = storage_path('app/tmp/document-generator-'.Str::uuid().'.docx');
+            $pdfPath = null;
 
-            $validation = $docxTemplateService->validateRowData($templatePath, $templateRowData, $template->year);
-            $validationErrors = [];
-            if (($validation['missing_data'] ?? []) !== []) {
-                $validationErrors[] = 'Missing data: '.implode(', ', $validation['missing_data']);
-            }
-            if (($validation['errors'] ?? []) !== []) {
-                array_push($validationErrors, ...$validation['errors']);
-            }
+            try {
+                $templateRowData = $this->buildTemplateRowData(
+                    $batch,
+                    $rowData,
+                    $templatePath,
+                    $template->year,
+                    $docxTemplateService,
+                    $excelExtractionService
+                );
 
-            if ($validationErrors !== []) {
-                $errorMessage = implode(' ', $validationErrors);
-                $this->markItemFinal($item->id, false, null, null, $errorMessage, $validation);
-                $failedItem = DocumentBatchItem::query()->find($item->id);
-
-                if ($failedItem instanceof DocumentBatchItem) {
-                    $activityLogger->log(
-                        $batch,
-                        $failedItem,
-                        null,
-                        'generation_failed_validation',
-                        "Row {$item->row_number} failed placeholder validation.",
-                        $validation
-                    );
+                $validation = $docxTemplateService->validateRowData($templatePath, $templateRowData, $template->year);
+                $validationErrors = [];
+                if (($validation['missing_data'] ?? []) !== []) {
+                    $validationErrors[] = 'Missing data: '.implode(', ', $validation['missing_data']);
+                }
+                if (($validation['errors'] ?? []) !== []) {
+                    array_push($validationErrors, ...$validation['errors']);
                 }
 
-                return;
-            }
+                if ($validationErrors !== []) {
+                    $errorMessage = implode(' ', $validationErrors);
+                    $this->markItemFinal($item->id, false, null, null, $errorMessage, $validation);
+                    $failedItem = DocumentBatchItem::query()->find($item->id);
 
-            $docxTemplateService->render($templatePath, $docxPath, $templateRowData, $template->year);
+                    if ($failedItem instanceof DocumentBatchItem) {
+                        $activityLogger->log(
+                            $batch,
+                            $failedItem,
+                            null,
+                            'generation_failed_validation',
+                            "Row {$item->row_number} failed placeholder validation.",
+                            $validation
+                        );
+                    }
 
-            $this->markDocxDone($item->id, $docxRelativePath);
+                    return;
+                }
 
-            $pdfAbsolutePath = $pdfConversionService->convertDocxToPdf($docxPath);
-            $storedPdfPath = $this->storePdfAsExpectedPath($pdfAbsolutePath, $pdfRelativePath);
+                $docxTemplateService->render($templatePath, $docxPath, $templateRowData, $template->year);
+                $this->storeLocalFileToDocumentStorage($docxPath, $docxRelativePath);
 
-            $this->markItemFinal($item->id, true, $docxRelativePath, $storedPdfPath);
-            $completedItem = DocumentBatchItem::query()->find($item->id);
-            if ($completedItem instanceof DocumentBatchItem) {
-                $activityLogger->log(
-                    $batch,
-                    $completedItem,
-                    null,
-                    'generation_completed',
-                    "Row {$item->row_number} generated successfully.",
-                    [
-                        'docx_path' => $docxRelativePath,
-                        'pdf_path' => $storedPdfPath,
-                    ]
-                );
+                $this->markDocxDone($item->id, $docxRelativePath);
+
+                $pdfPath = $pdfConversionService->convertDocxToPdf($docxPath);
+                $this->storeLocalFileToDocumentStorage($pdfPath, $pdfRelativePath);
+
+                $this->markItemFinal($item->id, true, $docxRelativePath, $pdfRelativePath);
+                $completedItem = DocumentBatchItem::query()->find($item->id);
+                if ($completedItem instanceof DocumentBatchItem) {
+                    $activityLogger->log(
+                        $batch,
+                        $completedItem,
+                        null,
+                        'generation_completed',
+                        "Row {$item->row_number} generated successfully.",
+                        [
+                            'docx_path' => $docxRelativePath,
+                            'pdf_path' => $pdfRelativePath,
+                        ]
+                    );
+                }
+            } finally {
+                if (is_file($templatePath)) {
+                    @unlink($templatePath);
+                }
+                if (is_file($docxPath)) {
+                    @unlink($docxPath);
+                }
+                if (is_string($pdfPath) && is_file($pdfPath)) {
+                    @unlink($pdfPath);
+                }
             }
         } catch (Throwable $exception) {
             $this->markItemFinal(
@@ -150,14 +165,62 @@ class GenerateDocumentBatchItemJob implements ShouldQueue
         }
     }
 
-    private function storePdfAsExpectedPath(string $absolutePdfPath, string $expectedRelativePath): string
+    private function copyStorageFileToTemporaryPath(string $storagePath, string $extension = ''): string
     {
-        $absoluteExpectedPath = Storage::disk('s3')->path($expectedRelativePath);
-        if ($absolutePdfPath !== $absoluteExpectedPath && file_exists($absolutePdfPath)) {
-            @rename($absolutePdfPath, $absoluteExpectedPath);
+        $temporaryPath = tempnam(sys_get_temp_dir(), 'doc-gen-template-');
+        if ($temporaryPath === false) {
+            throw new \RuntimeException('Unable to allocate a temporary file path.');
         }
 
-        return $expectedRelativePath;
+        $resolvedPath = $temporaryPath;
+        $normalizedExtension = trim($extension);
+        if ($normalizedExtension !== '') {
+            $resolvedPath = $temporaryPath.(str_starts_with($normalizedExtension, '.') ? $normalizedExtension : '.'.$normalizedExtension);
+            if (! @rename($temporaryPath, $resolvedPath)) {
+                @unlink($temporaryPath);
+                throw new \RuntimeException('Unable to prepare a temporary file path.');
+            }
+        }
+
+        $stream = \App\Support\DocumentStorage::disk()->readStream($storagePath);
+        if (! is_resource($stream)) {
+            if (is_file($resolvedPath)) {
+                @unlink($resolvedPath);
+            }
+            throw new \RuntimeException('The template file could not be read from storage.');
+        }
+
+        $target = @fopen($resolvedPath, 'wb');
+        if (! is_resource($target)) {
+            fclose($stream);
+            if (is_file($resolvedPath)) {
+                @unlink($resolvedPath);
+            }
+            throw new \RuntimeException('A temporary template file could not be opened.');
+        }
+
+        try {
+            stream_copy_to_stream($stream, $target);
+        } finally {
+            fclose($stream);
+            fclose($target);
+        }
+
+        return $resolvedPath;
+    }
+
+    private function storeLocalFileToDocumentStorage(string $localPath, string $storagePath): void
+    {
+        $stream = @fopen($localPath, 'rb');
+        if (! is_resource($stream)) {
+            throw new \RuntimeException('A generated file could not be read for storage.');
+        }
+
+        try {
+            \App\Support\DocumentStorage::disk()->writeStream($storagePath, $stream);
+        } finally {
+            fclose($stream);
+        }
     }
 
     /**
@@ -252,11 +315,11 @@ class GenerateDocumentBatchItemJob implements ShouldQueue
             return null;
         }
 
-        if (! Storage::disk('s3')->exists($previousBatch->excel_path)) {
+        if (! \App\Support\DocumentStorage::disk()->exists($previousBatch->excel_path)) {
             return null;
         }
 
-        $rows = $excelExtractionService->extract(Storage::disk('s3')->path($previousBatch->excel_path), 0)['rows'];
+        $rows = $excelExtractionService->extractFromDocumentStorage($previousBatch->excel_path, 0)['rows'];
         foreach ($rows as $previousRowData) {
             if (trim($this->extractCompanyFromRowData($previousRowData)) === $company) {
                 return $previousRowData;
@@ -394,7 +457,7 @@ class GenerateDocumentBatchItemJob implements ShouldQueue
             throw new \RuntimeException("No template configured for year {$year}.");
         }
 
-        if (! Storage::disk('s3')->exists($template->template_path)) {
+        if (! \App\Support\DocumentStorage::disk()->exists($template->template_path)) {
             throw new \RuntimeException("Template file is missing for year {$year}.");
         }
 

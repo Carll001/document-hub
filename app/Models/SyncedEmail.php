@@ -7,7 +7,6 @@ use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use Illuminate\Support\Facades\Storage;
 
 #[Fillable([
     'email_sync_account_id',
@@ -43,7 +42,7 @@ class SyncedEmail extends Model
     protected static function booted(): void
     {
         static::deleting(function (self $email): void {
-            Storage::disk('s3')->deleteDirectory("email-sync/shared/{$email->id}");
+            \App\Support\DocumentStorage::disk()->deleteDirectory("email-sync/shared/{$email->id}");
         });
     }
 

@@ -10,7 +10,6 @@ use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use RuntimeException;
@@ -129,7 +128,7 @@ class DocMergeBatchService
     {
         $batch->loadMissing(['mergedPdfs']);
 
-        $disk = Storage::disk('s3');
+        $disk = \App\Support\DocumentStorage::disk();
         $temporaryZipPath = storage_path('app/tmp/doc-merge-batch-'.Str::uuid().'.zip');
 
         if (! is_dir(dirname($temporaryZipPath))) {
@@ -187,7 +186,7 @@ class DocMergeBatchService
      */
     public function storedPageFolders(DocMergeBatch $batch): array
     {
-        $disk = Storage::disk('s3');
+        $disk = \App\Support\DocumentStorage::disk();
         /** @var Collection<int, DocMergeBatchSourceFile> $sourceFiles */
         $sourceFiles = $batch->sourceFiles()
             ->orderBy('page_folder_number')
@@ -258,7 +257,7 @@ class DocMergeBatchService
         array $pageFolders,
         ?ZipArchive $zip = null,
     ): int {
-        $disk = Storage::disk('s3');
+        $disk = \App\Support\DocumentStorage::disk();
         $touchedPageFolderNumbers = array_map(
             static fn (array $pageFolder): int => $pageFolder['number'],
             $pageFolders,
@@ -330,7 +329,7 @@ class DocMergeBatchService
             });
 
             if ($existingSourceFiles->isNotEmpty()) {
-                $disk = Storage::disk('s3');
+                $disk = \App\Support\DocumentStorage::disk();
 
                 foreach ($existingSourceFiles as $existingSourceFile) {
                     $disk->delete($existingSourceFile->storage_path);

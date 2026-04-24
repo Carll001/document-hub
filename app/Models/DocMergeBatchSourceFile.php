@@ -7,7 +7,6 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Support\Facades\Storage;
 
 #[Fillable([
     'doc_merge_batch_id',
@@ -27,7 +26,7 @@ class DocMergeBatchSourceFile extends Model
     protected static function booted(): void
     {
         static::deleting(function (self $sourceFile): void {
-            Storage::disk('s3')->delete($sourceFile->storage_path);
+            \App\Support\DocumentStorage::disk()->delete($sourceFile->storage_path);
         });
     }
 
