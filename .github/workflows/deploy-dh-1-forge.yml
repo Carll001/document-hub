@@ -1,0 +1,18 @@
+name: Deploy DH-1 to Forge
+
+on:
+  push:
+    branches:
+      - DH-1
+
+jobs:
+  deploy:
+    name: Trigger Forge Deploy Hook
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Send deploy request to Forge
+        run: |
+          curl --fail --silent --show-error \
+            --request POST \
+            "https://forge.laravel.com/servers/1003951/sites/3135323/deploy/http?token=iFRrc3pfv4DNgg4YQV2yeBZpQiF3JyVSeREKDLHj"
