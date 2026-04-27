@@ -24,7 +24,11 @@ use Illuminate\Http\File;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Database\QueryException;
+use InvalidArgumentException;
+use Throwable;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -159,10 +163,10 @@ class DocumentGeneratorController extends Controller
                 $signature?->original_signature_path,
             ]);
 
-            $originalPath = $uploaded->store("document-generator/{$user->id}/signature", \App\Support\DocumentStorage::diskName());
             $processedTempPath = $signatureImageService->processToTransparentPng(
-                \App\Support\DocumentStorage::disk()->path($originalPath),
+                $uploaded->getPathname(),
             );
+            $originalPath = $uploaded->store("document-generator/{$user->id}/signature", \App\Support\DocumentStorage::diskName());
 
             $processedPath = "document-generator/{$user->id}/signature/processed-".Str::uuid().'.png';
             $processedFile = new File($processedTempPath);
@@ -268,7 +272,7 @@ class DocumentGeneratorController extends Controller
         ]);
     }
 
-    public function signaturePreview(Request $request): BinaryFileResponse
+    public function signaturePreview(Request $request): StreamedResponse
     {
         $this->ensureSignatureFeatureEnabledOr404();
 
@@ -287,7 +291,7 @@ class DocumentGeneratorController extends Controller
             abort(404);
         }
 
-        return response()->file(\App\Support\DocumentStorage::disk()->path($path), [
+        return \App\Support\DocumentStorage::disk()->response($path, null, [
             'Content-Type' => 'image/png',
             'Cache-Control' => 'no-cache, no-store, must-revalidate',
             'Pragma' => 'no-cache',
@@ -513,105 +517,208 @@ class DocumentGeneratorController extends Controller
         ExcelExtractionService $excelExtractionService
     ): JsonResponse {
         $sheetIndex = 0;
+        $excelPath = null;
+        $storedTemplatePaths = [];
+        $batch = null;
 
-        $excelFile = $request->file('excel_file');
-        $defaultTemplateFile = $request->file('default_template_file');
-        if (! $excelFile) {
-            return response()->json(['message' => 'Files are required.'], 422);
-        }
-
-        $excelPath = $excelFile->store("document-generator/{$request->user()->id}/uploads", \App\Support\DocumentStorage::diskName());
-        $resolvedTemplates = $this->resolveTemplatesForBatch($request, $defaultTemplateFile);
-        $defaultTemplate = $resolvedTemplates['default'];
-        $yearTemplatePayload = $resolvedTemplates['year_templates'];
-
-        $extracted = $excelExtractionService->extractFromDocumentStorage($excelPath, $sheetIndex);
-        $headers = $extracted['headers'];
-        $rows = $extracted['rows'];
-        $previousWorkbookPath = $this->resolvePreviousWorkbookPath($request->user()->id);
-
-        if ($previousWorkbookPath !== null) {
-            $previousWorkbookRows = $excelExtractionService->extractFromDocumentStorage($previousWorkbookPath, $sheetIndex)['rows'];
-            $rows = $this->enrichRowsWithPreviousWorkbookData($rows, $previousWorkbookRows);
-            $headers = $this->mergeHeadersWithRows($headers, $rows);
-        }
-
-        $batch = DB::transaction(function () use (
-            $request,
-            $headers,
-            $rows,
-            $sheetIndex,
-            $excelFile,
-            $excelPath,
-            $defaultTemplate,
-            $yearTemplatePayload
-        ): DocumentBatch {
-            $batch = DocumentBatch::query()->create([
-                'user_id' => $request->user()->id,
-                'source_excel_name' => $excelFile->getClientOriginalName(),
-                'template_name' => $defaultTemplate['template_name'],
-                'excel_path' => $excelPath,
-                'template_path' => $defaultTemplate['template_path'],
-                'sheet_index' => $sheetIndex,
-                'headers_json' => $headers,
-                'total_items' => count($rows),
-                'status' => count($rows) > 0 ? 'queued' : 'completed',
-                'completed_at' => count($rows) > 0 ? null : now(),
-            ]);
-
-            $templatePayload = [[
-                'document_batch_id' => $batch->id,
-                'year' => null,
-                'template_name' => $defaultTemplate['template_name'],
-                'template_path' => $defaultTemplate['template_path'],
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]];
-
-            foreach ($yearTemplatePayload as $template) {
-                $templatePayload[] = [
-                    'document_batch_id' => $batch->id,
-                    'year' => $template['year'],
-                    'template_name' => $template['template_name'],
-                    'template_path' => $template['template_path'],
-                    'created_at' => now(),
-                    'updated_at' => now(),
-                ];
+        try {
+            $excelFile = $request->file('excel_file');
+            $defaultTemplateFile = $request->file('default_template_file');
+            if (! $excelFile) {
+                return response()->json(['message' => 'Files are required.'], 422);
             }
 
-            DocumentBatchTemplate::query()->insert($templatePayload);
+            $excelPath = $excelFile->store("document-generator/{$request->user()->id}/uploads", \App\Support\DocumentStorage::diskName());
+            $resolvedTemplates = $this->resolveTemplatesForBatch($request, $defaultTemplateFile);
+            $defaultTemplate = $resolvedTemplates['default'];
+            $yearTemplatePayload = $resolvedTemplates['year_templates'];
 
-            if ($rows !== []) {
-                $itemPayload = [];
-                foreach ($rows as $index => $rowData) {
-                    $itemPayload[] = [
+            $storedTemplatePaths = array_values(array_filter([
+                $defaultTemplate['template_path'] ?? null,
+                ...array_map(static fn (array $template): ?string => $template['template_path'] ?? null, $yearTemplatePayload),
+            ]));
+
+            $extracted = $excelExtractionService->extractFromDocumentStorage($excelPath, $sheetIndex);
+            $headers = $extracted['headers'];
+            $rows = $extracted['rows'];
+            $previousWorkbookPath = $this->resolvePreviousWorkbookPath($request->user()->id);
+
+            if ($previousWorkbookPath !== null) {
+                $previousWorkbookRows = $excelExtractionService->extractFromDocumentStorage($previousWorkbookPath, $sheetIndex)['rows'];
+                $rows = $this->enrichRowsWithPreviousWorkbookData($rows, $previousWorkbookRows);
+                $headers = $this->mergeHeadersWithRows($headers, $rows);
+            }
+
+            $batch = DB::transaction(function () use (
+                $request,
+                $headers,
+                $rows,
+                $sheetIndex,
+                $excelFile,
+                $excelPath,
+                $defaultTemplate,
+                $yearTemplatePayload
+            ): DocumentBatch {
+                $batch = DocumentBatch::query()->create([
+                    'user_id' => $request->user()->id,
+                    'source_excel_name' => $excelFile->getClientOriginalName(),
+                    'template_name' => $defaultTemplate['template_name'],
+                    'excel_path' => $excelPath,
+                    'template_path' => $defaultTemplate['template_path'],
+                    'sheet_index' => $sheetIndex,
+                    'headers_json' => $headers,
+                    'total_items' => count($rows),
+                    'status' => count($rows) > 0 ? 'queued' : 'completed',
+                    'completed_at' => count($rows) > 0 ? null : now(),
+                ]);
+
+                $templatePayload = [[
+                    'document_batch_id' => $batch->id,
+                    'year' => null,
+                    'template_name' => $defaultTemplate['template_name'],
+                    'template_path' => $defaultTemplate['template_path'],
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]];
+
+                foreach ($yearTemplatePayload as $template) {
+                    $templatePayload[] = [
                         'document_batch_id' => $batch->id,
-                        'row_number' => $index + 2,
-                        'row_data' => json_encode($rowData, JSON_THROW_ON_ERROR),
-                        'status' => 'queued',
+                        'year' => $template['year'],
+                        'template_name' => $template['template_name'],
+                        'template_path' => $template['template_path'],
                         'created_at' => now(),
                         'updated_at' => now(),
                     ];
                 }
 
-                DocumentBatchItem::query()->insert($itemPayload);
-            }
+                DocumentBatchTemplate::query()->insert($templatePayload);
 
-            return $batch;
-        });
+                if ($rows !== []) {
+                    $itemPayload = [];
+                    foreach ($rows as $index => $rowData) {
+                        $itemPayload[] = [
+                            'document_batch_id' => $batch->id,
+                            'row_number' => $index + 2,
+                            'row_data' => json_encode($rowData, JSON_THROW_ON_ERROR),
+                            'status' => 'queued',
+                            'created_at' => now(),
+                            'updated_at' => now(),
+                        ];
+                    }
 
-        DocumentBatchItem::query()
-            ->where('document_batch_id', $batch->id)
-            ->pluck('id')
-            ->each(static function (int $itemId): void {
-                GenerateDocumentBatchItemJob::dispatch($itemId);
+                    DocumentBatchItem::query()->insert($itemPayload);
+                }
+
+                return $batch;
             });
 
-        return response()->json([
-            'batch_id' => $batch->id,
-            'status' => $batch->status,
-            'total_items' => $batch->total_items,
-        ], 201);
+            $dispatchFailures = 0;
+            $firstDispatchFailureMessage = null;
+            $initialGenerationDelaySeconds = $this->generationQueueInitialDelaySeconds();
+            DocumentBatchItem::query()
+                ->where('document_batch_id', $batch->id)
+                ->pluck('id')
+                ->each(function (int $itemId) use (&$dispatchFailures, &$firstDispatchFailureMessage, $initialGenerationDelaySeconds): void {
+                    try {
+                        GenerateDocumentBatchItemJob::dispatch($itemId)
+                            ->delay(now()->addSeconds($initialGenerationDelaySeconds));
+                    } catch (Throwable $exception) {
+                        $dispatchFailures++;
+                        if ($firstDispatchFailureMessage === null) {
+                            $firstDispatchFailureMessage = $exception->getMessage();
+                        }
+                        Log::error('Document batch item dispatch failed.', [
+                            'item_id' => $itemId,
+                            'exception' => $exception,
+                        ]);
+                    }
+                });
+
+            if ($dispatchFailures > 0 && $batch->total_items > 0) {
+                $dispatchedCount = max(0, $batch->total_items - $dispatchFailures);
+                if ($dispatchedCount === 0) {
+                    $batch->status = 'failed';
+                    $batch->completed_at = now();
+                }
+                $batch->save();
+
+                return response()->json([
+                    'batch_id' => $batch->id,
+                    'status' => $batch->status,
+                    'total_items' => $batch->total_items,
+                    'message' => $dispatchedCount === 0
+                        ? ($firstDispatchFailureMessage !== null && trim($firstDispatchFailureMessage) !== ''
+                            ? $firstDispatchFailureMessage
+                            : 'Batch was created, but processing jobs could not be queued. Check queue/database configuration.')
+                        : "Batch created. {$dispatchedCount} of {$batch->total_items} rows were queued for processing.",
+                ], 201);
+            }
+
+            return response()->json([
+                'batch_id' => $batch->id,
+                'status' => $batch->status,
+                'total_items' => $batch->total_items,
+                'message' => 'Document generation has started for the uploaded file.',
+            ], 201);
+        } catch (ValidationException $exception) {
+            if (! $batch instanceof DocumentBatch) {
+                $this->deleteTemplateFiles($storedTemplatePaths);
+                if (is_string($excelPath) && $excelPath !== '' && \App\Support\DocumentStorage::disk()->exists($excelPath)) {
+                    \App\Support\DocumentStorage::disk()->delete($excelPath);
+                }
+            }
+
+            $errors = $exception->errors();
+
+            return response()->json([
+                'message' => $this->firstValidationMessage($errors, 'Validation failed.'),
+                'errors' => $errors,
+            ], 422);
+        } catch (InvalidArgumentException $exception) {
+            if (! $batch instanceof DocumentBatch) {
+                $this->deleteTemplateFiles($storedTemplatePaths);
+                if (is_string($excelPath) && $excelPath !== '' && \App\Support\DocumentStorage::disk()->exists($excelPath)) {
+                    \App\Support\DocumentStorage::disk()->delete($excelPath);
+                }
+            }
+
+            $message = trim($exception->getMessage());
+
+            return response()->json([
+                'message' => $message !== '' ? $message : 'The uploaded Excel file could not be processed.',
+            ], 422);
+        } catch (QueryException $exception) {
+            if (! $batch instanceof DocumentBatch) {
+                $this->deleteTemplateFiles($storedTemplatePaths);
+                if (is_string($excelPath) && $excelPath !== '' && \App\Support\DocumentStorage::disk()->exists($excelPath)) {
+                    \App\Support\DocumentStorage::disk()->delete($excelPath);
+                }
+            }
+
+            Log::error('Document batch creation failed due to database error.', [
+                'exception' => $exception,
+            ]);
+
+            return response()->json([
+                'message' => 'The batch could not be created because the database is unavailable. Please try again.',
+            ], 503);
+        } catch (Throwable $exception) {
+            if (! $batch instanceof DocumentBatch) {
+                $this->deleteTemplateFiles($storedTemplatePaths);
+                if (is_string($excelPath) && $excelPath !== '' && \App\Support\DocumentStorage::disk()->exists($excelPath)) {
+                    \App\Support\DocumentStorage::disk()->delete($excelPath);
+                }
+            }
+
+            Log::error('Document batch creation failed unexpectedly.', [
+                'exception' => $exception,
+            ]);
+
+            return response()->json([
+                'message' => 'The batch could not be created right now. Please try again.',
+            ], 500);
+        }
     }
 
     public function progress(Request $request, DocumentBatch $batch): JsonResponse
@@ -733,7 +840,7 @@ class DocumentGeneratorController extends Controller
         }
 
         if ($type === 'pdf') {
-            return response()->file(\App\Support\DocumentStorage::disk()->path($path), [
+            return \App\Support\DocumentStorage::disk()->response($path, null, [
                 'Content-Type' => 'application/pdf',
                 'Content-Disposition' => "inline; filename=\"batch-{$batch->id}-row-{$item->row_number}.pdf\"",
             ]);
@@ -1048,7 +1155,8 @@ class DocumentGeneratorController extends Controller
             );
         });
 
-        GenerateDocumentBatchItemJob::dispatch($item->id);
+        GenerateDocumentBatchItemJob::dispatch($item->id)
+            ->delay(now()->addSeconds($this->generationQueueInitialDelaySeconds()));
 
         $refreshedItem = DocumentBatchItem::query()->findOrFail($item->id);
 
@@ -1817,7 +1925,10 @@ class DocumentGeneratorController extends Controller
             $templates[] = [
                 'year' => (int) $year,
                 'template_name' => $file->getClientOriginalName(),
-                'template_path' => $file->store("document-generator/{$request->user()->id}/uploads", \App\Support\DocumentStorage::diskName()),
+                'template_path' => $this->storeTemplateUploadWithAvailabilityCheck(
+                    $file,
+                    "document-generator/{$request->user()->id}/uploads",
+                ),
             ];
         }
 
@@ -1839,7 +1950,10 @@ class DocumentGeneratorController extends Controller
         if ($uploadedDefaultTemplateFile) {
             $defaultTemplate = [
                 'template_name' => $uploadedDefaultTemplateFile->getClientOriginalName(),
-                'template_path' => $uploadedDefaultTemplateFile->store("document-generator/{$request->user()->id}/uploads", \App\Support\DocumentStorage::diskName()),
+                'template_path' => $this->storeTemplateUploadWithAvailabilityCheck(
+                    $uploadedDefaultTemplateFile,
+                    "document-generator/{$request->user()->id}/uploads",
+                ),
             ];
         }
 
@@ -1851,6 +1965,26 @@ class DocumentGeneratorController extends Controller
         }
 
         return $this->cloneGlobalTemplatesForBatch($request->user()->id);
+    }
+
+    private function storeTemplateUploadWithAvailabilityCheck(UploadedFile $file, string $directory): string
+    {
+        $path = $file->store($directory, \App\Support\DocumentStorage::diskName());
+
+        if (! is_string($path) || trim($path) === '') {
+            throw new \RuntimeException('Template file could not be stored.');
+        }
+
+        if (! $this->storagePathExistsWithRetry($path, 120, 500)) {
+            throw new \RuntimeException("Template file is not yet available in storage. Path: {$path}.");
+        }
+
+        return $path;
+    }
+
+    private function generationQueueInitialDelaySeconds(): int
+    {
+        return max(0, (int) config('services.document_generator.generation_queue_initial_delay_seconds', 10));
     }
 
     /**
@@ -1899,9 +2033,34 @@ class DocumentGeneratorController extends Controller
         $filename = pathinfo($templateName, PATHINFO_FILENAME);
         $targetPath = "document-generator/{$userId}/uploads/{$filename}-".Str::uuid().($extension !== '' ? ".{$extension}" : '');
 
-        \App\Support\DocumentStorage::disk()->copy($sourcePath, $targetPath);
+        $disk = \App\Support\DocumentStorage::disk();
+        $copied = $disk->copy($sourcePath, $targetPath);
+        if ($copied !== true) {
+            throw new \RuntimeException('Unable to copy global template into user storage.');
+        }
+
+        if (! $this->storagePathExistsWithRetry($targetPath)) {
+            throw new \RuntimeException('Copied template is not yet available in storage.');
+        }
 
         return $targetPath;
+    }
+
+    private function storagePathExistsWithRetry(string $path, int $attempts = 8, int $delayMilliseconds = 250): bool
+    {
+        $disk = \App\Support\DocumentStorage::disk();
+
+        for ($attempt = 1; $attempt <= $attempts; $attempt++) {
+            if ($disk->exists($path)) {
+                return true;
+            }
+
+            if ($attempt < $attempts) {
+                usleep($delayMilliseconds * 1000);
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -2184,11 +2343,18 @@ class DocumentGeneratorController extends Controller
             return false;
         }
 
+        $temporaryDocxPath = null;
+
         try {
-            $docxPath = \App\Support\DocumentStorage::disk()->path($item->docx_path);
-            return $docxTemplateService->hasSignatureImagePlaceholders($docxPath);
+            $temporaryDocxPath = $this->copyStorageFileToTemporaryPath($item->docx_path, '.docx');
+
+            return $docxTemplateService->hasSignatureImagePlaceholders($temporaryDocxPath);
         } catch (\Throwable) {
             return false;
+        } finally {
+            if (is_string($temporaryDocxPath) && is_file($temporaryDocxPath)) {
+                @unlink($temporaryDocxPath);
+            }
         }
     }
 
@@ -2207,35 +2373,46 @@ class DocumentGeneratorController extends Controller
             throw new \RuntimeException('DOCX file is missing on disk.');
         }
 
-        $docxPath = \App\Support\DocumentStorage::disk()->path($item->docx_path);
-        $getorSignatureImagePath = \App\Support\DocumentStorage::disk()->path($signature->processed_signature_path);
+        $docxPath = $this->copyStorageFileToTemporaryPath($item->docx_path, '.docx');
+        $getorSignatureImagePath = $this->copyStorageFileToTemporaryPath($signature->processed_signature_path, '.png');
+        $convertedPdfPath = null;
 
-        $page2Layout = $this->signatureLayout($signature, 'page2');
-        $page4Layout = $this->signatureLayout($signature, 'page4');
+        try {
+            $page2Layout = $this->signatureLayout($signature, 'page2');
+            $page4Layout = $this->signatureLayout($signature, 'page4');
 
-        $docxTemplateService->injectSignatureImages($docxPath, $docxPath, [
-            'president_signature' => [
-                'path' => $presidentSignatureImagePath,
-                'width_mm' => (float) ($page2Layout['width'] ?? 40.0),
-                'height_mm' => (float) ($page2Layout['height'] ?? 16.0),
-            ],
-            'getor_signature' => [
-                'path' => $getorSignatureImagePath,
-                'width_mm' => (float) ($page4Layout['width'] ?? 40.0),
-                'height_mm' => (float) ($page4Layout['height'] ?? 16.0),
-            ],
-        ]);
+            $docxTemplateService->injectSignatureImages($docxPath, $docxPath, [
+                'president_signature' => [
+                    'path' => $presidentSignatureImagePath,
+                    'width_mm' => (float) ($page2Layout['width'] ?? 40.0),
+                    'height_mm' => (float) ($page2Layout['height'] ?? 16.0),
+                ],
+                'getor_signature' => [
+                    'path' => $getorSignatureImagePath,
+                    'width_mm' => (float) ($page4Layout['width'] ?? 40.0),
+                    'height_mm' => (float) ($page4Layout['height'] ?? 16.0),
+                ],
+            ]);
 
-        $convertedPdfPath = $pdfConversionService->convertDocxToPdf($docxPath);
-        $expectedPdfRelativePath = $this->expectedPdfRelativePath($item);
-        $expectedPdfAbsolutePath = \App\Support\DocumentStorage::disk()->path($expectedPdfRelativePath);
+            $convertedPdfPath = $pdfConversionService->convertDocxToPdf($docxPath);
+            $expectedPdfRelativePath = $this->expectedPdfRelativePath($item);
 
-        if ($convertedPdfPath !== $expectedPdfAbsolutePath && is_file($convertedPdfPath)) {
-            @rename($convertedPdfPath, $expectedPdfAbsolutePath);
+            $this->storeLocalFileToDocumentStorage($docxPath, $item->docx_path);
+            $this->storeLocalFileToDocumentStorage($convertedPdfPath, $expectedPdfRelativePath);
+
+            $item->pdf_path = $expectedPdfRelativePath;
+            $item->save();
+        } finally {
+            if (is_file($docxPath)) {
+                @unlink($docxPath);
+            }
+            if (is_file($getorSignatureImagePath)) {
+                @unlink($getorSignatureImagePath);
+            }
+            if (is_string($convertedPdfPath) && is_file($convertedPdfPath)) {
+                @unlink($convertedPdfPath);
+            }
         }
-
-        $item->pdf_path = $expectedPdfRelativePath;
-        $item->save();
     }
 
     private function expectedPdfRelativePath(DocumentBatchItem $item): string
@@ -2291,6 +2468,71 @@ class DocumentGeneratorController extends Controller
         SignatureImageService $signatureImageService
     ): string {
         return $signatureImageService->processToTransparentPng($presidentSignature->getPathname());
+    }
+
+    private function copyStorageFileToTemporaryPath(string $storagePath, string $extension = ''): string
+    {
+        $temporaryPath = tempnam(sys_get_temp_dir(), 'doc-gen-sign-');
+        if ($temporaryPath === false) {
+            throw new \RuntimeException('Unable to allocate a temporary file path.');
+        }
+
+        $resolvedPath = $temporaryPath;
+        $normalizedExtension = trim($extension);
+        if ($normalizedExtension !== '') {
+            $resolvedPath = $temporaryPath.(str_starts_with($normalizedExtension, '.') ? $normalizedExtension : '.'.$normalizedExtension);
+            if (! @rename($temporaryPath, $resolvedPath)) {
+                @unlink($temporaryPath);
+                throw new \RuntimeException('Unable to prepare a temporary file path.');
+            }
+        }
+
+        $input = \App\Support\DocumentStorage::disk()->readStream($storagePath);
+        if (! is_resource($input)) {
+            if (is_file($resolvedPath)) {
+                @unlink($resolvedPath);
+            }
+            throw new \RuntimeException('Unable to read file from storage.');
+        }
+
+        $output = @fopen($resolvedPath, 'wb');
+        if (! is_resource($output)) {
+            fclose($input);
+            if (is_file($resolvedPath)) {
+                @unlink($resolvedPath);
+            }
+            throw new \RuntimeException('Unable to write temporary file.');
+        }
+
+        try {
+            stream_copy_to_stream($input, $output);
+        } finally {
+            fclose($input);
+            fclose($output);
+        }
+
+        return $resolvedPath;
+    }
+
+    private function storeLocalFileToDocumentStorage(string $localPath, string $storagePath): void
+    {
+        if (! is_file($localPath)) {
+            throw new \RuntimeException('Local file to store does not exist.');
+        }
+
+        $input = @fopen($localPath, 'rb');
+        if (! is_resource($input)) {
+            throw new \RuntimeException('Unable to open local file for storage upload.');
+        }
+
+        try {
+            $stored = \App\Support\DocumentStorage::disk()->writeStream($storagePath, $input);
+            if ($stored === false) {
+                throw new \RuntimeException('Unable to write file to storage.');
+            }
+        } finally {
+            fclose($input);
+        }
     }
 
     /**

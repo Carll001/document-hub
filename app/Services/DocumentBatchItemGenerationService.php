@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Contracts\Services\DocumentBatchItemGenerationService as DocumentBatchItemGenerationServiceContract;
+use App\Exceptions\RetryableStorageConsistencyException;
 use App\Models\DocumentBatch;
 use App\Models\DocumentBatchItem;
 use App\Models\DocumentBatchTemplate;
@@ -33,8 +34,6 @@ class DocumentBatchItemGenerationService implements DocumentBatchItemGenerationS
             return;
         }
 
-        $this->markItemProcessing($item->id);
-
         try {
             $batch = $item->batch;
             if (! $batch instanceof DocumentBatch) {
@@ -51,6 +50,7 @@ class DocumentBatchItemGenerationService implements DocumentBatchItemGenerationS
             $rowData = $item->row_data ?? [];
             $template = $this->resolveTemplateForRow($batch, $rowData);
             $templatePath = $this->copyStorageFileToTemporaryPath($template->template_path, '.docx');
+            $this->markItemProcessing($item->id);
             $docxPath = storage_path('app/tmp/document-generator-'.Str::uuid().'.docx');
             $pdfPath = null;
 
@@ -127,6 +127,10 @@ class DocumentBatchItemGenerationService implements DocumentBatchItemGenerationS
                 }
             }
         } catch (Throwable $exception) {
+            if ($exception instanceof RetryableStorageConsistencyException) {
+                throw $exception;
+            }
+
             $this->markItemFinal(
                 $item->id,
                 false,
@@ -172,12 +176,14 @@ class DocumentBatchItemGenerationService implements DocumentBatchItemGenerationS
             }
         }
 
-        $stream = \App\Support\DocumentStorage::disk()->readStream($storagePath);
+        $stream = $this->openStorageReadStreamWithRetry($storagePath);
         if (! is_resource($stream)) {
             if (is_file($resolvedPath)) {
                 @unlink($resolvedPath);
             }
-            throw new \RuntimeException('The template file could not be read from storage.');
+            throw new RetryableStorageConsistencyException(
+                "The template file could not be read from storage. Path: {$storagePath}."
+            );
         }
 
         $target = @fopen($resolvedPath, 'wb');
@@ -197,6 +203,27 @@ class DocumentBatchItemGenerationService implements DocumentBatchItemGenerationS
         }
 
         return $resolvedPath;
+    }
+
+    /**
+     * @return resource|false
+     */
+    private function openStorageReadStreamWithRetry(string $storagePath, int $attempts = 20, int $delayMilliseconds = 500)
+    {
+        $disk = \App\Support\DocumentStorage::disk();
+
+        for ($attempt = 1; $attempt <= $attempts; $attempt++) {
+            $stream = $disk->readStream($storagePath);
+            if (is_resource($stream)) {
+                return $stream;
+            }
+
+            if ($attempt < $attempts) {
+                usleep($delayMilliseconds * 1000);
+            }
+        }
+
+        return false;
     }
 
     private function storeLocalFileToDocumentStorage(string $localPath, string $storagePath): void
@@ -445,10 +472,6 @@ class DocumentBatchItemGenerationService implements DocumentBatchItemGenerationS
         $template = $this->resolveTemplate($batch, $year);
         if (! $template instanceof DocumentBatchTemplate) {
             throw new \RuntimeException("No template configured for year {$year}.");
-        }
-
-        if (! \App\Support\DocumentStorage::disk()->exists($template->template_path)) {
-            throw new \RuntimeException("Template file is missing for year {$year}.");
         }
 
         return $template;
