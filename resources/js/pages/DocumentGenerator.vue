@@ -851,7 +851,7 @@ onMounted(() => {
                         </p>
                     </div>
 
-                    <div class="flex flex-wrap gap-2">
+                    <div class="flex flex-wrap gap-2 justify-end">
                         <Button variant="secondary" as-child>
                             <a :href="generatedFilesRoutes.index().url">Completed Files</a>
                         </Button>
@@ -863,7 +863,7 @@ onMounted(() => {
                         </Button>
                         <Button @click="isUploadDialogOpen = true">
                             <Upload class="mr-2 size-4" />
-                            Upload Spreadsheet
+                            Upload XLS | XLSX
                         </Button>
                     </div>
                 </CardContent>
@@ -967,7 +967,7 @@ onMounted(() => {
                                     <SelectValue placeholder="All statuses" />
                                 </SelectTrigger>
                                 <SelectContent>
-                                    <SelectItem value="all">All statuses</SelectItem>
+                                    <SelectItem value="all">All</SelectItem>
                                     <SelectItem value="queued">Queued</SelectItem>
                                     <SelectItem value="processing">Processing</SelectItem>
                                     <SelectItem value="docx_done">Docx Done</SelectItem>

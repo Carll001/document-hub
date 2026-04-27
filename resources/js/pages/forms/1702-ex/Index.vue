@@ -797,7 +797,7 @@ function submitRemoveReceipt(): void {
                         </p>
                     </div>
 
-                    <div class="flex flex-wrap gap-2">
+                    <div class="flex flex-wrap gap-2 justify-end">
                         <Button
                             type="button"
                             variant="secondary"
