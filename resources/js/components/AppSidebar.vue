@@ -25,7 +25,7 @@ import {
     SidebarMenuItem,
 } from '@/components/ui/sidebar';
 import { dashboard } from '@/routes';
-import documentGenerator from '@/routes/document-generator';
+import documentGenerator from '@/routes/afs-filing';
 import docMerge from '@/routes/doc-merge';
 import emailSync from '@/routes/email-sync';
 import forms from '@/routes/forms';

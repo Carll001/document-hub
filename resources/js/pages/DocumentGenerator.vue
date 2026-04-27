@@ -17,6 +17,7 @@ import { resolveTin } from '@/lib/form-field-aliases';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
 import { DataTable } from '@/components/ui/data-table';
 import {
     Dialog,
@@ -47,8 +48,8 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Spinner } from '@/components/ui/spinner';
 import AppLayout from '@/layouts/AppLayout.vue';
-import documentGeneratorRoutes from '@/routes/document-generator';
-import generatedFilesRoutes from '@/routes/generated-files';
+import documentGeneratorRoutes from '@/routes/afs-filing';
+import generatedFilesRoutes from '@/routes/afs-filing/completed';
 import type { BreadcrumbItem } from '@/types';
 
 const props = defineProps<{
@@ -88,6 +89,7 @@ const itemStatusFilter = ref(props.initialFilters.status ?? 'all');
 const companySearch = ref(props.initialFilters.search ?? '');
 const pollingActive = ref(false);
 const deletingItems = ref(false);
+const selectedItemIds = ref<number[]>([]);
 
 const editDialogOpen = ref(false);
 const editingItem = ref<UnifiedItem | null>(null);
@@ -100,6 +102,24 @@ const deleteConfirmIds = ref<number[]>([]);
 
 let pollInterval: ReturnType<typeof setInterval> | null = null;
 let companySearchDebounce: ReturnType<typeof setTimeout> | null = null;
+
+const selectedVisibleCount = computed(
+    () => itemsData.value.data.filter((item) => selectedItemIds.value.includes(item.id)).length,
+);
+const selectAllState = computed<boolean | 'indeterminate'>(() => {
+    if (itemsData.value.data.length === 0 || selectedVisibleCount.value === 0) {
+        return false;
+    }
+
+    if (selectedVisibleCount.value === itemsData.value.data.length) {
+        return true;
+    }
+
+    return 'indeterminate';
+});
+const canBulkDeleteSelected = computed(
+    () => selectedItemIds.value.length > 0 && !deletingItems.value,
+);
 
 const sortByFromQuery = (sort: string): string => {
     if (sort === 'uploadedAt') return 'created_at';
@@ -140,7 +160,7 @@ const buildItemsUrl = (page = itemsData.value.current_page) => {
 
     const params = new URLSearchParams(query);
 
-    return `/document-generator/items?${params.toString()}`;
+    return `/afs-filing/items?${params.toString()}`;
 };
 
 const visitIndex = (overrides: Partial<{
@@ -248,7 +268,7 @@ const postBatch = async () => {
             formData.append('default_template_file', defaultTemplateFile.value);
         }
 
-        const response = await fetch(documentGeneratorRoutes.batches.store.url(), {
+        const response = await fetch(documentGeneratorRoutes.items.upload.url(), {
             method: 'POST',
             body: formData,
             credentials: 'same-origin',
@@ -321,6 +341,36 @@ const onCompanySearchInput = (event: Event) => {
     }, 300);
 };
 
+const toggleItemSelection = (itemId: number, checked: boolean | 'indeterminate') => {
+    if (checked === 'indeterminate') {
+        return;
+    }
+
+    if (checked) {
+        selectedItemIds.value = Array.from(new Set([...selectedItemIds.value, itemId]));
+        return;
+    }
+
+    selectedItemIds.value = selectedItemIds.value.filter((id) => id !== itemId);
+};
+
+const toggleAllVisibleRows = (checked: boolean | 'indeterminate') => {
+    if (checked === 'indeterminate') {
+        return;
+    }
+
+    if (checked) {
+        selectedItemIds.value = Array.from(new Set([
+            ...selectedItemIds.value,
+            ...itemsData.value.data.map((item) => item.id),
+        ]));
+        return;
+    }
+
+    const visibleIds = new Set(itemsData.value.data.map((item) => item.id));
+    selectedItemIds.value = selectedItemIds.value.filter((id) => !visibleIds.has(id));
+};
+
 const canEditItem = (item: UnifiedItem) => !['queued', 'processing'].includes(item.status);
 const canDeleteItem = (item: UnifiedItem) => !['queued', 'processing'].includes(item.status);
 const displayStatus = (item: UnifiedItem): string =>
@@ -360,6 +410,14 @@ const handleConfirmedDelete = async () => {
     deleteConfirmIds.value = [];
 };
 
+const deleteSelectedItems = () => {
+    if (!canBulkDeleteSelected.value) {
+        return;
+    }
+
+    confirmDelete(selectedItemIds.value);
+};
+
 const deleteItems = async (itemIds: number[]) => {
     const uniqueItemIds = Array.from(new Set(itemIds));
 
@@ -379,10 +437,7 @@ const deleteItems = async (itemIds: number[]) => {
             }
 
             const response = await fetch(
-                documentGeneratorRoutes.batches.items.destroy.url({
-                    batch: item.batch_id,
-                    item: item.id,
-                }),
+                documentGeneratorRoutes.items.destroy.url({ item: item.id }),
                 {
                     method: 'DELETE',
                     credentials: 'same-origin',
@@ -406,6 +461,11 @@ const deleteItems = async (itemIds: number[]) => {
             (result) => result.status === 'fulfilled' && result.value === true,
         ).length;
         const failedCount = results.length - successCount;
+        const deletedIds = results
+            .flatMap((result, index) => (result.status === 'fulfilled' && result.value === true ? [uniqueItemIds[index]] : []));
+        if (deletedIds.length > 0) {
+            selectedItemIds.value = selectedItemIds.value.filter((id) => !deletedIds.includes(id));
+        }
 
         await loadItems(1);
         startPolling();
@@ -465,6 +525,24 @@ const onItemSigned = async (pdfUrl?: string) => {
 };
 
 const itemColumns = computed<ColumnDef<UnifiedItem>[]>(() => [
+    {
+        id: 'selection',
+        header: () =>
+            h(Checkbox, {
+                modelValue: selectAllState.value,
+                disabled: itemsData.value.data.length === 0 || deletingItems.value,
+                'aria-label': 'Select visible rows',
+                'onUpdate:modelValue': (value: boolean | 'indeterminate') => toggleAllVisibleRows(value),
+            }),
+        enableSorting: false,
+        cell: ({ row }) =>
+            h(Checkbox, {
+                modelValue: selectedItemIds.value.includes(row.original.id),
+                disabled: deletingItems.value,
+                'aria-label': `Select row ${row.original.row_number}`,
+                'onUpdate:modelValue': (value: boolean | 'indeterminate') => toggleItemSelection(row.original.id, value),
+            }),
+    },
     {
         id: 'index',
         header: '#',
@@ -592,11 +670,7 @@ const itemColumns = computed<ColumnDef<UnifiedItem>[]>(() => [
                                                       h(
                                                           'a',
                                                           {
-                                                              href: documentGeneratorRoutes.batches.items.download.url({
-                                                                  batch: row.original.batch_id,
-                                                                  item: row.original.id,
-                                                                  type: 'docx',
-                                                              }),
+                                                              href: documentGeneratorRoutes.items.download.url({ item: row.original.id, type: 'docx' }),
                                                               class: 'flex w-full items-center gap-2',
                                                           },
                                                           [h(FileText, { class: 'size-4' }), 'DOCX'],
@@ -619,11 +693,7 @@ const itemColumns = computed<ColumnDef<UnifiedItem>[]>(() => [
                                                       h(
                                                           'a',
                                                           {
-                                                              href: documentGeneratorRoutes.batches.items.download.url({
-                                                                  batch: row.original.batch_id,
-                                                                  item: row.original.id,
-                                                                  type: 'pdf',
-                                                              }),
+                                                              href: documentGeneratorRoutes.items.download.url({ item: row.original.id, type: 'pdf' }),
                                                               target: '_blank',
                                                               rel: 'noopener noreferrer',
                                                               class: 'flex w-full items-center gap-2',
@@ -685,6 +755,8 @@ watch(
     () => props.initialItems,
     (nextItems) => {
         itemsData.value = nextItems;
+        const visibleIds = new Set(nextItems.data.map((item) => item.id));
+        selectedItemIds.value = selectedItemIds.value.filter((id) => visibleIds.has(id));
     },
     { immediate: true, deep: true },
 );
@@ -701,6 +773,15 @@ watch(
         }
     },
     { deep: true },
+);
+
+watch(
+    () => itemsData.value.data.map((item) => item.id),
+    (visibleIds) => {
+        const visibleSet = new Set(visibleIds);
+        selectedItemIds.value = selectedItemIds.value.filter((id) => visibleSet.has(id));
+    },
+    { immediate: true },
 );
 
 onBeforeUnmount(() => {
@@ -872,6 +953,15 @@ onMounted(() => {
                         </div>
 
                         <div class="flex flex-wrap gap-2 self-end md:self-auto">
+                            <Button
+                                type="button"
+                                variant="destructive"
+                                :disabled="!canBulkDeleteSelected"
+                                @click="deleteSelectedItems"
+                            >
+                                <Trash2 class="mr-2 size-4" />
+                                {{ selectedItemIds.length > 0 ? `Delete selected (${selectedItemIds.length})` : 'Delete selected' }}
+                            </Button>
                             <Select :model-value="itemStatusFilter" @update:model-value="(value) => onItemStatusChange(String(value))">
                                 <SelectTrigger class="h-9 w-[150px] text-sm">
                                     <SelectValue placeholder="All statuses" />
@@ -906,3 +996,4 @@ onMounted(() => {
         </div>
     </AppLayout>
 </template>
+

@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace App\Jobs;
+namespace App\Jobs\AfsFiling;
 
-use App\Models\DocumentBatchItem;
+use App\Models\AfsFilingItem;
 use App\Models\User;
 use App\Services\DocumentGeneratorCompletedExportService;
 use Illuminate\Bus\Queueable;
@@ -12,9 +12,8 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
-use Illuminate\Support\Facades\Schema;
 
-class ProcessDocumentGeneratorCompletedExport implements ShouldQueue
+class ProcessAfsFilingCompletedExport implements ShouldQueue
 {
     use Dispatchable;
     use InteractsWithQueue;
@@ -24,13 +23,12 @@ class ProcessDocumentGeneratorCompletedExport implements ShouldQueue
     public int $tries = 1;
 
     /**
-     * @param  list<int>  $itemIds
+     * @param list<int> $itemIds
      */
     public function __construct(
         public readonly int $userId,
         public readonly array $itemIds,
-    ) {
-    }
+    ) {}
 
     public function handle(DocumentGeneratorCompletedExportService $completedExportService): void
     {
@@ -48,18 +46,12 @@ class ProcessDocumentGeneratorCompletedExport implements ShouldQueue
         ]);
 
         try {
-            $query = DocumentBatchItem::query()
+            $items = AfsFilingItem::query()
+                ->where('user_id', (int) $user->getKey())
                 ->whereIn('id', $this->itemIds)
                 ->where('status', 'pdf_done')
-                ->whereHas('batch', static function ($batchQuery) use ($user): void {
-                    $batchQuery->where('user_id', $user->id);
-                });
-
-            if ($this->supportsItemSignatureAppliedAt()) {
-                $query->whereNotNull('signature_applied_at');
-            }
-
-            $items = $query->get();
+                ->whereNotNull('signature_applied_at')
+                ->get();
 
             if ($items->isEmpty()) {
                 throw new \RuntimeException('No completed files matched this export request.');
@@ -77,7 +69,7 @@ class ProcessDocumentGeneratorCompletedExport implements ShouldQueue
         } catch (\Throwable $exception) {
             $completedExportService->putState($this->userId, [
                 'status' => DocumentGeneratorCompletedExportService::STATUS_FAILED,
-                'error' => $this->runtimeMessage($exception),
+                'error' => $exception->getMessage() !== '' ? $exception->getMessage() : 'The completed files ZIP could not be prepared right now.',
                 'itemCount' => null,
                 'downloadUrl' => null,
                 'storagePath' => null,
@@ -85,25 +77,5 @@ class ProcessDocumentGeneratorCompletedExport implements ShouldQueue
 
             throw $exception;
         }
-    }
-
-    private function supportsItemSignatureAppliedAt(): bool
-    {
-        static $supportsSignatureAppliedAt = null;
-
-        if ($supportsSignatureAppliedAt !== null) {
-            return $supportsSignatureAppliedAt;
-        }
-
-        $supportsSignatureAppliedAt = Schema::hasColumn('document_batch_items', 'signature_applied_at');
-
-        return $supportsSignatureAppliedAt;
-    }
-
-    private function runtimeMessage(\Throwable $exception): string
-    {
-        return $exception->getMessage() !== ''
-            ? $exception->getMessage()
-            : 'The completed files ZIP could not be prepared right now.';
     }
 }

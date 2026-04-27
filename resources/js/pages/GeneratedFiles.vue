@@ -27,7 +27,7 @@ import {
     AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import AppLayout from '@/layouts/AppLayout.vue';
-import documentGeneratorRoutes from '@/routes/document-generator';
+import documentGeneratorRoutes from '@/routes/afs-filing';
 import { csrfToken } from '@/components/afs-components/utils';
 import type { BreadcrumbItem } from '@/types';
 
@@ -42,7 +42,6 @@ type CompletedExportState = {
 
 type GeneratedFileItem = {
     id: number;
-    batch_id: number;
     row_number: number;
     company: string;
     status: string;
@@ -73,7 +72,7 @@ const props = defineProps<{
 const breadcrumbs: BreadcrumbItem[] = [
     {
         title: 'Completed Files',
-        href: '/generated-files',
+        href: documentGeneratorRoutes.completed.index().url,
     },
 ];
 
@@ -146,7 +145,7 @@ const buildItemsUrl = (page = itemsData.value.current_page) => {
 
     const params = new URLSearchParams(query);
 
-    return `/document-generator/items?${params.toString()}`;
+    return `/afs-filing/items?${params.toString()}`;
 };
 
 const getApi = async <T>(url: string): Promise<T> => {
@@ -275,7 +274,7 @@ const queueCompletedExport = async (itemIds?: number[]) => {
         const payload = await postJson<{
             message: string;
             export_state: CompletedExportState;
-        }>('/document-generator/completed/download', {
+        }>(documentGeneratorRoutes.completed.download.url(), {
             company_search: companySearch.value.trim() || undefined,
             sort_by: itemsSortBy.value,
             sort_direction: itemsSortDirection.value,
@@ -293,7 +292,7 @@ const queueCompletedExport = async (itemIds?: number[]) => {
 
 const pollExportState = async () => {
     try {
-        const state = await getApi<CompletedExportState>('/document-generator/completed/download/state');
+        const state = await getApi<CompletedExportState>(documentGeneratorRoutes.completed.download.state.url());
         const previousStatus = exportState.value.status;
         exportState.value = state;
 
@@ -321,7 +320,7 @@ const deleteCompletedItems = async (itemIds: number[]) => {
         const payload = await deleteJson<{
             message: string;
             deleted_count: number;
-        }>('/document-generator/completed/items', {
+        }>(documentGeneratorRoutes.completed.items.destroy.bulk.url(), {
             item_ids: uniqueIds,
         });
 
@@ -433,11 +432,7 @@ const itemColumns = computed<ColumnDef<GeneratedFileItem>[]>(() => [
                                                 h(
                                                     'a',
                                                     {
-                                                        href: documentGeneratorRoutes.batches.items.download.url({
-                                                            batch: row.original.batch_id,
-                                                            item: row.original.id,
-                                                            type: 'pdf',
-                                                        }),
+                                                        href: documentGeneratorRoutes.items.download.url({ item: row.original.id, type: 'pdf' }),
                                                         target: '_blank',
                                                         rel: 'noopener noreferrer',
                                                         class: 'flex w-full items-center gap-2',
@@ -454,11 +449,7 @@ const itemColumns = computed<ColumnDef<GeneratedFileItem>[]>(() => [
                                                 h(
                                                     'a',
                                                     {
-                                                        href: documentGeneratorRoutes.batches.items.download.url({
-                                                            batch: row.original.batch_id,
-                                                            item: row.original.id,
-                                                            type: 'pdf',
-                                                        }),
+                                                        href: documentGeneratorRoutes.items.download.url({ item: row.original.id, type: 'pdf' }),
                                                         class: 'flex w-full items-center gap-2',
                                                     },
                                                     [h(Download, { class: 'size-4' }), 'Download'],
@@ -663,3 +654,4 @@ onBeforeUnmount(() => {
         </AlertDialogContent>
     </AlertDialog>
 </template>
+

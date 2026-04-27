@@ -44,7 +44,7 @@ import {
     SelectValue,
 } from '@/components/ui/select';
 import { createToast, showToast } from '@/lib/toast';
-import documentGeneratorRoutes from '@/routes/document-generator';
+import documentGeneratorRoutes from '@/routes/afs-filing';
 
 type SortDirection = 'asc' | 'desc';
 

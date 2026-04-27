@@ -30,9 +30,9 @@ class DocumentGeneratorSmokeTest extends TestCase
 
     public function test_document_generator_routes_require_authentication(): void
     {
-        $this->get(route('document-generator.index'))->assertRedirect(route('login'));
-        $this->post(route('document-generator.batches.store'))->assertRedirect(route('login'));
-        $this->get(route('document-generator.signature.show'))->assertRedirect(route('login'));
+        $this->get(route('afs-filing.index'))->assertRedirect(route('login'));
+        $this->post(route('afs-filing.items.upload'))->assertRedirect(route('login'));
+        $this->get(route('afs-filing.signature.index'))->assertRedirect(route('login'));
     }
 
     public function test_staff_can_view_document_generator_page(): void
@@ -41,7 +41,7 @@ class DocumentGeneratorSmokeTest extends TestCase
         $staff = User::factory()->create(['role' => UserRole::Staff]);
 
         $this->actingAs($staff)
-            ->get(route('document-generator.index'))
+            ->get(route('afs-filing.index'))
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->component('DocumentGenerator')
@@ -59,14 +59,14 @@ class DocumentGeneratorSmokeTest extends TestCase
         config()->set('services.document_generator.signature_enabled', false);
 
         $this->actingAs($staff)
-            ->get(route('document-generator.index'))
+            ->get(route('afs-filing.index'))
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->component('DocumentGenerator')
                 ->where('signatureEnabled', false));
 
         $this->actingAs($staff)
-            ->get(route('generated-files.index'))
+            ->get(route('afs-filing.completed.index'))
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->component('GeneratedFiles'));
@@ -107,7 +107,7 @@ class DocumentGeneratorSmokeTest extends TestCase
         ]);
 
         $this->actingAs($staff)
-            ->get(route('generated-files.index'))
+            ->get(route('afs-filing.completed.index'))
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->component('GeneratedFiles')
@@ -139,7 +139,7 @@ class DocumentGeneratorSmokeTest extends TestCase
         ]);
 
         $this->actingAs($staff)
-            ->get(route('document-generator.index'))
+            ->get(route('afs-filing.index'))
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->component('DocumentGenerator')
@@ -169,7 +169,7 @@ class DocumentGeneratorSmokeTest extends TestCase
         ]);
 
         $this->actingAs($staff)
-            ->postJson(route('document-generator.completed.download'), [
+            ->postJson(route('afs-filing.completed.download'), [
                 'item_ids' => [$signedCompleted->id],
             ])
             ->assertOk()
@@ -200,7 +200,7 @@ class DocumentGeneratorSmokeTest extends TestCase
         ]);
 
         $this->actingAs($staff)
-            ->deleteJson(route('document-generator.completed.items.destroy.bulk'), [
+            ->deleteJson(route('afs-filing.completed.items.destroy.bulk'), [
                 'item_ids' => [$signedCompleted->id, $unsignedGenerated->id],
             ])
             ->assertOk()
@@ -221,7 +221,7 @@ class DocumentGeneratorSmokeTest extends TestCase
         ]);
 
         $this->actingAs($staff)
-            ->get(route('document-generator.template-mapping'))
+            ->get(route('afs-filing.template-mapping'))
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->component('TemplateMapping')
@@ -243,20 +243,20 @@ class DocumentGeneratorSmokeTest extends TestCase
         ]);
 
         $this->actingAs($staff)
-            ->post(route('document-generator.templates.store'), [
+            ->post(route('afs-filing.templates.store'), [
                 'year' => 2026,
                 'template_file' => UploadedFile::fake()->create('template.docx', 32),
             ])
             ->assertNotFound();
 
         $this->actingAs($staff)
-            ->post(route('document-generator.templates.update', ['template' => $yearTemplate->id]), [
+            ->post(route('afs-filing.templates.update', ['template' => $yearTemplate->id]), [
                 'year' => 2027,
             ])
             ->assertNotFound();
 
         $this->actingAs($staff)
-            ->delete(route('document-generator.templates.destroy', ['template' => $yearTemplate->id]))
+            ->delete(route('afs-filing.templates.destroy', ['template' => $yearTemplate->id]))
             ->assertNotFound();
     }
 
@@ -279,7 +279,7 @@ class DocumentGeneratorSmokeTest extends TestCase
             ]);
         $this->app->instance(ExcelExtractionService::class, $excelService);
 
-        $response = $this->actingAs($staff)->postJson(route('document-generator.batches.store'), [
+        $response = $this->actingAs($staff)->postJson(route('afs-filing.items.upload'), [
             'excel_file' => UploadedFile::fake()->create('source.xlsx', 64),
             'default_template_file' => UploadedFile::fake()->create('template.docx', 32),
         ]);
@@ -333,19 +333,24 @@ class DocumentGeneratorSmokeTest extends TestCase
         ];
 
         $this->actingAs($staff)
-            ->postJson(route('document-generator.signature.store'), $payload)
+            ->postJson(route('afs-filing.signature.store'), $payload)
             ->assertOk()
-            ->assertJsonPath('signature.page2.anchor', 'bottom_right')
-            ->assertJsonPath('signature.page2.placement_mode', 'fixed')
-            ->assertJsonPath('signature.page4.placement_mode', 'fixed');
+            ->assertJsonPath('signature.president.page2.anchor', 'bottom_right')
+            ->assertJsonPath('signature.president.page2.placement_mode', 'fixed')
+            ->assertJsonPath('signature.getor.page4.placement_mode', 'fixed');
 
         $this->actingAs($staff)
-            ->getJson(route('document-generator.signature.show'))
+            ->putJson(route('afs-filing.signature.update'), $payload)
             ->assertOk()
-            ->assertJsonPath('signature.page3.anchor', 'bottom_right');
+            ->assertJsonPath('signature.president.page3.anchor', 'bottom_right');
 
         $this->actingAs($staff)
-            ->deleteJson(route('document-generator.signature.destroy'))
+            ->getJson(route('afs-filing.signature.index'))
+            ->assertOk()
+            ->assertJsonPath('signature.president.page3.anchor', 'bottom_right');
+
+        $this->actingAs($staff)
+            ->deleteJson(route('afs-filing.signature.destroy'))
             ->assertOk()
             ->assertJsonPath('signature', null);
     }
@@ -396,7 +401,7 @@ class DocumentGeneratorSmokeTest extends TestCase
         Storage::disk('s3')->put("document-generator/{$staff->id}/signature/processed-getor.png", 'getor-signature');
 
         $this->actingAs($staff)
-            ->postJson(route('document-generator.batches.items.signature', [$batch, $item]), [])
+            ->postJson(route('afs-filing.items.signature.apply', [$item]), [])
             ->assertStatus(422)
             ->assertJsonValidationErrors(['president_signature_file']);
     }
@@ -464,7 +469,7 @@ class DocumentGeneratorSmokeTest extends TestCase
         $this->app->instance(PdfSignatureStampService::class, $stampService);
 
         $this->actingAs($staff)
-            ->post(route('document-generator.batches.items.signature', [$batch, $item]), [
+            ->post(route('afs-filing.items.signature.apply', [$item]), [
                 'president_signature_file' => UploadedFile::fake()->image('president.png', 240, 90),
             ])
             ->assertOk()
@@ -524,7 +529,7 @@ class DocumentGeneratorSmokeTest extends TestCase
         Storage::disk('s3')->put("document-generator/{$staff->id}/signature/processed-getor.png", 'getor-signature');
 
         $this->actingAs($staff)
-            ->postJson(route('document-generator.items.signature.bulk'), [
+            ->postJson(route('afs-filing.items.signature.bulk'), [
                 'targets' => [
                     ['batch_id' => $batch->id, 'item_id' => $firstItem->id],
                     ['batch_id' => $batch->id, 'item_id' => $secondItem->id],
@@ -540,7 +545,7 @@ class DocumentGeneratorSmokeTest extends TestCase
         $this->app->instance(PdfSignatureStampService::class, $stampService);
 
         $this->actingAs($staff)
-            ->post(route('document-generator.items.signature.bulk'), [
+            ->post(route('afs-filing.items.signature.bulk'), [
                 'president_signature_file' => UploadedFile::fake()->image('president.png', 240, 90),
                 'targets' => [
                     ['batch_id' => $batch->id, 'item_id' => $firstItem->id],
@@ -624,7 +629,7 @@ class DocumentGeneratorSmokeTest extends TestCase
         $this->app->instance(PdfSignatureStampService::class, $stampService);
 
         $this->actingAs($staff)
-            ->post(route('document-generator.batches.items.signature', [$batch, $item]), [
+            ->post(route('afs-filing.items.signature.apply', [$item]), [
                 'president_signature_file' => UploadedFile::fake()->image('president.png', 240, 90),
             ])
             ->assertOk()
@@ -699,7 +704,7 @@ class DocumentGeneratorSmokeTest extends TestCase
         $this->app->instance(PdfTextAnchorLocatorService::class, $locator);
 
         $this->actingAs($staff)
-            ->getJson(route('document-generator.batches.items.signature.preflight', [$batch, $item]))
+            ->getJson(route('afs-filing.items.signature.preflight', [$item]))
             ->assertStatus(422)
             ->assertJsonPath('ok', false)
             ->assertJsonStructure(['errors' => ['signature']]);
@@ -756,17 +761,17 @@ class DocumentGeneratorSmokeTest extends TestCase
         $this->app->instance(PdfSignatureStampService::class, $stampService);
 
         $this->actingAs($staff)
-            ->post(route('document-generator.batches.items.signature', [$batch, $item]), [
+            ->post(route('afs-filing.items.signature.apply', [$item]), [
                 'president_signature_file' => UploadedFile::fake()->image('president.png', 240, 90),
             ])
             ->assertOk();
 
         $this->actingAs($staff)
-            ->get(route('document-generator.batches.items.download', [$batch, $item, 'docx']))
+            ->get(route('afs-filing.items.download', [$item, 'docx']))
             ->assertOk();
 
         $this->actingAs($staff)
-            ->get(route('document-generator.batches.items.download', [$batch, $item, 'pdf']))
+            ->get(route('afs-filing.items.download', [$item, 'pdf']))
             ->assertOk();
     }
 
@@ -785,31 +790,31 @@ class DocumentGeneratorSmokeTest extends TestCase
         config()->set('services.document_generator.signature_enabled', false);
 
         $this->actingAs($staff)
-            ->getJson(route('document-generator.signature.show'))
+            ->getJson(route('afs-filing.signature.index'))
             ->assertNotFound();
 
         $this->actingAs($staff)
-            ->postJson(route('document-generator.signature.store'), [])
+            ->postJson(route('afs-filing.signature.store'), [])
             ->assertNotFound();
 
         $this->actingAs($staff)
-            ->deleteJson(route('document-generator.signature.destroy'))
+            ->deleteJson(route('afs-filing.signature.destroy'))
             ->assertNotFound();
 
         $this->actingAs($staff)
-            ->get(route('document-generator.signature.preview'))
+            ->get(route('afs-filing.signature.preview'))
             ->assertNotFound();
 
         $this->actingAs($staff)
-            ->postJson(route('document-generator.batches.items.signature', [$batch, $item]), [])
+            ->postJson(route('afs-filing.items.signature.apply', [$item]), [])
             ->assertNotFound();
 
         $this->actingAs($staff)
-            ->getJson(route('document-generator.batches.items.signature.preflight', [$batch, $item]))
+            ->getJson(route('afs-filing.items.signature.preflight', [$item]))
             ->assertNotFound();
 
         $this->actingAs($staff)
-            ->postJson(route('document-generator.items.signature.bulk'), [])
+            ->postJson(route('afs-filing.items.signature.bulk'), [])
             ->assertNotFound();
     }
 }

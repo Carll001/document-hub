@@ -55,4 +55,19 @@ class FormFieldAliasResolverTest extends TestCase
             ),
         );
     }
+
+    public function test_it_resolves_company_using_global_aliases(): void
+    {
+        $rowData = [
+            'Company Name' => 'Acme Corp',
+        ];
+
+        $this->assertSame(
+            'Acme Corp',
+            FormFieldAliasResolver::resolveCompany(
+                $rowData,
+                FormFieldAliasResolver::FORM_AFS,
+            ),
+        );
+    }
 }

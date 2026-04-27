@@ -11,7 +11,6 @@ export type FormType = SharedFormType;
 
 export type UnifiedItem = {
     id: number;
-    batch_id: number;
     row_number: number;
     company: string;
     tin?: string | null;

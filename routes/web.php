@@ -3,7 +3,10 @@
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\ClientController;
 use App\Http\Controllers\ClientPortalController;
-use App\Http\Controllers\DocumentGeneratorController;
+use App\Http\Controllers\AfsFiling\AfsFilingExportController;
+use App\Http\Controllers\AfsFiling\AfsFilingItemController;
+use App\Http\Controllers\AfsFiling\AfsFilingPageController;
+use App\Http\Controllers\AfsFiling\AfsFilingSignatureController;
 use App\Http\Controllers\DocMergeBatchController;
 use App\Http\Controllers\DocMergeController;
 use App\Http\Controllers\EmailSyncAccountManagementController;
@@ -80,56 +83,52 @@ Route::middleware(['auth', 'verified'])->group(function () {
                 Route::post('{mergedPdf}/send-email', 'sendEmail')->name('send-email');
                 Route::get('{mergedPdf}', 'download')->name('download');
             });
-        Route::controller(DocumentGeneratorController::class)
-            ->prefix('document-generator')
-            ->name('document-generator.')
+        Route::controller(AfsFilingPageController::class)
+            ->prefix('afs-filing')
+            ->name('afs-filing.')
             ->group(function () {
                 Route::get('/', 'index')->name('index');
-                Route::get('signature', 'signature')->name('signature.show');
-                Route::post('signature', 'storeSignature')->name('signature.store');
-                Route::delete('signature', 'destroySignature')->name('signature.destroy');
-                Route::get('signature/preview', 'signaturePreview')->name('signature.preview');
                 Route::get('template-mapping', 'templateMapping')->name('template-mapping');
-                Route::post('batches', 'store')->name('batches.store');
                 Route::post('templates/default', 'updateGlobalDefaultTemplate')->name('templates.default');
                 Route::post('templates', 'storeGlobalTemplate')->name('templates.store');
                 Route::post('templates/{template}/update', 'updateGlobalTemplate')->name('templates.update');
                 Route::delete('templates/{template}', 'destroyGlobalTemplate')->name('templates.destroy');
-                Route::get('batches/history', 'history')->name('batches.history');
-                Route::get('items', 'allItems')->name('items');
-                Route::post('completed/download', 'queueCompletedDownload')->name('completed.download');
-                Route::get('completed/download/state', 'completedDownloadState')->name('completed.download.state');
-                Route::get('completed/download/file', 'downloadCompletedPrepared')->name('completed.download.file');
-                Route::delete('completed/items', 'destroyCompletedItemsBulk')->name('completed.items.destroy.bulk');
-                Route::get('batches/{batch}/template-mapping', 'generatedFilesTemplateMapping')
-                    ->name('batches.template-mapping');
-                Route::get('batches/{batch}/progress', 'progress')->name('batches.progress');
-                Route::delete('batches/{batch}', 'destroyBatch')->name('batches.destroy');
-                Route::get('batches/{batch}/items', 'items')->name('batches.items');
-                Route::get('batches/{batch}/items/{item}', 'showItem')->name('batches.items.show');
-                Route::get('batches/{batch}/items/{item}/signature/preflight', 'preflightAnchorCheck')
-                    ->name('batches.items.signature.preflight');
-                Route::post('batches/{batch}/items/{item}/signature', 'signItem')
-                    ->name('batches.items.signature');
-                Route::put('batches/{batch}/items/{item}', 'updateItem')->name('batches.items.update');
-                Route::delete('batches/{batch}/items/{item}', 'destroyItem')->name('batches.items.destroy');
-                Route::get('batches/{batch}/items/{item}/{type}', 'download')->name('batches.items.download');
-                Route::get('batches/{batch}/logs', 'logs')->name('batches.logs');
-                Route::post('items/signature/bulk', 'signItemsBulk')->name('items.signature.bulk');
-                Route::post('batches/{batch}/templates/default', 'updateDefaultTemplate')
-                    ->name('batches.templates.default');
-                Route::post('batches/{batch}/templates', 'storeTemplate')->name('batches.templates.store');
-                Route::post('batches/{batch}/templates/{template}/update', 'updateTemplate')
-                    ->name('batches.templates.update');
-                Route::delete('batches/{batch}/templates/{template}', 'destroyTemplate')
-                    ->name('batches.templates.destroy');
+                Route::get('completed', 'completed')->name('completed.index');
             });
-        Route::get('generated-files', [DocumentGeneratorController::class, 'generatedFiles'])
-            ->name('generated-files.index');
-        Route::get('generated-files/{batch}/template-mapping', [DocumentGeneratorController::class, 'generatedFilesTemplateMapping'])
-            ->name('generated-files.template-mapping');
-        Route::get('generated-files/{batch}', [DocumentGeneratorController::class, 'generatedFilesBatch'])
-            ->name('generated-files.show');
+        Route::controller(AfsFilingSignatureController::class)
+            ->prefix('afs-filing/signature')
+            ->name('afs-filing.signature.')
+            ->group(function (): void {
+                Route::get('/', 'index')->name('index');
+                Route::post('/', 'store')->name('store');
+                Route::put('/', 'update')->name('update');
+                Route::patch('/', 'update')->name('patch');
+                Route::delete('/', 'destroy')->name('destroy');
+                Route::get('preview', 'preview')->name('preview');
+            });
+        Route::controller(AfsFilingItemController::class)
+            ->prefix('afs-filing/items')
+            ->name('afs-filing.items.')
+            ->group(function (): void {
+                Route::post('upload', 'store')->name('upload');
+                Route::get('/', 'items')->name('index');
+                Route::post('signature/bulk', 'signBulk')->name('signature.bulk');
+                Route::get('{item}', 'show')->name('show');
+                Route::get('{item}/signature/preflight', 'preflightAnchorCheck')->name('signature.preflight');
+                Route::post('{item}/signature', 'sign')->name('signature.apply');
+                Route::put('{item}', 'update')->name('update');
+                Route::delete('{item}', 'destroy')->name('destroy');
+                Route::get('{item}/download/{type}', 'download')->name('download');
+            });
+        Route::controller(AfsFilingExportController::class)
+            ->prefix('afs-filing/completed')
+            ->name('afs-filing.completed.')
+            ->group(function (): void {
+                Route::post('download', 'queue')->name('download');
+                Route::get('download/state', 'state')->name('download.state');
+                Route::get('download/file', 'download')->name('download.file');
+                Route::delete('items', 'destroyCompletedItems')->name('items.destroy.bulk');
+            });
         Route::controller(EmailSyncController::class)
             ->prefix('email-sync')
             ->name('email-sync.')

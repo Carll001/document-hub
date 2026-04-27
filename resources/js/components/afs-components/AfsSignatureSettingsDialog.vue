@@ -121,8 +121,10 @@ const save = async () => {
             formData.append('signature_file', signatureFile.value);
         }
 
-        const response = await fetch('/document-generator/signature', {
-            method: 'POST',
+        const method = signatureData.value ? 'PUT' : 'POST';
+
+        const response = await fetch('/afs-filing/signature', {
+            method,
             body: formData,
             credentials: 'same-origin',
             headers: {
@@ -198,7 +200,7 @@ const remove = async () => {
     errors.value = {};
 
     try {
-        await sendDelete('/document-generator/signature');
+        await sendDelete('/afs-filing/signature');
         signatureData.value = null;
         signatureFile.value = null;
         emit('removed');

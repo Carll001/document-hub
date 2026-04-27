@@ -14,7 +14,7 @@ import { Label } from '@/components/ui/label';
 import { Spinner } from '@/components/ui/spinner';
 import { csrfToken, sendPostFormData } from '@/components/afs-components/utils';
 import type { UnifiedItem } from '@/components/afs-components/types';
-import documentGeneratorRoutes from '@/routes/document-generator';
+import documentGeneratorRoutes from '@/routes/afs-filing';
 
 const open = defineModel<boolean>('open', { required: true });
 
@@ -63,7 +63,7 @@ const runSingleItemAnchorPreflight = async (): Promise<boolean> => {
         return true;
     }
 
-    const url = `/document-generator/batches/${props.target.batch_id}/items/${props.target.id}/signature/preflight`;
+    const url = documentGeneratorRoutes.items.signature.preflight.url({ item: props.target.id });
     const response = await fetch(url, {
         method: 'GET',
         credentials: 'same-origin',
@@ -128,10 +128,7 @@ const submit = async () => {
                 item: Record<string, unknown>;
                 pdf_url: string;
             }>(
-                documentGeneratorRoutes.batches.items.signature.url({
-                    batch: props.target.batch_id,
-                    item: props.target.id,
-                }),
+                documentGeneratorRoutes.items.signature.apply.url({ item: props.target.id }),
                 formData,
             );
 
@@ -191,3 +188,4 @@ const submit = async () => {
         </DialogContent>
     </Dialog>
 </template>
+

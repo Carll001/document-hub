@@ -4,7 +4,8 @@ declare(strict_types=1);
 
 namespace App\Services;
 
-use App\Models\DocumentBatchItem;
+use App\Models\AfsFilingItem;
+use App\Support\DocumentStorage;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Str;
@@ -24,7 +25,7 @@ class DocumentGeneratorCompletedExportService
 
     public function cacheKey(int $userId): string
     {
-        return "document-generator:afs:completed-export:{$userId}";
+        return "afs_filing:completed-export:{$userId}";
     }
 
     /**
@@ -98,52 +99,82 @@ class DocumentGeneratorCompletedExportService
     }
 
     /**
-     * @param  Collection<int, DocumentBatchItem>  $items
+     * @param  Collection<int, AfsFilingItem>  $items
      * @return array{storagePath: string, downloadFileName: string, itemCount: int}
      */
     public function buildZip(Collection $items, int $userId): array
     {
-        $directory = "tmp/document-generator-afs-completed-exports/user-{$userId}";
-        \App\Support\DocumentStorage::disk()->makeDirectory($directory);
+        $directory = "tmp/afs_filing-completed-exports/user-{$userId}";
+        DocumentStorage::disk()->makeDirectory($directory);
 
-        $fileName = 'afs-completed-files-'.Str::uuid().'.zip';
+        $fileName = 'afs_filing-completed-files-'.Str::uuid().'.zip';
         $storagePath = "{$directory}/{$fileName}";
-        $archivePath = \App\Support\DocumentStorage::disk()->path($storagePath);
+        $localArchivePath = tempnam(sys_get_temp_dir(), 'afs-filing-zip-');
+        if ($localArchivePath === false) {
+            throw new \RuntimeException('The completed files ZIP could not be prepared.');
+        }
 
         $archive = new ZipArchive;
-        if ($archive->open($archivePath, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
+        if ($archive->open($localArchivePath, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
+            @unlink($localArchivePath);
             throw new \RuntimeException('The completed files ZIP could not be created.');
         }
 
         $usedPaths = [];
-        $disk = \App\Support\DocumentStorage::disk();
+        $disk = DocumentStorage::disk();
         $includedItems = 0;
 
-        foreach ($items as $item) {
-            $pdfStoragePath = (string) ($item->pdf_path ?? '');
-            if ($pdfStoragePath === '' || ! $disk->exists($pdfStoragePath)) {
-                continue;
+        try {
+            foreach ($items as $item) {
+                $pdfStoragePath = (string) ($item->pdf_path ?? '');
+                if ($pdfStoragePath === '' || ! $disk->exists($pdfStoragePath)) {
+                    continue;
+                }
+
+                $stream = $disk->readStream($pdfStoragePath);
+                if (! is_resource($stream)) {
+                    continue;
+                }
+
+                $contents = stream_get_contents($stream);
+                fclose($stream);
+                if (! is_string($contents) || $contents === '') {
+                    continue;
+                }
+
+                $zipPath = $this->uniqueZipPath(
+                    "afs_filing-item-{$item->id}-row-{$item->row_number}.pdf",
+                    $usedPaths,
+                );
+
+                $archive->addFromString($zipPath, $contents);
+                $includedItems++;
             }
-
-            $zipPath = $this->uniqueZipPath(
-                "afs-batch-{$item->document_batch_id}-row-{$item->row_number}.pdf",
-                $usedPaths,
-            );
-
-            $archive->addFile($disk->path($pdfStoragePath), $zipPath);
-            $includedItems++;
+        } finally {
+            $archive->close();
         }
 
-        $archive->close();
-
         if ($includedItems === 0) {
-            $disk->delete($storagePath);
+            @unlink($localArchivePath);
             throw new \RuntimeException('No completed files were available to add to the ZIP.');
+        }
+
+        $zipStream = @fopen($localArchivePath, 'rb');
+        if (! is_resource($zipStream)) {
+            @unlink($localArchivePath);
+            throw new \RuntimeException('The completed files ZIP could not be read.');
+        }
+
+        try {
+            $disk->writeStream($storagePath, $zipStream);
+        } finally {
+            fclose($zipStream);
+            @unlink($localArchivePath);
         }
 
         return [
             'storagePath' => $storagePath,
-            'downloadFileName' => 'afs-completed-files.zip',
+            'downloadFileName' => 'afs_filing-completed-files.zip',
             'itemCount' => $includedItems,
         ];
     }
@@ -175,7 +206,7 @@ class DocumentGeneratorCompletedExportService
             ->value();
 
         if ($name === '') {
-            $name = 'afs-completed-file.pdf';
+            $name = 'afs_filing-completed-file.pdf';
         }
 
         $extension = pathinfo($name, PATHINFO_EXTENSION);
@@ -195,4 +226,3 @@ class DocumentGeneratorCompletedExportService
         return $candidate;
     }
 }
-

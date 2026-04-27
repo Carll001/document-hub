@@ -14,7 +14,7 @@ import {
 import { Spinner } from '@/components/ui/spinner';
 import AppLayout from '@/layouts/AppLayout.vue';
 import { createToast, showToast } from '@/lib/toast';
-import documentGeneratorRoutes from '@/routes/document-generator';
+import documentGeneratorRoutes from '@/routes/afs-filing';
 import type { BreadcrumbItem } from '@/types';
 
 type BatchSummary = {

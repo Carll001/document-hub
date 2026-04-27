@@ -80,6 +80,14 @@ class User extends Authenticatable
     }
 
     /**
+     * @return HasMany<AfsFilingItem, $this>
+     */
+    public function afsFilingItems(): HasMany
+    {
+        return $this->hasMany(AfsFilingItem::class);
+    }
+
+    /**
      * @return HasOne<DocumentGeneratorSignature, $this>
      */
     public function documentGeneratorSignature(): HasOne

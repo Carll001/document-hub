@@ -19,11 +19,11 @@ import {
     CardTitle,
 } from '@/components/ui/card';
 import AppLayout from '@/layouts/AppLayout.vue';
-import documentGeneratorRoutes from '@/routes/document-generator';
+import documentGeneratorRoutes from '@/routes/afs-filing';
 import docMerge from '@/routes/doc-merge';
 import { dashboard } from '@/routes';
 import emailSync from '@/routes/email-sync';
-import generatedFilesRoutes from '@/routes/generated-files';
+import generatedFilesRoutes from '@/routes/afs-filing/completed';
 import type { Auth, BreadcrumbItem } from '@/types';
 
 type Overview = {

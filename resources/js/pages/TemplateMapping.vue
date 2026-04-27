@@ -16,7 +16,7 @@ import { Label } from '@/components/ui/label';
 import { Spinner } from '@/components/ui/spinner';
 import AppLayout from '@/layouts/AppLayout.vue';
 import { createToast, showToast } from '@/lib/toast';
-import documentGeneratorRoutes from '@/routes/document-generator';
+import documentGeneratorRoutes from '@/routes/afs-filing';
 import type { BreadcrumbItem } from '@/types';
 
 type TemplateEntry = {
@@ -128,7 +128,7 @@ const updateDefaultTemplate = async () => {
     try {
         const formData = new FormData();
         formData.append('template_file', defaultTemplateFile.value);
-        mapping.value = await sendForm('/document-generator/templates/default', formData);
+        mapping.value = await sendForm('/afs-filing/templates/default', formData);
         defaultTemplateFile.value = null;
         showNotice('success', 'Default template updated', 'Future batches will use the new default template.');
     } catch (error) {

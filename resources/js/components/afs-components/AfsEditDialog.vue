@@ -14,7 +14,7 @@ import { Label } from '@/components/ui/label';
 import { Spinner } from '@/components/ui/spinner';
 import { sendJson } from '@/components/afs-components/utils';
 import type { UnifiedItem } from '@/components/afs-components/types';
-import documentGeneratorRoutes from '@/routes/document-generator';
+import documentGeneratorRoutes from '@/routes/afs-filing';
 
 const open = defineModel<boolean>('open', { required: true });
 
@@ -67,10 +67,7 @@ const save = async () => {
 
     try {
         await sendJson<UnifiedItem>(
-            documentGeneratorRoutes.batches.items.update.url({
-                batch: props.item.batch_id,
-                item: props.item.id,
-            }),
+            documentGeneratorRoutes.items.update.url({ item: props.item.id }),
             'PUT',
             {
                 row_data: editForm,
@@ -97,7 +94,7 @@ defineExpose({ initForm });
     <Dialog :open="open" @update:open="(val) => { if (!val) close(); }">
         <DialogContent class="sm:max-w-2xl">
             <DialogHeader>
-                <DialogTitle>Edit Row {{ item?.row_number ?? '-' }} (Batch #{{ item?.batch_id ?? '-' }})</DialogTitle>
+                <DialogTitle>Edit Row {{ item?.row_number ?? '-' }}</DialogTitle>
                 <DialogDescription>
                     Update the row data and regenerate documents. Old outputs will be deleted first.
                 </DialogDescription>
@@ -127,3 +124,4 @@ defineExpose({ initForm });
         </DialogContent>
     </Dialog>
 </template>
+

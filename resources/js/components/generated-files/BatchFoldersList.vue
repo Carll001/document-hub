@@ -19,8 +19,8 @@ import {
     DialogTitle,
 } from '@/components/ui/dialog';
 import { Spinner } from '@/components/ui/spinner';
-import documentGeneratorRoutes from '@/routes/document-generator';
-import generatedFilesRoutes from '@/routes/generated-files';
+import documentGeneratorRoutes from '@/routes/afs-filing';
+import generatedFilesRoutes from '@/routes/afs-filing/completed';
 import {
     FolderOpen,
     FileSpreadsheet,

@@ -19,8 +19,8 @@ import {
     CardHeader,
     CardTitle,
 } from '@/components/ui/card';
-import documentGeneratorRoutes from '@/routes/document-generator';
-import generatedFilesRoutes from '@/routes/generated-files';
+import documentGeneratorRoutes from '@/routes/afs-filing';
+import generatedFilesRoutes from '@/routes/afs-filing/completed';
 import { dashboard, login } from '@/routes';
 import type { Auth } from '@/types';
 

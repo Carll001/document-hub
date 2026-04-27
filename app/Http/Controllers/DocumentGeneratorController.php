@@ -412,7 +412,7 @@ class DocumentGeneratorController extends Controller
 
         return response()->download(
             \App\Support\DocumentStorage::disk()->path($storagePath),
-            'afs-completed-files.zip',
+            'afs_filing-completed-files.zip',
             ['Content-Type' => 'application/zip'],
         )->deleteFileAfterSend(true);
     }
@@ -945,7 +945,7 @@ class DocumentGeneratorController extends Controller
         return response()->json([
             'message' => 'Signature applied.',
             'item' => $this->batchItemPayload($item->fresh() ?? $item),
-            'pdf_url' => route('document-generator.batches.items.download', [$batch, $item, 'pdf']),
+            'pdf_url' => route('afs-filing.items.download', ['item' => $item, 'type' => 'pdf']),
         ]);
     }
 
@@ -2287,7 +2287,7 @@ class DocumentGeneratorController extends Controller
                 'getor' => [
                     'page4' => $this->signatureLayout($signature, 'page4'),
                     'page8' => $this->signatureLayout($signature, 'page8'),
-                    'preview_url' => route('document-generator.signature.preview', [
+                    'preview_url' => route('afs-filing.signature.preview', [
                         'v' => $signature->updated_at?->timestamp,
                     ]),
                 ],

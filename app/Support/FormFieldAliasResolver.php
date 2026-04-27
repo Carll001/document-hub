@@ -24,6 +24,15 @@ final class FormFieldAliasResolver
             'tax identification number',
             'taxpayer tin',
         ],
+        'company' => [
+            'company',
+            'company name',
+            'registered name',
+            'taxpayer name',
+            'business name',
+            'corporate name',
+            'entity name',
+        ],
     ];
 
     /**
@@ -96,6 +105,14 @@ final class FormFieldAliasResolver
         }
 
         return $digits;
+    }
+
+    /**
+     * @param  array<string, mixed>  $rowData
+     */
+    public static function resolveCompany(array $rowData, string $formType): ?string
+    {
+        return self::resolveAliasedField($rowData, 'company', $formType);
     }
 
     /**
