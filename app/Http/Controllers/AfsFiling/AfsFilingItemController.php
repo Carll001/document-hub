@@ -19,8 +19,10 @@ use App\Services\AfsFiling\AfsFilingItemSigningService;
 use App\Services\ExcelExtractionService;
 use App\Support\DocumentStorage;
 use App\Support\FormFieldAliasResolver;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -61,25 +63,19 @@ class AfsFilingItemController extends Controller
             return response()->json(['message' => 'No data rows found in the uploaded Excel file.'], 422);
         }
 
+        $this->syncAfsFilingItemSequence();
         $createdIds = [];
-        DB::transaction(function () use ($rows, $user, $excelFile, $templateName, &$createdIds): void {
-            foreach ($rows as $index => $rowData) {
-                if (! is_array($rowData)) {
-                    continue;
-                }
 
-                $item = AfsFilingItem::query()->create([
-                    'user_id' => (int) $user->getKey(),
-                    'row_number' => $index + 2,
-                    'row_data' => $rowData,
-                    'status' => 'queued',
-                    'source_excel_name' => $excelFile->getClientOriginalName(),
-                    'template_name' => $templateName,
-                ]);
-
-                $createdIds[] = (int) $item->id;
+        try {
+            $createdIds = $this->createItemsFromRows($rows, $user, $excelFile, $templateName);
+        } catch (UniqueConstraintViolationException $exception) {
+            if (! $this->isAfsFilingPrimaryKeyCollision($exception)) {
+                throw $exception;
             }
-        });
+
+            $this->syncAfsFilingItemSequence();
+            $createdIds = $this->createItemsFromRows($rows, $user, $excelFile, $templateName);
+        }
 
         foreach ($createdIds as $position => $id) {
             GenerateAfsFilingItemJob::dispatch($id)->delay(now()->addSeconds($position > 0 ? 1 : 0));
@@ -268,5 +264,53 @@ class AfsFilingItemController extends Controller
         if ($paths !== []) {
             DocumentStorage::disk()->delete($paths);
         }
+    }
+
+    /**
+     * @param array<int, mixed> $rows
+     * @return array<int, int>
+     */
+    private function createItemsFromRows(array $rows, User $user, UploadedFile $excelFile, ?string $templateName): array
+    {
+        $createdIds = [];
+
+        DB::transaction(function () use ($rows, $user, $excelFile, $templateName, &$createdIds): void {
+            foreach ($rows as $index => $rowData) {
+                if (! is_array($rowData)) {
+                    continue;
+                }
+
+                $item = AfsFilingItem::query()->create([
+                    'user_id' => (int) $user->getKey(),
+                    'row_number' => $index + 2,
+                    'row_data' => $rowData,
+                    'status' => 'queued',
+                    'source_excel_name' => $excelFile->getClientOriginalName(),
+                    'template_name' => $templateName,
+                ]);
+
+                $createdIds[] = (int) $item->id;
+            }
+        });
+
+        return $createdIds;
+    }
+
+    private function syncAfsFilingItemSequence(): void
+    {
+        if (DB::getDriverName() !== 'pgsql') {
+            return;
+        }
+
+        DB::statement(
+            "SELECT setval(pg_get_serial_sequence('afs_filing_items', 'id'), COALESCE((SELECT MAX(id) FROM afs_filing_items), 1), true)"
+        );
+    }
+
+    private function isAfsFilingPrimaryKeyCollision(UniqueConstraintViolationException $exception): bool
+    {
+        $message = mb_strtolower($exception->getMessage());
+
+        return str_contains($message, 'afs_filing_items_pkey') && str_contains($message, 'duplicate key');
     }
 }

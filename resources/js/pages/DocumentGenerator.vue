@@ -291,7 +291,7 @@ const postBatch = async () => {
         }
 
         if (!response.ok) {
-            throw new Error(`Failed to create batch (${response.status}).`);
+            throw new Error(`Failed to upload file (${response.status}).`);
         }
 
         await loadItems(1);
@@ -304,7 +304,7 @@ const postBatch = async () => {
         toast.success('Document generation has started for the uploaded file.');
     } catch (error) {
         toast.error(
-            error instanceof Error ? error.message : 'Unable to create batch.',
+            error instanceof Error ? error.message : 'Unable to upload file.',
         );
     } finally {
         creatingBatch.value = false;
@@ -996,4 +996,3 @@ onMounted(() => {
         </div>
     </AppLayout>
 </template>
-
