@@ -9,6 +9,7 @@ use App\Models\DocumentGeneratorTemplate;
 use App\Services\DocxTemplateService;
 use App\Services\PdfConversionService;
 use App\Support\DocumentStorage;
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Str;
 use RuntimeException;
 
@@ -33,6 +34,7 @@ class AfsFilingItemGenerationService
         $template = $this->resolveTemplateForRow($item->row_data ?? []);
 
         $templatePath = null;
+        File::ensureDirectoryExists(storage_path('app/tmp'));
         $docxPath = storage_path('app/tmp/afs-filing-'.Str::uuid().'.docx');
         $pdfPath = null;
 
