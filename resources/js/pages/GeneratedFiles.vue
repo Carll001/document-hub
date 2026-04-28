@@ -4,6 +4,7 @@ import type { ColumnDef } from '@tanstack/vue-table';
 import { ArrowLeft, Download, Eye, MoreHorizontal, Trash2 } from 'lucide-vue-next';
 import { computed, h, onBeforeUnmount, ref, watch } from 'vue';
 import { toast } from 'vue-sonner';
+import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -28,7 +29,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import AppLayout from '@/layouts/AppLayout.vue';
 import documentGeneratorRoutes from '@/routes/afs-filing';
-import { csrfToken } from '@/components/afs-components/utils';
+import { csrfToken, statusBadgeClass, statusBadgeVariant } from '@/components/afs-components/utils';
 import type { BreadcrumbItem } from '@/types';
 
 type SortDirection = 'asc' | 'desc';
@@ -43,6 +44,7 @@ type CompletedExportState = {
 type GeneratedFileItem = {
     id: number;
     row_number: number;
+    tin?: string | null;
     company: string;
     status: string;
     docx_available: boolean;
@@ -127,8 +129,6 @@ const formatDateTime = (value: string | null): string => {
 
     return parsed.toLocaleString();
 };
-
-const generatedAt = (item: GeneratedFileItem): string | null => item.signature_applied_at ?? item.updated_at;
 
 const buildItemsUrl = (page = itemsData.value.current_page) => {
     const query: Record<string, string> = {
@@ -378,6 +378,23 @@ const itemColumns = computed<ColumnDef<GeneratedFileItem>[]>(() => [
             }),
     },
     {
+        id: 'index',
+        header: '#',
+        enableSorting: false,
+        cell: ({ row }) =>
+            String(
+                (itemsData.value.current_page - 1) * itemsData.value.per_page
+                + row.index
+                + 1,
+            ),
+    },
+    {
+        id: 'tin',
+        header: 'TIN',
+        enableSorting: false,
+        cell: ({ row }) => row.original.tin && row.original.tin.trim() !== '' ? row.original.tin : '-',
+    },
+    {
         id: 'company',
         accessorKey: 'company',
         header: 'Company',
@@ -385,11 +402,33 @@ const itemColumns = computed<ColumnDef<GeneratedFileItem>[]>(() => [
         cell: ({ row }) => row.original.company || '-',
     },
     {
-        id: 'updated_at',
-        header: 'Generated',
+        id: 'created_at',
+        accessorKey: 'created_at',
+        header: 'Uploaded',
         enableSorting: true,
-        accessorKey: 'updated_at',
-        cell: ({ row }) => formatDateTime(generatedAt(row.original)),
+        cell: ({ row }) => formatDateTime(row.original.created_at),
+    },
+    {
+        id: 'status',
+        accessorKey: 'status',
+        header: 'Status',
+        enableSorting: true,
+        cell: ({ row }) =>
+            h(
+                Badge,
+                {
+                    variant: statusBadgeVariant(row.original.status),
+                    class: statusBadgeClass(row.original.status),
+                },
+                () => (row.original.signature_applied ? 'Signed' : row.original.status === 'pdf_done' ? 'Generated' : row.original.status),
+            ),
+    },
+    {
+        id: 'error_message',
+        accessorKey: 'error_message',
+        header: 'Error',
+        enableSorting: false,
+        cell: ({ row }) => row.original.error_message || '-',
     },
     {
         id: 'actions',
@@ -432,7 +471,7 @@ const itemColumns = computed<ColumnDef<GeneratedFileItem>[]>(() => [
                                                 h(
                                                     'a',
                                                     {
-                                                        href: documentGeneratorRoutes.items.download.url({ item: row.original.id, type: 'pdf' }),
+                                                        href: `${documentGeneratorRoutes.items.download.url({ item: row.original.id, type: 'pdf' })}?inline=1`,
                                                         target: '_blank',
                                                         rel: 'noopener noreferrer',
                                                         class: 'flex w-full items-center gap-2',
@@ -566,9 +605,9 @@ onBeforeUnmount(() => {
                 </CardContent>
             </Card>
 
-            <Card class="rounded-3xl">
+            <Card>
                 <CardHeader>
-                    <CardTitle class="text-xl">Completed file table</CardTitle>
+                    <CardTitle>Generated Rows</CardTitle>
                     <CardDescription>
                         Signed AFS outputs. Use bulk actions to download or delete completed rows.
                     </CardDescription>

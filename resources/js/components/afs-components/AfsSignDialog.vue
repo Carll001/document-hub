@@ -25,7 +25,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-    signed: [pdfUrl?: string];
+    signed: [];
 }>();
 
 const submitting = ref(false);
@@ -123,16 +123,16 @@ const submit = async () => {
             const formData = new FormData();
             formData.append('president_signature_file', presidentSignatureFile.value);
 
-            const payload = await sendPostFormData<{
+            await sendPostFormData<{
                 message: string;
-                item: Record<string, unknown>;
-                pdf_url: string;
+                status: string;
+                item_id: number;
             }>(
                 documentGeneratorRoutes.items.signature.apply.url({ item: props.target.id }),
                 formData,
             );
 
-            emit('signed', payload.pdf_url);
+            emit('signed');
         }
 
         open.value = false;
@@ -188,4 +188,3 @@ const submit = async () => {
         </DialogContent>
     </Dialog>
 </template>
-

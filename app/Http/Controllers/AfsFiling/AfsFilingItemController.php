@@ -11,6 +11,7 @@ use App\Http\Requests\AfsFiling\AfsFilingItemsIndexRequest;
 use App\Http\Requests\AfsFiling\AfsFilingItemUpdateRequest;
 use App\Http\Requests\AfsFiling\AfsFilingSignBulkRequest;
 use App\Http\Requests\AfsFiling\AfsFilingUploadRequest;
+use App\Jobs\AfsFiling\ApplyAfsFilingItemSignatureJob;
 use App\Jobs\AfsFiling\DeleteAfsFilingItemJob;
 use App\Jobs\AfsFiling\GenerateAfsFilingItemJob;
 use App\Models\AfsFilingItem;
@@ -136,27 +137,37 @@ class AfsFilingItemController extends Controller
         /** @var User $user */
         $user = $request->user();
 
-        $presidentFilePath = (string) $request->file('president_signature_file')?->getPathname();
-        if ($presidentFilePath === '') {
-            return response()->json(['message' => 'President signature image is required.'], 422);
+        $preflight = $this->signingService->preflight($item);
+        if (! $preflight['ok']) {
+            return response()->json($preflight, 422);
         }
 
-        try {
-            $this->signingService->sign($item, $user, $presidentFilePath);
-        } catch (\RuntimeException $exception) {
+        if ($item->signature_applied_at !== null) {
             return response()->json([
-                'message' => $exception->getMessage(),
-                'errors' => [
-                    'signature' => [$exception->getMessage()],
-                ],
+                'message' => 'Signature is already applied for this row.',
+                'errors' => ['signature' => ['Signature is already applied for this row.']],
             ], 422);
         }
 
+        $uploadedSignature = $request->file('president_signature_file');
+        if (! $uploadedSignature) {
+            return response()->json(['message' => 'President signature image is required.'], 422);
+        }
+
+        $signaturePath = $uploadedSignature->store("afs_filing/{$user->id}/signatures/queued", DocumentStorage::diskName());
+
+        $item->status = 'signing';
+        $item->error_message = null;
+        $item->error_details = null;
+        $item->save();
+
+        ApplyAfsFilingItemSignatureJob::dispatch((int) $user->getKey(), (int) $item->getKey(), $signaturePath);
+
         return response()->json([
-            'message' => 'Signature applied.',
-            'item' => $this->itemPayload($item->fresh() ?? $item),
-            'pdf_url' => route('afs-filing.items.download', ['item' => $item, 'type' => 'pdf']),
-        ]);
+            'message' => 'Signature application queued.',
+            'status' => 'signing',
+            'item_id' => (int) $item->getKey(),
+        ], 202);
     }
 
     public function signBulk(AfsFilingSignBulkRequest $request): JsonResponse
@@ -169,32 +180,55 @@ class AfsFilingItemController extends Controller
         $items = AfsFilingItem::query()
             ->where('user_id', (int) $user->getKey())
             ->whereIn('id', $validated['item_ids'])
+            ->where('status', 'pdf_done')
+            ->whereNull('signature_applied_at')
             ->get();
 
-        $presidentFilePath = (string) $request->file('president_signature_file')?->getPathname();
-        if ($presidentFilePath === '') {
+        $uploadedSignature = $request->file('president_signature_file');
+        if (! $uploadedSignature) {
             return response()->json(['message' => 'President signature image is required.'], 422);
         }
 
-        $results = [];
+        if ($items->isEmpty()) {
+            return response()->json([
+                'message' => 'No eligible rows matched the selected items.',
+                'queued_count' => 0,
+                'failed_to_queue_count' => count($validated['item_ids']),
+            ], 422);
+        }
+
+        $signaturePath = $uploadedSignature->store("afs_filing/{$user->id}/signatures/queued", DocumentStorage::diskName());
+
+        $itemIds = $items->pluck('id')->map(static fn (mixed $id): int => (int) $id)->all();
+        AfsFilingItem::query()
+            ->where('user_id', (int) $user->getKey())
+            ->whereIn('id', $itemIds)
+            ->update([
+                'status' => 'signing',
+                'error_message' => null,
+                'error_details' => null,
+            ]);
+
+        $queuedCount = 0;
+        $failedToQueueCount = 0;
+
         foreach ($items as $item) {
             try {
-                $this->signingService->sign($item, $user, $presidentFilePath);
-                $results[] = [
-                    'item_id' => (int) $item->id,
-                    'success' => true,
-                    'message' => 'Signature applied.',
-                ];
+                ApplyAfsFilingItemSignatureJob::dispatch((int) $user->getKey(), (int) $item->getKey(), $signaturePath);
+                $queuedCount++;
             } catch (\Throwable $exception) {
-                $results[] = [
-                    'item_id' => (int) $item->id,
-                    'success' => false,
-                    'message' => $exception->getMessage(),
-                ];
+                $failedToQueueCount++;
             }
         }
 
-        return response()->json(['results' => $results]);
+        $submittedCount = count(array_unique(array_map(static fn (mixed $id): int => (int) $id, $validated['item_ids'])));
+        $failedToQueueCount += max(0, $submittedCount - count($itemIds));
+
+        return response()->json([
+            'message' => $queuedCount === 1 ? 'Queued 1 signature task.' : "Queued {$queuedCount} signature tasks.",
+            'queued_count' => $queuedCount,
+            'failed_to_queue_count' => $failedToQueueCount,
+        ], 202);
     }
 
     public function update(AfsFilingItemUpdateRequest $request, AfsFilingItem $item): JsonResponse
@@ -264,6 +298,14 @@ class AfsFilingItemController extends Controller
         abort_unless(is_string($path) && $path !== '' && DocumentStorage::disk()->exists($path), 404);
 
         $fileName = "afs_filing-row-{$item->row_number}.{$type}";
+        $inline = $request->boolean('inline');
+
+        if ($type === 'pdf' && $inline) {
+            return DocumentStorage::disk()->response($path, $fileName, [
+                'Content-Type' => 'application/pdf',
+                'Content-Disposition' => "inline; filename=\"{$fileName}\"",
+            ]);
+        }
 
         return DocumentStorage::disk()->download($path, $fileName);
     }

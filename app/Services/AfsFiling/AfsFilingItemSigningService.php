@@ -50,8 +50,12 @@ class AfsFilingItemSigningService
 
     public function sign(AfsFilingItem $item, User $user, string $presidentSignatureSourcePath): void
     {
-        if ((string) $item->status !== 'pdf_done') {
+        if (! in_array((string) $item->status, ['pdf_done', 'signing'], true)) {
             throw new \RuntimeException('Only generated rows can be signed.');
+        }
+
+        if ($item->signature_applied_at !== null) {
+            throw new \RuntimeException('Signature is already applied for this row.');
         }
 
         if (! is_string($item->docx_path) || $item->docx_path === '' || ! DocumentStorage::disk()->exists($item->docx_path)) {
@@ -72,7 +76,24 @@ class AfsFilingItemSigningService
         }
         $signedDocxTemp .= '.docx';
 
-        $presidentTemp = $this->signatureImageService->processToTransparentPng($presidentSignatureSourcePath);
+        $presidentSourceTemp = null;
+        $resolvedPresidentSourcePath = $presidentSignatureSourcePath;
+        if (! is_file($resolvedPresidentSourcePath)) {
+            if (! DocumentStorage::disk()->exists($presidentSignatureSourcePath)) {
+                @unlink($sourceDocxTemp);
+                @unlink($signedDocxTemp);
+                throw new \RuntimeException('President signature image source not found.');
+            }
+
+            $extension = pathinfo($presidentSignatureSourcePath, PATHINFO_EXTENSION);
+            $presidentSourceTemp = $this->copyStorageFileToTemporaryPath(
+                $presidentSignatureSourcePath,
+                $extension !== '' ? '.'.$extension : '',
+            );
+            $resolvedPresidentSourcePath = $presidentSourceTemp;
+        }
+
+        $presidentTemp = $this->signatureImageService->processToTransparentPng($resolvedPresidentSourcePath);
         $getorTemp = null;
         $signedPdfTemp = null;
 
@@ -102,11 +123,15 @@ class AfsFilingItemSigningService
             $signedPdfTemp = $this->pdfConversionService->convertDocxToPdf($signedDocxTemp);
 
             $this->storeLocalFileToDocumentStorage($signedPdfTemp, $item->pdf_path);
+            $item->status = 'pdf_done';
             $item->signature_applied_at = now();
             $item->save();
         } finally {
             @unlink($sourceDocxTemp);
             @unlink($signedDocxTemp);
+            if (is_string($presidentSourceTemp)) {
+                @unlink($presidentSourceTemp);
+            }
             @unlink($presidentTemp);
             if (is_string($getorTemp)) {
                 @unlink($getorTemp);

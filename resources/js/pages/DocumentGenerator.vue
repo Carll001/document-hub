@@ -99,6 +99,8 @@ const editingItem = ref<UnifiedItem | null>(null);
 const signingItemIds = ref<number[]>([]);
 const signDialogOpen = ref(false);
 const signDialogTarget = ref<UnifiedItem | null>(null);
+const signDialogMode = ref<'single' | 'bulk'>('single');
+const signDialogBulkItemIds = ref<number[]>([]);
 const settingsDialogOpen = ref(false);
 const templateMapping = ref<TemplateMappingPayload>(props.initialMapping);
 const editDialogRef = ref<InstanceType<typeof AfsEditDialog> | null>(null);
@@ -125,6 +127,21 @@ const selectAllState = computed<boolean | 'indeterminate'>(() => {
 const canBulkDeleteSelected = computed(
     () => selectedItemIds.value.length > 0 && !deletingItems.value,
 );
+const canBulkSignSelected = computed(() => {
+    if (!props.signatureEnabled || selectedItemIds.value.length === 0) {
+        return false;
+    }
+
+    const selectedSet = new Set(selectedItemIds.value);
+    return itemsData.value.data.some((item) =>
+        selectedSet.has(item.id)
+        && item.status === 'pdf_done'
+        && item.pdf_available
+        && !item.signature_applied
+        && item.status !== 'deleting'
+        && item.status !== 'signing',
+    );
+});
 
 const sortByFromQuery = (sort: string): string => {
     if (sort === 'uploadedAt') return 'created_at';
@@ -203,7 +220,7 @@ const visitIndex = (overrides: Partial<{
 };
 
 const hasPendingVisibleItems = computed(() =>
-    itemsData.value.data.some((item) => ['queued', 'processing', 'docx_done', 'deleting'].includes(item.status)),
+    itemsData.value.data.some((item) => ['queued', 'processing', 'docx_done', 'signing', 'deleting'].includes(item.status)),
 );
 
 const stopPolling = () => {
@@ -215,6 +232,11 @@ const stopPolling = () => {
     }
 };
 
+const toUnsignedOnly = (payload: PaginatedResponse<UnifiedItem>): PaginatedResponse<UnifiedItem> => ({
+    ...payload,
+    data: payload.data.filter((item) => !item.signature_applied),
+});
+
 const loadItems = async (
     page = itemsData.value.current_page,
     options: { silent?: boolean } = {},
@@ -225,7 +247,8 @@ const loadItems = async (
     }
 
     try {
-        itemsData.value = await getApi<PaginatedResponse<UnifiedItem>>(buildItemsUrl(page));
+        const payload = await getApi<PaginatedResponse<UnifiedItem>>(buildItemsUrl(page));
+        itemsData.value = toUnsignedOnly(payload);
 
         if (pollingActive.value && !hasPendingVisibleItems.value) {
             stopPolling();
@@ -379,7 +402,13 @@ const toggleAllVisibleRows = (checked: boolean | 'indeterminate') => {
 const canEditItem = (item: UnifiedItem) => !['queued', 'processing'].includes(item.status);
 const canDeleteItem = (item: UnifiedItem) => item.status !== 'deleting';
 const displayStatus = (item: UnifiedItem): string =>
-    item.status === 'pdf_done' && !item.signature_applied ? 'Generated' : item.status === 'deleting' ? 'Deleting' : item.status;
+    item.status === 'pdf_done' && !item.signature_applied
+        ? 'Generated'
+        : item.status === 'deleting'
+          ? 'Deleting'
+          : item.status === 'signing'
+            ? 'Signing'
+            : item.status;
 const formatDateTime = (value: string | null): string => {
     if (!value) {
         return '-';
@@ -534,19 +563,52 @@ const applySignatureToItem = (item: UnifiedItem) => {
         return;
     }
 
+    signDialogMode.value = 'single';
+    signDialogBulkItemIds.value = [];
     signDialogTarget.value = item;
     signDialogOpen.value = true;
 };
 
-const onItemSigned = async (pdfUrl?: string) => {
-    const item = signDialogTarget.value;
-    await loadItems(itemsData.value.current_page, { silent: true });
-    toast.success(item ? `Row ${item.row_number} was signed.` : 'Signature applied.');
-    signDialogTarget.value = null;
-
-    if (pdfUrl) {
-        window.open(pdfUrl, '_blank', 'noopener,noreferrer');
+const applySignatureToSelectedItems = () => {
+    if (!canBulkSignSelected.value) {
+        return;
     }
+
+    const selectedSet = new Set(selectedItemIds.value);
+    const eligibleIds = itemsData.value.data
+        .filter((item) =>
+            selectedSet.has(item.id)
+            && item.status === 'pdf_done'
+            && item.pdf_available
+            && !item.signature_applied
+            && item.status !== 'deleting'
+            && item.status !== 'signing',
+        )
+        .map((item) => item.id);
+
+    if (eligibleIds.length === 0) {
+        return;
+    }
+
+    signDialogMode.value = 'bulk';
+    signDialogBulkItemIds.value = eligibleIds;
+    signDialogTarget.value = null;
+    signDialogOpen.value = true;
+};
+
+const onItemSigned = async () => {
+    const item = signDialogTarget.value;
+    const queuedBulkCount = signDialogBulkItemIds.value.length;
+    await loadItems(itemsData.value.current_page, { silent: true });
+    startPolling();
+    if (signDialogMode.value === 'bulk') {
+        toast.success(`${queuedBulkCount} row signatures queued.`);
+    } else {
+        toast.success(item ? `Row ${item.row_number} signature queued.` : 'Signature queued.');
+    }
+    signDialogMode.value = 'single';
+    signDialogBulkItemIds.value = [];
+    signDialogTarget.value = null;
 };
 
 const onTemplateMappingUpdated = (nextMapping: TemplateMappingPayload) => {
@@ -722,7 +784,7 @@ const itemColumns = computed<ColumnDef<UnifiedItem>[]>(() => [
                                                       h(
                                                           'a',
                                                           {
-                                                              href: documentGeneratorRoutes.items.download.url({ item: row.original.id, type: 'pdf' }),
+                                                              href: `${documentGeneratorRoutes.items.download.url({ item: row.original.id, type: 'pdf' })}?inline=1`,
                                                               target: '_blank',
                                                               rel: 'noopener noreferrer',
                                                               class: 'flex w-full items-center gap-2',
@@ -799,8 +861,9 @@ const itemColumns = computed<ColumnDef<UnifiedItem>[]>(() => [
 watch(
     () => props.initialItems,
     (nextItems) => {
-        itemsData.value = nextItems;
-        const visibleIds = new Set(nextItems.data.map((item) => item.id));
+        const unsignedItems = toUnsignedOnly(nextItems);
+        itemsData.value = unsignedItems;
+        const visibleIds = new Set(unsignedItems.data.map((item) => item.id));
         selectedItemIds.value = selectedItemIds.value.filter((id) => visibleIds.has(id));
     },
     { immediate: true, deep: true },
@@ -868,6 +931,8 @@ onMounted(() => {
             v-if="props.signatureEnabled"
             v-model:open="signDialogOpen"
             :target="signDialogTarget"
+            :mode="signDialogMode"
+            :bulk-item-ids="signDialogBulkItemIds"
             @signed="onItemSigned"
         />
         <AfsSettingsDialog
@@ -1023,6 +1088,16 @@ onMounted(() => {
                                 <Trash2 class="mr-2 size-4" />
                                 {{ selectedItemIds.length > 0 ? `Delete selected (${selectedItemIds.length})` : 'Delete selected' }}
                             </Button>
+                            <Button
+                                v-if="props.signatureEnabled"
+                                type="button"
+                                variant="secondary"
+                                :disabled="!canBulkSignSelected"
+                                @click="applySignatureToSelectedItems"
+                            >
+                                <PenLine class="mr-2 size-4" />
+                                {{ selectedItemIds.length > 0 ? `Sign selected (${selectedItemIds.length})` : 'Sign selected' }}
+                            </Button>
                             <Select :model-value="itemStatusFilter" @update:model-value="(value) => onItemStatusChange(String(value))">
                                 <SelectTrigger class="h-9 w-[150px] text-sm">
                                     <SelectValue placeholder="All statuses" />
@@ -1031,6 +1106,7 @@ onMounted(() => {
                                     <SelectItem value="all">All</SelectItem>
                                     <SelectItem value="queued">Queued</SelectItem>
                                     <SelectItem value="processing">Processing</SelectItem>
+                                    <SelectItem value="signing">Signing</SelectItem>
                                     <SelectItem value="deleting">Deleting</SelectItem>
                                     <SelectItem value="docx_done">Docx Done</SelectItem>
                                     <SelectItem value="pdf_done">Generated</SelectItem>

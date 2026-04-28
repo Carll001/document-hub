@@ -22,11 +22,13 @@ class AfsFilingItemRepository implements AfsFilingItemRepositoryContract
             $query->where('status', $filters['status']);
         }
 
-        if (($filters['unsigned_only'] ?? false) === true) {
+        $unsignedOnly = filter_var($filters['unsigned_only'] ?? false, FILTER_VALIDATE_BOOLEAN);
+        if ($unsignedOnly) {
             $query->whereNull('signature_applied_at');
         }
 
-        if (($filters['completed_only'] ?? false) === true) {
+        $completedOnly = filter_var($filters['completed_only'] ?? false, FILTER_VALIDATE_BOOLEAN);
+        if ($completedOnly) {
             $query->where('status', 'pdf_done')->whereNotNull('signature_applied_at');
         }
 
