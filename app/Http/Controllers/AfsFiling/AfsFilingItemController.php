@@ -47,8 +47,15 @@ class AfsFilingItemController extends Controller
         $user = $request->user();
 
         $diskName = DocumentStorage::diskName();
+        $diskConfig = config("filesystems.disks.{$diskName}");
         Log::debug('[AfsFilingStore] Starting upload', [
             'disk' => $diskName,
+            'disk_driver' => $diskConfig['driver'] ?? null,
+            'disk_endpoint' => $diskConfig['endpoint'] ?? null,
+            'disk_bucket' => $diskConfig['bucket'] ?? null,
+            'disk_region' => $diskConfig['region'] ?? null,
+            'disk_root' => $diskConfig['root'] ?? null,
+            'disk_use_path_style' => $diskConfig['use_path_style_endpoint'] ?? null,
             'user_id' => $user->getKey(),
             'excel_original_name' => $excelFile->getClientOriginalName(),
             'excel_size' => $excelFile->getSize(),
