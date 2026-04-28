@@ -85,7 +85,7 @@ class AfsFilingItemController extends Controller
         }
 
         foreach ($createdIds as $position => $id) {
-            GenerateAfsFilingItemJob::dispatch($id)->delay(now()->addSeconds($position > 0 ? 1 : 0));
+            GenerateAfsFilingItemJob::dispatch($id)->delay(now()->addSeconds($position));
         }
 
         return response()->json([
@@ -202,6 +202,28 @@ class AfsFilingItemController extends Controller
         $item->error_message = null;
         $item->error_details = null;
         $item->signature_applied_at = null;
+        $item->started_at = null;
+        $item->completed_at = null;
+        $item->save();
+
+        GenerateAfsFilingItemJob::dispatch((int) $item->id);
+
+        return response()->json($this->itemPayload($item));
+    }
+
+    public function retry(Request $request, AfsFilingItem $item): JsonResponse
+    {
+        $this->assertOwnership($request, $item);
+
+        abort_unless($item->status === 'failed', 422, 'Only failed items can be retried.');
+
+        $this->deleteItemFiles($item);
+
+        $item->status = 'queued';
+        $item->error_message = null;
+        $item->error_details = null;
+        $item->docx_path = null;
+        $item->pdf_path = null;
         $item->started_at = null;
         $item->completed_at = null;
         $item->save();

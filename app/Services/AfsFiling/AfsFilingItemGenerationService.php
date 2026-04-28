@@ -31,23 +31,24 @@ class AfsFilingItemGenerationService
             return;
         }
 
-        $template = $this->resolveTemplateForRow($item->row_data ?? []);
-
         $templatePath = null;
         File::ensureDirectoryExists(storage_path('app/tmp'));
         $docxPath = storage_path('app/tmp/afs-filing-'.Str::uuid().'.docx');
         $pdfPath = null;
 
+        $item->status = 'processing';
+        $item->started_at = $item->started_at ?? now();
+        $item->save();
+
         $baseDir = "afs_filing/{$item->user_id}/items/{$item->id}";
         $docxRelativePath = "{$baseDir}/row-{$item->row_number}.docx";
         $pdfRelativePath = "{$baseDir}/row-{$item->row_number}.pdf";
 
-        $item->status = 'processing';
-        $item->started_at = $item->started_at ?? now();
-        $item->template_name = $template->template_name;
-        $item->save();
-
         try {
+            $template = $this->resolveTemplateForRow($item->row_data ?? []);
+            $item->template_name = $template->template_name;
+            $item->save();
+
             $templatePath = $this->copyStorageFileToTemporaryPath($template->template_path, '.docx');
 
             $validation = $this->docxTemplateService->validateRowData($templatePath, $item->row_data ?? [], $template->year);

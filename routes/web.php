@@ -117,6 +117,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
                 Route::get('{item}/signature/preflight', 'preflightAnchorCheck')->name('signature.preflight');
                 Route::post('{item}/signature', 'sign')->name('signature.apply');
                 Route::put('{item}', 'update')->name('update');
+                Route::post('{item}/retry', 'retry')->name('retry');
                 Route::delete('{item}', 'destroy')->name('destroy');
                 Route::get('{item}/download/{type}', 'download')->name('download');
             });

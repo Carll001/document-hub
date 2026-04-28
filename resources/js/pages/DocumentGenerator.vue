@@ -491,6 +491,26 @@ const deleteItems = async (itemIds: number[]) => {
     }
 };
 
+const retryItem = async (item: UnifiedItem) => {
+    try {
+        await fetch(documentGeneratorRoutes.items.retry.url({ item: item.id }), {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+                Accept: 'application/json',
+                'X-Requested-With': 'XMLHttpRequest',
+                'X-XSRF-TOKEN': csrfToken(),
+            },
+        });
+
+        await loadItems(itemsData.value.current_page, { silent: true });
+        startPolling();
+        toast.success(`Row ${item.row_number} re-queued.`);
+    } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Unable to retry item.');
+    }
+};
+
 const openEditDialog = (item: UnifiedItem) => {
     editingItem.value = item;
     editDialogOpen.value = true;
@@ -722,6 +742,22 @@ const itemColumns = computed<ColumnDef<UnifiedItem>[]>(() => [
                                                   default: () => [
                                                       h(PenLine, { class: 'size-4' }),
                                                       row.original.signature_applied ? 'Signed' : isItemSigning(row.original.id) ? 'Signing...' : 'Add Signature',
+                                                  ],
+                                              },
+                                          )
+                                        : null,
+                                    row.original.status === 'failed'
+                                        ? h(
+                                              DropdownMenuItem,
+                                              {
+                                                  onSelect: () => {
+                                                      void retryItem(row.original);
+                                                  },
+                                              },
+                                              {
+                                                  default: () => [
+                                                      h(Upload, { class: 'size-4' }),
+                                                      'Retry',
                                                   ],
                                               },
                                           )

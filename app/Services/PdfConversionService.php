@@ -19,31 +19,45 @@ class PdfConversionService
 
         $errors = [];
 
-        foreach ($binaries as $binary) {
-            $process = Process::timeout(120)->run([
-                $binary,
-                '--headless',
-                '--convert-to',
-                'pdf:writer_pdf_Export',
-                '--outdir',
-                $directory,
-                $docxPath,
-            ]);
+        // Isolated profile per invocation prevents lock contention between
+        // concurrent or back-to-back jobs when a prior LibreOffice run left
+        // orphaned child processes holding the default profile lock.
+        $userProfileDir = sys_get_temp_dir().'/libreoffice-profile-'.uniqid('', true);
 
-            if ($process->successful()) {
-                $pdfPath = preg_replace('/\.docx$/i', '.pdf', $docxPath);
-                if ($pdfPath !== null && file_exists($pdfPath)) {
-                    return $pdfPath;
+        try {
+            foreach ($binaries as $binary) {
+                $process = Process::timeout(120)->run([
+                    $binary,
+                    '--headless',
+                    '--norestore',
+                    '--nofirststartwizard',
+                    "-env:UserInstallation=file://{$userProfileDir}",
+                    '--convert-to',
+                    'pdf:writer_pdf_Export',
+                    '--outdir',
+                    $directory,
+                    $docxPath,
+                ]);
+
+                if ($process->successful()) {
+                    $pdfPath = preg_replace('/\.docx$/i', '.pdf', $docxPath);
+                    if ($pdfPath !== null && file_exists($pdfPath)) {
+                        return $pdfPath;
+                    }
+
+                    throw new RuntimeException('PDF conversion failed: output file was not generated.');
                 }
 
-                throw new RuntimeException('PDF conversion failed: output file was not generated.');
+                $errors[] = sprintf(
+                    '[%s] %s',
+                    $binary,
+                    trim($process->errorOutput() ?: $process->output())
+                );
             }
-
-            $errors[] = sprintf(
-                '[%s] %s',
-                $binary,
-                trim($process->errorOutput() ?: $process->output())
-            );
+        } finally {
+            if (is_dir($userProfileDir)) {
+                app(\Illuminate\Filesystem\Filesystem::class)->deleteDirectory($userProfileDir);
+            }
         }
 
         throw new RuntimeException(
