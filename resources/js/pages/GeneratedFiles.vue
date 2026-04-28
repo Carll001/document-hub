@@ -9,6 +9,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { DataTable } from '@/components/ui/data-table';
+import { Skeleton } from '@/components/ui/skeleton';
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -657,10 +658,11 @@ onBeforeUnmount(() => {
                     </p>
 
                     <DataTable
+                        v-if="!itemsLoading"
                         :columns="itemColumns"
                         :data="itemsData.data"
                         :meta="itemsData"
-                        :loading="itemsLoading"
+                        :loading="false"
                         :sort-by="itemsSortBy"
                         :sort-direction="itemsSortDirection"
                         empty-message="No completed files available."
@@ -668,6 +670,22 @@ onBeforeUnmount(() => {
                         @per-page-change="async (perPage) => { itemsData.per_page = perPage; await loadItems(1); }"
                         @sort-change="async (column, direction) => { itemsSortBy = column; itemsSortDirection = direction; await loadItems(1); }"
                     />
+                    <div v-else class="rounded-md border">
+                        <div class="border-b p-3">
+                            <Skeleton class="h-5 w-56" />
+                        </div>
+                        <div class="space-y-3 p-3">
+                            <div v-for="index in 8" :key="index" class="grid grid-cols-8 gap-3">
+                                <Skeleton class="h-8 w-full col-span-1" />
+                                <Skeleton class="h-8 w-full col-span-1" />
+                                <Skeleton class="h-8 w-full col-span-1" />
+                                <Skeleton class="h-8 w-full col-span-2" />
+                                <Skeleton class="h-8 w-full col-span-1" />
+                                <Skeleton class="h-8 w-full col-span-1" />
+                                <Skeleton class="h-8 w-full col-span-1" />
+                            </div>
+                        </div>
+                    </div>
                 </CardContent>
             </Card>
         </div>

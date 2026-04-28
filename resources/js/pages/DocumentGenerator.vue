@@ -47,6 +47,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Spinner } from '@/components/ui/spinner';
 import AppLayout from '@/layouts/AppLayout.vue';
 import documentGeneratorRoutes from '@/routes/afs-filing';
@@ -86,6 +87,7 @@ const creatingBatch = ref(false);
 
 const itemsData = ref<PaginatedResponse<UnifiedItem>>(props.initialItems);
 const itemsLoading = ref(false);
+const itemsNavigating = ref(false);
 const itemsSortBy = ref<string>('created_at');
 const itemsSortDirection = ref<'asc' | 'desc'>(props.initialFilters.direction ?? 'desc');
 const itemStatusFilter = ref(props.initialFilters.status ?? 'all');
@@ -127,6 +129,7 @@ const selectAllState = computed<boolean | 'indeterminate'>(() => {
 const canBulkDeleteSelected = computed(
     () => selectedItemIds.value.length > 0 && !deletingItems.value,
 );
+const tableLoading = computed(() => itemsLoading.value || itemsNavigating.value);
 const canBulkSignSelected = computed(() => {
     if (!props.signatureEnabled || selectedItemIds.value.length === 0) {
         return false;
@@ -193,6 +196,7 @@ const visitIndex = (overrides: Partial<{
     direction: 'asc' | 'desc';
     status: string;
 }>) => {
+    itemsNavigating.value = true;
     const nextPage = overrides.page ?? itemsData.value.current_page;
     const nextPerPage = overrides.perPage ?? itemsData.value.per_page;
     const nextSearch = overrides.search ?? companySearch.value.trim();
@@ -215,6 +219,9 @@ const visitIndex = (overrides: Partial<{
             preserveScroll: true,
             replace: true,
             only: ['initialItems', 'initialFilters'],
+            onFinish: () => {
+                itemsNavigating.value = false;
+            },
         },
     );
 };
@@ -863,6 +870,7 @@ watch(
     (nextItems) => {
         const unsignedItems = toUnsignedOnly(nextItems);
         itemsData.value = unsignedItems;
+        itemsNavigating.value = false;
         const visibleIds = new Set(unsignedItems.data.map((item) => item.id));
         selectedItemIds.value = selectedItemIds.value.filter((id) => visibleIds.has(id));
     },
@@ -1118,10 +1126,11 @@ onMounted(() => {
                     </div>
 
                     <DataTable
+                        v-if="!tableLoading"
                         :columns="itemColumns"
                         :data="itemsData.data"
                         :meta="itemsData"
-                        :loading="itemsLoading"
+                        :loading="false"
                         :sort-by="itemsSortBy"
                         :sort-direction="itemsSortDirection"
                         empty-message="No rows available."
@@ -1129,6 +1138,22 @@ onMounted(() => {
                         @per-page-change="(perPage) => { itemsData.per_page = perPage; visitIndex({ page: 1, perPage }); startPolling(); }"
                         @sort-change="(column, direction) => { itemsSortBy = column; itemsSortDirection = direction; visitIndex({ page: 1, sortBy: column, direction }); startPolling(); }"
                     />
+                    <div v-else class="rounded-md border">
+                        <div class="border-b p-3">
+                            <Skeleton class="h-5 w-56" />
+                        </div>
+                        <div class="space-y-3 p-3">
+                            <div v-for="index in 8" :key="index" class="grid grid-cols-8 gap-3">
+                                <Skeleton class="h-8 w-full col-span-1" />
+                                <Skeleton class="h-8 w-full col-span-1" />
+                                <Skeleton class="h-8 w-full col-span-1" />
+                                <Skeleton class="h-8 w-full col-span-2" />
+                                <Skeleton class="h-8 w-full col-span-1" />
+                                <Skeleton class="h-8 w-full col-span-1" />
+                                <Skeleton class="h-8 w-full col-span-1" />
+                            </div>
+                        </div>
+                    </div>
                 </CardContent>
             </Card>
         </div>
