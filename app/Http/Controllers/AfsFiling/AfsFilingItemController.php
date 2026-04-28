@@ -18,6 +18,7 @@ use App\Models\AfsFilingItem;
 use App\Models\DocumentGeneratorTemplate;
 use App\Models\User;
 use App\Services\AfsFiling\AfsFilingItemSigningService;
+use App\Services\DocxTemplateService;
 use App\Services\ExcelExtractionService;
 use App\Support\DocumentStorage;
 use App\Support\FormFieldAliasResolver;
@@ -26,7 +27,9 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
+use RuntimeException;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
@@ -35,6 +38,7 @@ class AfsFilingItemController extends Controller
     public function __construct(
         private readonly AfsFilingItemRepositoryContract $items,
         private readonly AfsFilingItemSigningService $signingService,
+        private readonly DocxTemplateService $docxTemplateService,
     ) {}
 
     public function store(AfsFilingUploadRequest $request, ExcelExtractionService $excelExtractionService): JsonResponse
@@ -74,16 +78,20 @@ class AfsFilingItemController extends Controller
 
         $this->syncAfsFilingItemSequence();
         $createdIds = [];
+        $queuedCount = 0;
+        $failedCount = 0;
 
         try {
-            $createdIds = $this->createItemsFromRows($rows, $user, $excelFile, $templateName);
+            ['created_ids' => $createdIds, 'queued_count' => $queuedCount, 'failed_count' => $failedCount] =
+                $this->createItemsFromRows($rows, $user, $excelFile, $templateName);
         } catch (UniqueConstraintViolationException $exception) {
             if (! $this->isAfsFilingPrimaryKeyCollision($exception)) {
                 throw $exception;
             }
 
             $this->syncAfsFilingItemSequence();
-            $createdIds = $this->createItemsFromRows($rows, $user, $excelFile, $templateName);
+            ['created_ids' => $createdIds, 'queued_count' => $queuedCount, 'failed_count' => $failedCount] =
+                $this->createItemsFromRows($rows, $user, $excelFile, $templateName);
         }
 
         foreach ($createdIds as $position => $id) {
@@ -93,7 +101,9 @@ class AfsFilingItemController extends Controller
         return response()->json([
             'message' => 'AFS filing rows queued for generation.',
             'status' => 'queued',
-            'total_items' => count($createdIds),
+            'total_items' => count($rows),
+            'queued_items' => $queuedCount,
+            'failed_items' => $failedCount,
         ], 201);
     }
 
@@ -334,6 +344,7 @@ class AfsFilingItemController extends Controller
             'signature_applied' => $item->signature_applied_at !== null,
             'signature_applied_at' => $item->signature_applied_at?->toIso8601String(),
             'error_message' => $item->error_message,
+            'error_details' => is_array($item->error_details) ? $item->error_details : null,
             'source_excel_name' => $item->source_excel_name,
             'template_name' => $item->template_name,
             'created_at' => $item->created_at?->toIso8601String(),
@@ -351,32 +362,240 @@ class AfsFilingItemController extends Controller
 
     /**
      * @param array<int, mixed> $rows
-     * @return array<int, int>
+     * @return array{created_ids: array<int, int>, queued_count: int, failed_count: int}
      */
     private function createItemsFromRows(array $rows, User $user, UploadedFile $excelFile, ?string $templateName): array
     {
         $createdIds = [];
+        $queuedCount = 0;
+        $failedCount = 0;
 
-        DB::transaction(function () use ($rows, $user, $excelFile, $templateName, &$createdIds): void {
+        DB::transaction(function () use ($rows, $user, $excelFile, $templateName, &$createdIds, &$queuedCount, &$failedCount): void {
             foreach ($rows as $index => $rowData) {
                 if (! is_array($rowData)) {
                     continue;
+                }
+
+                $rowValidation = $this->validateRowAgainstTemplate($rowData, $index + 2);
+
+                $isFailed = (($rowValidation['missing_data'] ?? []) !== []) || (($rowValidation['errors'] ?? []) !== []);
+                $errorMessage = null;
+                $errorDetails = null;
+
+                if ($isFailed) {
+                    $messages = [];
+
+                    if (($rowValidation['missing_data'] ?? []) !== []) {
+                        $messages[] = 'Missing data: '.implode(', ', $rowValidation['missing_data']);
+                    }
+
+                    if (($rowValidation['errors'] ?? []) !== []) {
+                        $messages[] = implode(' ', $rowValidation['errors']);
+                    }
+
+                    $errorMessage = mb_substr(trim(implode(' ', $messages)), 0, 2000);
+                    $errorDetails = [
+                        'validation_stage' => 'upload',
+                        'missing_data' => array_values($rowValidation['missing_data'] ?? []),
+                        'errors' => array_values($rowValidation['errors'] ?? []),
+                    ];
                 }
 
                 $item = AfsFilingItem::query()->create([
                     'user_id' => (int) $user->getKey(),
                     'row_number' => $index + 2,
                     'row_data' => $rowData,
-                    'status' => 'queued',
+                    'status' => $isFailed ? 'failed' : 'queued',
+                    'error_message' => $errorMessage,
+                    'error_details' => $errorDetails,
+                    'completed_at' => $isFailed ? now() : null,
                     'source_excel_name' => $excelFile->getClientOriginalName(),
                     'template_name' => $templateName,
                 ]);
 
-                $createdIds[] = (int) $item->id;
+                if ($isFailed) {
+                    $failedCount++;
+                } else {
+                    $queuedCount++;
+                    $createdIds[] = (int) $item->id;
+                }
             }
         });
 
-        return $createdIds;
+        return [
+            'created_ids' => $createdIds,
+            'queued_count' => $queuedCount,
+            'failed_count' => $failedCount,
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $rowData
+     * @return array{missing_data: list<string>, errors: list<string>}
+     */
+    private function validateRowAgainstTemplate(array $rowData, int $rowNumber): array
+    {
+        $template = $this->resolveTemplateForRow($rowData);
+        $templatePath = null;
+
+        try {
+            $templatePath = $this->copyStorageFileToTemporaryPath($template->template_path, '.docx');
+            $placeholders = $this->docxTemplateService->placeholderKeys($templatePath);
+
+            Log::info('AFS DOCX placeholders extracted for upload validation.', [
+                'row_number' => $rowNumber,
+                'template_id' => (int) $template->getKey(),
+                'template_name' => $template->template_name,
+                'template_year' => $template->year,
+                'placeholders' => $placeholders,
+            ]);
+
+            Log::info('AFS Excel row data extracted for upload validation.', [
+                'row_number' => $rowNumber,
+                'row_data' => $this->sanitizeForLog($rowData),
+            ]);
+
+            return $this->docxTemplateService->validateRowData($templatePath, $rowData, $template->year);
+        } finally {
+            if (is_string($templatePath) && is_file($templatePath)) {
+                @unlink($templatePath);
+            }
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $rowData
+     */
+    private function resolveTemplateForRow(array $rowData): DocumentGeneratorTemplate
+    {
+        $rowYear = $this->extractRegistrationYear($rowData);
+
+        $templates = DocumentGeneratorTemplate::query()
+            ->orderByRaw('CASE WHEN year IS NULL THEN 1 ELSE 0 END')
+            ->orderByDesc('year')
+            ->get();
+
+        if ($templates->isEmpty()) {
+            throw new RuntimeException('No global template configured for AFS filing.');
+        }
+
+        if ($rowYear !== null) {
+            $matched = $templates->first(static function (DocumentGeneratorTemplate $template) use ($rowYear): bool {
+                return $template->year !== null && (int) $template->year <= $rowYear;
+            });
+
+            if ($matched instanceof DocumentGeneratorTemplate) {
+                return $matched;
+            }
+        }
+
+        $default = $templates->first(static fn (DocumentGeneratorTemplate $template): bool => $template->year === null);
+
+        if ($default instanceof DocumentGeneratorTemplate) {
+            return $default;
+        }
+
+        /** @var DocumentGeneratorTemplate $first */
+        $first = $templates->first();
+
+        return $first;
+    }
+
+    /**
+     * @param array<string, mixed> $rowData
+     */
+    private function extractRegistrationYear(array $rowData): ?int
+    {
+        foreach ($rowData as $header => $value) {
+            $normalized = preg_replace('/[^a-z0-9]+/', '_', mb_strtolower(trim((string) $header))) ?? '';
+            $normalized = trim($normalized, '_');
+            if ($normalized !== 'sec_registration_date') {
+                continue;
+            }
+
+            $raw = trim((string) $value);
+            if ($raw === '') {
+                return null;
+            }
+
+            $timestamp = strtotime($raw);
+            if ($timestamp !== false) {
+                return (int) date('Y', $timestamp);
+            }
+
+            if (preg_match('/\b(\d{4})\b/', $raw, $matches) === 1) {
+                return (int) $matches[1];
+            }
+
+            return null;
+        }
+
+        return null;
+    }
+
+    private function copyStorageFileToTemporaryPath(string $storagePath, string $extension = ''): string
+    {
+        $temporaryPath = tempnam(sys_get_temp_dir(), 'afs-template-');
+        if ($temporaryPath === false) {
+            throw new RuntimeException('Unable to allocate a temporary file path.');
+        }
+
+        $resolvedPath = $temporaryPath;
+        if ($extension !== '') {
+            $resolvedPath = $temporaryPath.(str_starts_with($extension, '.') ? $extension : '.'.$extension);
+            if (! @rename($temporaryPath, $resolvedPath)) {
+                @unlink($temporaryPath);
+                throw new RuntimeException('Unable to prepare a temporary template file path.');
+            }
+        }
+
+        $stream = DocumentStorage::disk()->readStream($storagePath);
+        if (! is_resource($stream)) {
+            if (is_file($resolvedPath)) {
+                @unlink($resolvedPath);
+            }
+            throw new RuntimeException('Template file could not be read from storage.');
+        }
+
+        $target = @fopen($resolvedPath, 'wb');
+        if (! is_resource($target)) {
+            fclose($stream);
+            if (is_file($resolvedPath)) {
+                @unlink($resolvedPath);
+            }
+            throw new RuntimeException('Temporary template file could not be opened.');
+        }
+
+        try {
+            stream_copy_to_stream($stream, $target);
+        } finally {
+            fclose($stream);
+            fclose($target);
+        }
+
+        return $resolvedPath;
+    }
+
+    /**
+     * @param mixed $value
+     * @return mixed
+     */
+    private function sanitizeForLog(mixed $value): mixed
+    {
+        if (is_string($value)) {
+            return preg_replace('/[\x00-\x1F\x7F]/u', ' ', $value) ?? $value;
+        }
+
+        if (is_array($value)) {
+            $sanitized = [];
+            foreach ($value as $key => $item) {
+                $sanitized[$key] = $this->sanitizeForLog($item);
+            }
+
+            return $sanitized;
+        }
+
+        return $value;
     }
 
     private function syncAfsFilingItemSequence(): void

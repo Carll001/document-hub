@@ -108,6 +108,11 @@ const templateMapping = ref<TemplateMappingPayload>(props.initialMapping);
 const editDialogRef = ref<InstanceType<typeof AfsEditDialog> | null>(null);
 const deleteConfirmOpen = ref(false);
 const deleteConfirmIds = ref<number[]>([]);
+const errorDialogOpen = ref(false);
+const errorDialogTitle = ref('Row Error');
+const errorDialogMissingData = ref<string[]>([]);
+const errorDialogErrors = ref<string[]>([]);
+const errorDialogFetchedHeaders = ref<string[]>([]);
 
 let pollInterval: ReturnType<typeof setInterval> | null = null;
 let companySearchDebounce: ReturnType<typeof setTimeout> | null = null;
@@ -329,6 +334,13 @@ const postBatch = async () => {
             throw new Error(`Failed to upload file (${response.status}).`);
         }
 
+        const payload = (await response.json()) as {
+            message?: string;
+            total_items?: number;
+            queued_items?: number;
+            failed_items?: number;
+        };
+
         await loadItems(1);
         startPolling();
         isUploadDialogOpen.value = false;
@@ -336,7 +348,20 @@ const postBatch = async () => {
         defaultTemplateFile.value = null;
         createErrors.value = {};
         createErrorMessage.value = null;
-        toast.success('Document generation has started for the uploaded file.');
+
+        const queuedItems = Number(payload.queued_items ?? 0);
+        const failedItems = Number(payload.failed_items ?? 0);
+        const totalItems = Number(payload.total_items ?? queuedItems + failedItems);
+
+        if (failedItems > 0 && queuedItems > 0) {
+            toast.success(`Upload processed: ${queuedItems}/${totalItems} queued, ${failedItems} failed validation.`);
+        } else if (failedItems > 0 && queuedItems === 0) {
+            toast.error(`Upload processed: 0/${totalItems} queued, ${failedItems} failed validation.`);
+        } else if (queuedItems > 0) {
+            toast.success(`${queuedItems}/${totalItems} rows queued for generation.`);
+        } else {
+            toast.success(payload.message ?? 'Upload processed.');
+        }
     } catch (error) {
         toast.error(
             error instanceof Error ? error.message : 'Unable to upload file.',
@@ -622,6 +647,27 @@ const onTemplateMappingUpdated = (nextMapping: TemplateMappingPayload) => {
     templateMapping.value = nextMapping;
 };
 
+const parseErrorDetails = (item: UnifiedItem) => {
+    const details = item.error_details && typeof item.error_details === 'object'
+        ? item.error_details
+        : {};
+    const missingRaw = (details as Record<string, unknown>).missing_data;
+    const errorsRaw = (details as Record<string, unknown>).errors;
+    const missingData = Array.isArray(missingRaw) ? missingRaw.filter((x): x is string => typeof x === 'string' && x.trim() !== '') : [];
+    const errors = Array.isArray(errorsRaw) ? errorsRaw.filter((x): x is string => typeof x === 'string' && x.trim() !== '') : [];
+
+    return { missingData, errors };
+};
+
+const openErrorDialog = (item: UnifiedItem) => {
+    const parsed = parseErrorDetails(item);
+    errorDialogTitle.value = `Row ${item.row_number} Error`;
+    errorDialogMissingData.value = parsed.missingData;
+    errorDialogErrors.value = parsed.errors;
+    errorDialogFetchedHeaders.value = Object.keys(item.row_data ?? {});
+    errorDialogOpen.value = true;
+};
+
 const itemColumns = computed<ColumnDef<UnifiedItem>[]>(() => [
     {
         id: 'selection',
@@ -706,7 +752,24 @@ const itemColumns = computed<ColumnDef<UnifiedItem>[]>(() => [
         accessorKey: 'error_message',
         header: 'Error',
         enableSorting: false,
-        cell: ({ row }) => row.original.error_message ?? '-',
+        cell: ({ row }) => {
+            const parsed = parseErrorDetails(row.original);
+            const hasDetails = parsed.missingData.length > 0 || parsed.errors.length > 0;
+
+            if (hasDetails || row.original.error_message) {
+                return h(
+                    Badge,
+                    {
+                        variant: 'destructive',
+                        class: 'cursor-pointer',
+                        onClick: () => openErrorDialog(row.original),
+                    },
+                    () => 'Error',
+                );
+            }
+
+            return '-';
+        },
     },
     {
         id: 'actions',
@@ -970,6 +1033,47 @@ onMounted(() => {
                 </AlertDialogFooter>
             </AlertDialogContent>
         </AlertDialog>
+
+        <Dialog :open="errorDialogOpen" @update:open="errorDialogOpen = $event">
+            <DialogContent class="max-h-[85vh] overflow-y-auto sm:max-w-4xl">
+                <DialogHeader>
+                    <DialogTitle>{{ errorDialogTitle }}</DialogTitle>
+                </DialogHeader>
+
+                <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <div class="space-y-2">
+                        <p class="font-medium">Missing data ({{ errorDialogMissingData.length }})</p>
+                        <div class="rounded-md border p-3">
+                            <ul class="list-disc space-y-1 pl-5 text-sm break-words">
+                                <li v-for="field in errorDialogMissingData" :key="field">{{ field }}</li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <div class="space-y-2">
+                        <p class="font-medium">Fetched headers ({{ errorDialogFetchedHeaders.length }})</p>
+                        <div class="rounded-md border p-3">
+                            <ul class="list-disc space-y-1 pl-5 text-sm break-words">
+                                <li v-for="header in errorDialogFetchedHeaders" :key="header">
+                                    {{ header }}
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <div v-if="errorDialogErrors.length > 0" class="space-y-2 text-sm">
+                    <p class="font-medium">Validation errors</p>
+                    <ul class="list-disc space-y-1 pl-5">
+                        <li v-for="entry in errorDialogErrors" :key="entry">{{ entry }}</li>
+                    </ul>
+                </div>
+
+                <DialogFooter>
+                    <Button type="button" variant="secondary" @click="errorDialogOpen = false">Close</Button>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
 
         <div class="flex flex-1 flex-col gap-6 p-4 md:p-6">
             <Card class="rounded-3xl">

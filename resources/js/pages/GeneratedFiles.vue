@@ -425,13 +425,6 @@ const itemColumns = computed<ColumnDef<GeneratedFileItem>[]>(() => [
             ),
     },
     {
-        id: 'error_message',
-        accessorKey: 'error_message',
-        header: 'Error',
-        enableSorting: false,
-        cell: ({ row }) => row.original.error_message || '-',
-    },
-    {
         id: 'actions',
         header: 'Actions',
         enableSorting: false,
@@ -710,4 +703,5 @@ onBeforeUnmount(() => {
             </AlertDialogFooter>
         </AlertDialogContent>
     </AlertDialog>
+
 </template>

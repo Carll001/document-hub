@@ -192,6 +192,7 @@ class AfsFilingPageController extends Controller
             'signature_applied' => $item->signature_applied_at !== null,
             'signature_applied_at' => $item->signature_applied_at?->toIso8601String(),
             'error_message' => $item->error_message,
+            'error_details' => is_array($item->error_details) ? $item->error_details : null,
             'source_excel_name' => $item->source_excel_name,
             'template_name' => $item->template_name,
             'created_at' => $item->created_at?->toIso8601String(),

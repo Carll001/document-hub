@@ -49,9 +49,13 @@ class DocxTemplateService
                 $this->configureMacroChars($processor);
 
                 foreach ($this->extractPlaceholderKeys($processor) as $key) {
+                    if ($this->isSignatureImagePlaceholder($key)) {
+                        continue;
+                    }
+
                     $resolution = $this->resolvePlaceholderValue($key, $normalizedMap, $selectedTemplateYear);
 
-                    if ($resolution['status'] === 'missing_data') {
+                    if (in_array($resolution['status'], ['missing_data', 'unmatched'], true)) {
                         $missingData[] = $key;
 
                         continue;

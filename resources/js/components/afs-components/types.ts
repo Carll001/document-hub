@@ -21,6 +21,7 @@ export type UnifiedItem = {
     signature_applied: boolean;
     signature_applied_at: string | null;
     error_message: string | null;
+    error_details?: Record<string, unknown> | null;
     source_excel_name: string;
     template_name: string;
     created_at: string | null;
