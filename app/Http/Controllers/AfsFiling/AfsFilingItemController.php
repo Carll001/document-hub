@@ -56,9 +56,16 @@ class AfsFilingItemController extends Controller
         ]);
 
         try {
-            $excelPath = $excelFile->store("afs_filing/{$user->id}/uploads", $diskName);
+            $excelStorePath = "afs_filing/{$user->id}/uploads";
+            $excelFileName = $excelFile->hashName();
+            Log::debug('[AfsFilingStore] Attempting Storage::putFileAs', [
+                'path' => $excelStorePath,
+                'filename' => $excelFileName,
+            ]);
+            Storage::disk($diskName)->putFileAs($excelStorePath, $excelFile, $excelFileName);
+            $excelPath = "{$excelStorePath}/{$excelFileName}";
         } catch (\Throwable $e) {
-            Log::error('[AfsFilingStore] Exception during Excel store()', [
+            Log::error('[AfsFilingStore] Exception during Excel upload', [
                 'message' => $e->getMessage(),
                 'class' => get_class($e),
                 'trace' => $e->getTraceAsString(),
@@ -67,16 +74,7 @@ class AfsFilingItemController extends Controller
             return response()->json(['message' => $e->getMessage()], 500);
         }
 
-        Log::debug('[AfsFilingStore] Excel store result', [
-            'excel_path' => $excelPath,
-            'store_succeeded' => $excelPath !== false,
-        ]);
-
-        if ($excelPath === false) {
-            Log::error('[AfsFilingStore] Excel file store() returned false — S3 upload failed with no exception');
-
-            return response()->json(['message' => 'Failed to upload Excel file to storage.'], 500);
-        }
+        Log::debug('[AfsFilingStore] Excel upload succeeded', ['excel_path' => $excelPath]);
 
         $uploadedDefaultTemplate = $request->file('default_template_file');
         $templateName = null;
