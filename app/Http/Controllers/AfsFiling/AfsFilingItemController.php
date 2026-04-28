@@ -24,6 +24,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -42,9 +43,13 @@ class AfsFilingItemController extends Controller
             return response()->json(['message' => 'Excel file is required.'], 422);
         }
 
+        Log::info('Received AFS filing upload request from user ID: ' . $request->user()?->getKey());
+        Log::info('Excel file original name: ' . $excelFile->getClientOriginalName() . ', size: ' . $excelFile->getSize() . ' bytes');
+
         /** @var User $user */
         $user = $request->user();
         $excelPath = $excelFile->store("afs_filing/{$user->id}/uploads", DocumentStorage::diskName());
+        Log::info('Excel path: ' . $excelPath);
 
         $uploadedDefaultTemplate = $request->file('default_template_file');
         $templateName = null;
@@ -98,7 +103,7 @@ class AfsFilingItemController extends Controller
 
         return response()->json([
             'current_page' => $paginator->currentPage(),
-            'data' => $paginator->getCollection()->map(fn (AfsFilingItem $item): array => $this->itemPayload($item))->values(),
+            'data' => $paginator->getCollection()->map(fn(AfsFilingItem $item): array => $this->itemPayload($item))->values(),
             'last_page' => $paginator->lastPage(),
             'per_page' => $paginator->perPage(),
             'total' => $paginator->total(),
