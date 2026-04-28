@@ -11,9 +11,9 @@ final class DocumentStorage
 {
     public static function diskName(): string
     {
-        $disk = (string) config('filesystems.default', 'local');
+        $disk = (string) config('filesystems.default', 's3');
 
-        return $disk !== '' ? $disk : 'local';
+        return $disk !== '' ? $disk : 's3';
     }
 
     public static function disk(): FilesystemAdapter
