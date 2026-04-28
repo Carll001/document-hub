@@ -25,6 +25,20 @@ Route::inertia('/', 'Welcome', [
     'signatureEnabled' => (bool) config('services.document_generator.signature_enabled', true),
 ])->name('home');
 
+Route::get('/debug-afs-items', function () {
+    $items = \App\Models\AfsFilingItem::orderBy('id')
+        ->get(['id', 'status', 'error_message', 'started_at', 'completed_at'])
+        ->map(fn ($i) => [
+            'id' => $i->id,
+            'status' => $i->status,
+            'error' => $i->error_message,
+            'started_at' => $i->started_at?->toDateTimeString(),
+            'completed_at' => $i->completed_at?->toDateTimeString(),
+        ]);
+
+    return response()->json($items);
+});
+
 Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('dashboard', DashboardController::class)->name('dashboard');
     Route::middleware('client')
