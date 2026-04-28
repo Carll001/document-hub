@@ -74,10 +74,20 @@ class ExcelExtractionService
             throw new InvalidArgumentException('A temporary file could not be created for Excel extraction.');
         }
 
-        $stream = DocumentStorage::disk()->readStream($storagePath);
+        try {
+            $stream = DocumentStorage::disk()->readStream($storagePath);
+        } catch (\Throwable $e) {
+            @unlink($temporaryPath);
+            throw new InvalidArgumentException(
+                'The Excel file could not be read from storage: ' . $e->getMessage(),
+                0,
+                $e,
+            );
+        }
+
         if (! is_resource($stream)) {
             @unlink($temporaryPath);
-            throw new InvalidArgumentException('The Excel file could not be read from storage.');
+            throw new InvalidArgumentException('The Excel file could not be read from storage (readStream returned non-resource).');
         }
 
         $target = @fopen($temporaryPath, 'wb');

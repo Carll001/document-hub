@@ -32,7 +32,7 @@ class AfsFilingItemGenerationService
 
         $template = $this->resolveTemplateForRow($item->row_data ?? []);
 
-        $templatePath = $this->copyStorageFileToTemporaryPath($template->template_path, '.docx');
+        $templatePath = null;
         $docxPath = storage_path('app/tmp/afs-filing-'.Str::uuid().'.docx');
         $pdfPath = null;
 
@@ -46,6 +46,8 @@ class AfsFilingItemGenerationService
         $item->save();
 
         try {
+            $templatePath = $this->copyStorageFileToTemporaryPath($template->template_path, '.docx');
+
             $validation = $this->docxTemplateService->validateRowData($templatePath, $item->row_data ?? [], $template->year);
             if (($validation['missing_data'] ?? []) !== [] || ($validation['errors'] ?? []) !== []) {
                 $messages = [];
@@ -84,7 +86,7 @@ class AfsFilingItemGenerationService
             $item->completed_at = now();
             $item->save();
         } finally {
-            if (is_file($templatePath)) {
+            if (is_string($templatePath) && is_file($templatePath)) {
                 @unlink($templatePath);
             }
             if (is_file($docxPath)) {
