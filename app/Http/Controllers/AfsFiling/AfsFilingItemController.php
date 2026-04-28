@@ -55,14 +55,25 @@ class AfsFilingItemController extends Controller
             'excel_mime' => $excelFile->getMimeType(),
         ]);
 
-        $excelPath = $excelFile->store("afs_filing/{$user->id}/uploads", $diskName);
+        try {
+            $excelPath = $excelFile->store("afs_filing/{$user->id}/uploads", $diskName);
+        } catch (\Throwable $e) {
+            Log::error('[AfsFilingStore] Exception during Excel store()', [
+                'message' => $e->getMessage(),
+                'class' => get_class($e),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return response()->json(['message' => $e->getMessage()], 500);
+        }
+
         Log::debug('[AfsFilingStore] Excel store result', [
             'excel_path' => $excelPath,
             'store_succeeded' => $excelPath !== false,
         ]);
 
         if ($excelPath === false) {
-            Log::error('[AfsFilingStore] Excel file store() returned false — S3 upload failed');
+            Log::error('[AfsFilingStore] Excel file store() returned false — S3 upload failed with no exception');
 
             return response()->json(['message' => 'Failed to upload Excel file to storage.'], 500);
         }
