@@ -11,6 +11,7 @@ use App\Http\Requests\AfsFiling\AfsFilingItemsIndexRequest;
 use App\Http\Requests\AfsFiling\AfsFilingItemUpdateRequest;
 use App\Http\Requests\AfsFiling\AfsFilingSignBulkRequest;
 use App\Http\Requests\AfsFiling\AfsFilingUploadRequest;
+use App\Jobs\AfsFiling\DeleteAfsFilingItemJob;
 use App\Jobs\AfsFiling\GenerateAfsFilingItemJob;
 use App\Models\AfsFilingItem;
 use App\Models\DocumentGeneratorTemplate;
@@ -246,10 +247,12 @@ class AfsFilingItemController extends Controller
     {
         $this->assertOwnership($request, $item);
 
-        $this->deleteItemFiles($item);
-        $item->delete();
+        $item->status = 'deleting';
+        $item->save();
 
-        return response()->json(['message' => 'Row deleted.']);
+        DeleteAfsFilingItemJob::dispatch((int) $item->user_id, (int) $item->id);
+
+        return response()->json(['message' => 'Row deletion queued.', 'status' => 'deleting']);
     }
 
     public function download(Request $request, AfsFilingItem $item, string $type): StreamedResponse|BinaryFileResponse

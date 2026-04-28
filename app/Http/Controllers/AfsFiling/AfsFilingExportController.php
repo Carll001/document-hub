@@ -7,6 +7,7 @@ namespace App\Http\Controllers\AfsFiling;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\AfsFiling\AfsFilingDestroyCompletedItemsRequest;
 use App\Http\Requests\AfsFiling\AfsFilingQueueCompletedDownloadRequest;
+use App\Jobs\AfsFiling\DeleteAfsFilingItemJob;
 use App\Jobs\AfsFiling\ProcessAfsFilingCompletedExport;
 use App\Models\AfsFilingItem;
 use App\Models\User;
@@ -112,28 +113,33 @@ class AfsFilingExportController extends Controller
             ->unique()
             ->values();
 
-        $items = AfsFilingItem::query()
+        $resolvedIds = AfsFilingItem::query()
             ->where('user_id', (int) $user->getKey())
             ->whereIn('id', $itemIds->all())
             ->where('status', 'pdf_done')
             ->whereNotNull('signature_applied_at')
-            ->get();
+            ->pluck('id')
+            ->map(static fn (mixed $id): int => (int) $id)
+            ->all();
 
-        if ($items->isEmpty()) {
+        if ($resolvedIds === []) {
             return response()->json(['message' => 'No completed rows matched the selected items.'], 422);
         }
 
-        foreach ($items as $item) {
-            $paths = array_filter([(string) $item->docx_path, (string) $item->pdf_path]);
-            if ($paths !== []) {
-                DocumentStorage::disk()->delete($paths);
-            }
-            $item->delete();
+        AfsFilingItem::query()
+            ->where('user_id', (int) $user->getKey())
+            ->whereIn('id', $resolvedIds)
+            ->update(['status' => 'deleting']);
+
+        foreach ($resolvedIds as $itemId) {
+            DeleteAfsFilingItemJob::dispatch((int) $user->getKey(), $itemId);
         }
 
+        $queuedCount = count($resolvedIds);
+
         return response()->json([
-            'message' => $items->count() === 1 ? 'Deleted 1 completed row.' : "Deleted {$items->count()} completed rows.",
-            'deleted_count' => $items->count(),
+            'message' => $queuedCount === 1 ? 'Queued 1 delete task.' : "Queued {$queuedCount} delete tasks.",
+            'queued_count' => $queuedCount,
         ]);
     }
 }

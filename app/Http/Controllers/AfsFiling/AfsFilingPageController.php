@@ -32,7 +32,7 @@ class AfsFilingPageController extends Controller
             'search' => ['nullable', 'string', 'max:255'],
             'sort' => ['nullable', 'in:uploadedAt,generatedAt,pdfStatus,sourceRowNumber,created_at,updated_at,status,row_number'],
             'direction' => ['nullable', 'in:asc,desc'],
-            'status' => ['nullable', 'in:queued,processing,docx_done,pdf_done,failed'],
+            'status' => ['nullable', 'in:queued,processing,deleting,docx_done,pdf_done,failed'],
             'open_settings' => ['nullable', 'boolean'],
         ]);
 

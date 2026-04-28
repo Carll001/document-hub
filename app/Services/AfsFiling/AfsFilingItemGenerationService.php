@@ -27,7 +27,7 @@ class AfsFilingItemGenerationService
             return;
         }
 
-        if (in_array((string) $item->status, ['pdf_done', 'failed'], true)) {
+        if (in_array((string) $item->status, ['pdf_done', 'failed', 'deleting'], true)) {
             return;
         }
 
@@ -75,6 +75,12 @@ class AfsFilingItemGenerationService
 
             $pdfPath = $this->pdfConversionService->convertDocxToPdf($docxPath);
             $this->storeLocalFileToDocumentStorage($pdfPath, $pdfRelativePath);
+
+            $item->refresh();
+            if ((string) $item->status === 'deleting') {
+                DocumentStorage::disk()->delete(array_filter([$docxRelativePath, $pdfRelativePath]));
+                return;
+            }
 
             $item->status = 'pdf_done';
             $item->docx_path = $docxRelativePath;

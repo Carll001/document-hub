@@ -319,7 +319,7 @@ const deleteCompletedItems = async (itemIds: number[]) => {
     try {
         const payload = await deleteJson<{
             message: string;
-            deleted_count: number;
+            queued_count: number;
         }>(documentGeneratorRoutes.completed.items.destroy.bulk.url(), {
             item_ids: uniqueIds,
         });
@@ -654,4 +654,3 @@ onBeforeUnmount(() => {
         </AlertDialogContent>
     </AlertDialog>
 </template>
-

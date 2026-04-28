@@ -203,7 +203,7 @@ const visitIndex = (overrides: Partial<{
 };
 
 const hasPendingVisibleItems = computed(() =>
-    itemsData.value.data.some((item) => ['queued', 'processing', 'docx_done'].includes(item.status)),
+    itemsData.value.data.some((item) => ['queued', 'processing', 'docx_done', 'deleting'].includes(item.status)),
 );
 
 const stopPolling = () => {
@@ -377,9 +377,9 @@ const toggleAllVisibleRows = (checked: boolean | 'indeterminate') => {
 };
 
 const canEditItem = (item: UnifiedItem) => !['queued', 'processing'].includes(item.status);
-const canDeleteItem = (item: UnifiedItem) => !['queued', 'processing'].includes(item.status);
+const canDeleteItem = (item: UnifiedItem) => item.status !== 'deleting';
 const displayStatus = (item: UnifiedItem): string =>
-    item.status === 'pdf_done' && !item.signature_applied ? 'Generated' : item.status;
+    item.status === 'pdf_done' && !item.signature_applied ? 'Generated' : item.status === 'deleting' ? 'Deleting' : item.status;
 const formatDateTime = (value: string | null): string => {
     if (!value) {
         return '-';
@@ -477,14 +477,14 @@ const deleteItems = async (itemIds: number[]) => {
 
         if (failedCount === 0) {
             toast.success(
-                successCount === 1 ? 'Row deleted.' : `${successCount} rows deleted.`,
+                successCount === 1 ? 'Row deletion queued.' : `${successCount} row deletions queued.`,
             );
             return;
         }
 
         toast.error(
             successCount > 0
-                ? `${successCount} rows deleted, ${failedCount} failed.`
+                ? `${successCount} deletions queued, ${failedCount} failed.`
                 : 'Unable to delete selected rows.',
         );
     } catch (error) {
@@ -1031,6 +1031,7 @@ onMounted(() => {
                                     <SelectItem value="all">All</SelectItem>
                                     <SelectItem value="queued">Queued</SelectItem>
                                     <SelectItem value="processing">Processing</SelectItem>
+                                    <SelectItem value="deleting">Deleting</SelectItem>
                                     <SelectItem value="docx_done">Docx Done</SelectItem>
                                     <SelectItem value="pdf_done">Generated</SelectItem>
                                     <SelectItem value="failed">Failed</SelectItem>

@@ -1,7 +1,7 @@
 import { resolveAliasedField, resolveTin } from '@/lib/form-field-aliases';
 
 export const statusBadgeVariant = (status: string): 'default' | 'secondary' | 'destructive' | 'outline' => {
-    if (status === 'failed') {
+    if (status === 'failed' || status === 'deleting') {
         return 'destructive';
     }
 
@@ -27,6 +27,10 @@ export const statusBadgeClass = (status: string): string | undefined => {
 
     if (status === 'pdf_done' || status === 'completed') {
         return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300';
+    }
+
+    if (status === 'deleting') {
+        return 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300';
     }
 
     return undefined;
