@@ -43,27 +43,56 @@ class AfsFilingItemController extends Controller
             return response()->json(['message' => 'Excel file is required.'], 422);
         }
 
-        Log::info('Received AFS filing upload request from user ID: ' . $request->user()?->getKey());
-        Log::info('Excel file original name: ' . $excelFile->getClientOriginalName() . ', size: ' . $excelFile->getSize() . ' bytes');
-
         /** @var User $user */
         $user = $request->user();
-        $excelPath = $excelFile->store("afs_filing/{$user->id}/uploads", DocumentStorage::diskName());
-        Log::info('Excel path: ' . $excelPath);
+
+        $diskName = DocumentStorage::diskName();
+        Log::debug('[AfsFilingStore] Starting upload', [
+            'disk' => $diskName,
+            'user_id' => $user->getKey(),
+            'excel_original_name' => $excelFile->getClientOriginalName(),
+            'excel_size' => $excelFile->getSize(),
+            'excel_mime' => $excelFile->getMimeType(),
+        ]);
+
+        $excelPath = $excelFile->store("afs_filing/{$user->id}/uploads", $diskName);
+        Log::debug('[AfsFilingStore] Excel store result', [
+            'excel_path' => $excelPath,
+            'store_succeeded' => $excelPath !== false,
+        ]);
+
+        if ($excelPath === false) {
+            Log::error('[AfsFilingStore] Excel file store() returned false — S3 upload failed');
+
+            return response()->json(['message' => 'Failed to upload Excel file to storage.'], 500);
+        }
 
         $uploadedDefaultTemplate = $request->file('default_template_file');
         $templateName = null;
         if ($uploadedDefaultTemplate) {
             $templateName = $uploadedDefaultTemplate->getClientOriginalName();
-            $templatePath = $uploadedDefaultTemplate->store("afs_filing/{$user->id}/templates", DocumentStorage::diskName());
+            Log::debug('[AfsFilingStore] Storing template', [
+                'template_name' => $templateName,
+                'template_size' => $uploadedDefaultTemplate->getSize(),
+            ]);
+            $templatePath = $uploadedDefaultTemplate->store("afs_filing/{$user->id}/templates", $diskName);
+            Log::debug('[AfsFilingStore] Template store result', [
+                'template_path' => $templatePath,
+                'store_succeeded' => $templatePath !== false,
+            ]);
             DocumentGeneratorTemplate::query()->updateOrCreate(
                 ['year' => null],
                 ['template_name' => $templateName, 'template_path' => $templatePath],
             );
         }
 
+        Log::debug('[AfsFilingStore] Reading back Excel from storage for extraction', ['excel_path' => $excelPath]);
         $extracted = $excelExtractionService->extractFromDocumentStorage($excelPath, 0);
         $rows = $extracted['rows'] ?? [];
+        Log::debug('[AfsFilingStore] Extraction result', [
+            'row_count' => count($rows),
+            'header_count' => count($extracted['headers'] ?? []),
+        ]);
 
         if (! is_array($rows) || $rows === []) {
             return response()->json(['message' => 'No data rows found in the uploaded Excel file.'], 422);
@@ -79,10 +108,12 @@ class AfsFilingItemController extends Controller
                 throw $exception;
             }
 
+            Log::debug('[AfsFilingStore] Primary key collision — resyncing sequence and retrying');
             $this->syncAfsFilingItemSequence();
             $createdIds = $this->createItemsFromRows($rows, $user, $excelFile, $templateName);
         }
 
+        Log::debug('[AfsFilingStore] Items created, dispatching jobs', ['created_count' => count($createdIds)]);
         foreach ($createdIds as $position => $id) {
             GenerateAfsFilingItemJob::dispatch($id)->delay(now()->addSeconds($position > 0 ? 1 : 0));
         }
