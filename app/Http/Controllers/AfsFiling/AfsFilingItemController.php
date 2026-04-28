@@ -140,7 +140,16 @@ class AfsFilingItemController extends Controller
             return response()->json(['message' => 'President signature image is required.'], 422);
         }
 
-        $this->signingService->sign($item, $user, $presidentFilePath);
+        try {
+            $this->signingService->sign($item, $user, $presidentFilePath);
+        } catch (\RuntimeException $exception) {
+            return response()->json([
+                'message' => $exception->getMessage(),
+                'errors' => [
+                    'signature' => [$exception->getMessage()],
+                ],
+            ], 422);
+        }
 
         return response()->json([
             'message' => 'Signature applied.',
