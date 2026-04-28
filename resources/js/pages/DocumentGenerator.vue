@@ -5,8 +5,9 @@ import { ArrowUpDown, Download, Eye, FileText, MoreHorizontal, Pencil, PenLine, 
 import { computed, h, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { toast } from 'vue-sonner';
 import AfsEditDialog from '@/components/afs-components/AfsEditDialog.vue';
+import AfsSettingsDialog from '@/components/afs-components/AfsSettingsDialog.vue';
 import AfsSignDialog from '@/components/afs-components/AfsSignDialog.vue';
-import type { PaginatedResponse, SignatureSettings, UnifiedItem } from '@/components/afs-components/types';
+import type { PaginatedResponse, SignatureSettings, TemplateMappingPayload, UnifiedItem } from '@/components/afs-components/types';
 import {
     csrfToken,
     getApi,
@@ -64,6 +65,8 @@ const props = defineProps<{
     initialSignature: {
         signature: SignatureSettings | null;
     };
+    initialMapping: TemplateMappingPayload;
+    openSettings?: boolean;
     signatureEnabled: boolean;
 }>();
 
@@ -96,6 +99,8 @@ const editingItem = ref<UnifiedItem | null>(null);
 const signingItemIds = ref<number[]>([]);
 const signDialogOpen = ref(false);
 const signDialogTarget = ref<UnifiedItem | null>(null);
+const settingsDialogOpen = ref(false);
+const templateMapping = ref<TemplateMappingPayload>(props.initialMapping);
 const editDialogRef = ref<InstanceType<typeof AfsEditDialog> | null>(null);
 const deleteConfirmOpen = ref(false);
 const deleteConfirmIds = ref<number[]>([]);
@@ -544,6 +549,10 @@ const onItemSigned = async (pdfUrl?: string) => {
     }
 };
 
+const onTemplateMappingUpdated = (nextMapping: TemplateMappingPayload) => {
+    templateMapping.value = nextMapping;
+};
+
 const itemColumns = computed<ColumnDef<UnifiedItem>[]>(() => [
     {
         id: 'selection',
@@ -812,6 +821,14 @@ watch(
 );
 
 watch(
+    () => props.initialMapping,
+    (nextMapping) => {
+        templateMapping.value = nextMapping;
+    },
+    { deep: true },
+);
+
+watch(
     () => itemsData.value.data.map((item) => item.id),
     (visibleIds) => {
         const visibleSet = new Set(visibleIds);
@@ -830,6 +847,9 @@ onBeforeUnmount(() => {
 
 onMounted(() => {
     startPolling();
+    if (props.openSettings) {
+        settingsDialogOpen.value = true;
+    }
 });
 </script>
 
@@ -849,6 +869,13 @@ onMounted(() => {
             v-model:open="signDialogOpen"
             :target="signDialogTarget"
             @signed="onItemSigned"
+        />
+        <AfsSettingsDialog
+            v-model:open="settingsDialogOpen"
+            :mapping="templateMapping"
+            :initial-signature="props.initialSignature.signature"
+            :signature-enabled="props.signatureEnabled"
+            @mapping-updated="onTemplateMappingUpdated"
         />
 
         <AlertDialog v-model:open="deleteConfirmOpen">
@@ -891,11 +918,9 @@ onMounted(() => {
                         <Button variant="secondary" as-child>
                             <a :href="generatedFilesRoutes.index().url">Completed Files</a>
                         </Button>
-                        <Button variant="outline" as-child>
-                            <a :href="documentGeneratorRoutes.templateMapping().url">
+                        <Button variant="outline" @click="settingsDialogOpen = true">
                             <Settings2 class="mr-2 size-4" />
                             Settings
-                            </a>
                         </Button>
                         <Button @click="isUploadDialogOpen = true">
                             <Upload class="mr-2 size-4" />

@@ -12,6 +12,7 @@ use App\Services\AfsFiling\AfsFilingSignatureService;
 use App\Services\DocumentGeneratorCompletedExportService;
 use App\Support\DocumentStorage;
 use App\Support\FormFieldAliasResolver;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
@@ -32,6 +33,7 @@ class AfsFilingPageController extends Controller
             'sort' => ['nullable', 'in:uploadedAt,generatedAt,pdfStatus,sourceRowNumber,created_at,updated_at,status,row_number'],
             'direction' => ['nullable', 'in:asc,desc'],
             'status' => ['nullable', 'in:queued,processing,docx_done,pdf_done,failed'],
+            'open_settings' => ['nullable', 'boolean'],
         ]);
 
         $sort = (string) ($validated['sort'] ?? 'uploadedAt');
@@ -68,22 +70,15 @@ class AfsFilingPageController extends Controller
                 'per_page' => (int) ($validated['per_page'] ?? 25),
             ],
             'initialSignature' => $signatureEnabled ? $this->signatureService->payload($user) : ['signature' => null],
+            'initialMapping' => $this->globalTemplateMappingPayload(),
+            'openSettings' => (bool) ($validated['open_settings'] ?? false),
             'signatureEnabled' => $signatureEnabled,
         ]);
     }
 
-    public function templateMapping(Request $request): Response
+    public function templateMapping(Request $request): RedirectResponse
     {
-        /** @var User $user */
-        $user = $request->user();
-
-        return Inertia::render('TemplateMapping', [
-            'mapping' => $this->globalTemplateMappingPayload(),
-            'initialSignature' => (bool) config('services.document_generator.signature_enabled', true)
-                ? $this->signatureService->payload($user)
-                : ['signature' => null],
-            'signatureEnabled' => (bool) config('services.document_generator.signature_enabled', true),
-        ]);
+        return redirect()->route('afs-filing.index', ['open_settings' => 1]);
     }
 
     public function completed(Request $request, DocumentGeneratorCompletedExportService $completedExportService): Response
@@ -121,7 +116,7 @@ class AfsFilingPageController extends Controller
             ],
         );
 
-        return response()->json($this->globalTemplatePayload($template));
+        return response()->json($this->globalTemplateMappingPayload());
     }
 
     public function storeGlobalTemplate(Request $request): JsonResponse

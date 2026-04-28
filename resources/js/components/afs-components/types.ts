@@ -59,3 +59,14 @@ export type SignatureSettings = {
         preview_url: string;
     };
 };
+
+export type TemplateEntry = {
+    id: number;
+    year: number | null;
+    template_name: string;
+};
+
+export type TemplateMappingPayload = {
+    default_template: TemplateEntry | null;
+    year_templates: TemplateEntry[];
+};
