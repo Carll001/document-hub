@@ -55,6 +55,10 @@ class PdfConversionService
                 );
             }
         } finally {
+            // Kill any orphaned soffice processes tied to this profile to prevent
+            // them from accumulating and exhausting server memory across jobs.
+            Process::run(['pkill', '-f', $userProfileDir]);
+
             if (is_dir($userProfileDir)) {
                 app(\Illuminate\Filesystem\Filesystem::class)->deleteDirectory($userProfileDir);
             }
