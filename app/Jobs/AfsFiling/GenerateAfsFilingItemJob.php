@@ -23,7 +23,9 @@ class GenerateAfsFilingItemJob implements ShouldQueue
 
     public function __construct(
         public readonly int $afsFilingItemId,
-    ) {}
+    ) {
+        $this->onQueue('afs-filing');
+    }
 
     public function handle(AfsFilingItemGenerationService $generationService): void
     {
