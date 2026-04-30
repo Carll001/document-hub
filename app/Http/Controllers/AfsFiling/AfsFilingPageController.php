@@ -9,6 +9,7 @@ use App\Models\AfsFilingItem;
 use App\Models\DocumentGeneratorTemplate;
 use App\Models\User;
 use App\Services\AfsFiling\AfsFilingSignatureService;
+use App\Services\AfsFiling\AfsFilingImportStateService;
 use App\Services\DocumentGeneratorCompletedExportService;
 use App\Support\DocumentStorage;
 use App\Support\FormFieldAliasResolver;
@@ -22,6 +23,7 @@ class AfsFilingPageController extends Controller
 {
     public function __construct(
         private readonly AfsFilingSignatureService $signatureService,
+        private readonly AfsFilingImportStateService $importStateService,
     ) {}
 
     public function index(Request $request): Response
@@ -71,6 +73,7 @@ class AfsFilingPageController extends Controller
             ],
             'initialSignature' => $signatureEnabled ? $this->signatureService->payload($user) : ['signature' => null],
             'initialMapping' => $this->globalTemplateMappingPayload(),
+            'initialImportState' => $this->importStateService->getState((int) $user->getKey()),
             'openSettings' => (bool) ($validated['open_settings'] ?? false),
             'signatureEnabled' => $signatureEnabled,
         ]);

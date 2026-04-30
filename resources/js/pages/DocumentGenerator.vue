@@ -18,6 +18,7 @@ import { resolveTin } from '@/lib/form-field-aliases';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Checkbox } from '@/components/ui/checkbox';
 import { DataTable } from '@/components/ui/data-table';
 import {
@@ -67,6 +68,11 @@ const props = defineProps<{
         signature: SignatureSettings | null;
     };
     initialMapping: TemplateMappingPayload;
+    initialImportState: {
+        status: 'queued' | 'processing' | 'failed' | null;
+        fileName: string | null;
+        error: string | null;
+    };
     openSettings?: boolean;
     signatureEnabled: boolean;
 }>();
@@ -87,6 +93,8 @@ const creatingBatch = ref(false);
 const importInProgressNotice = ref<{
     fileName: string;
 } | null>(null);
+const importFailedNotice = ref<string | null>(null);
+const importNoticeUntil = ref<number | null>(null);
 
 const itemsData = ref<PaginatedResponse<UnifiedItem>>(props.initialItems);
 const itemsLoading = ref(false);
@@ -269,8 +277,14 @@ const loadItems = async (
 
         const stillForcing = forcePollingUntil.value !== null && Date.now() < forcePollingUntil.value;
 
-        if (importInProgressNotice.value && payload.data.length > 0) {
+        if (
+            importInProgressNotice.value
+            && importNoticeUntil.value !== null
+            && Date.now() >= importNoticeUntil.value
+            && !stillForcing
+        ) {
             importInProgressNotice.value = null;
+            importNoticeUntil.value = null;
         }
 
         if (pollingActive.value && !hasPendingVisibleItems.value && !stillForcing) {
@@ -362,6 +376,8 @@ const postBatch = async () => {
         importInProgressNotice.value = {
             fileName: excelFile.value.name,
         };
+        importFailedNotice.value = null;
+        importNoticeUntil.value = Date.now() + 120000;
         isUploadDialogOpen.value = false;
         excelFile.value = null;
         defaultTemplateFile.value = null;
@@ -1003,7 +1019,26 @@ onBeforeUnmount(() => {
 });
 
 onMounted(() => {
-    startPolling();
+    let startedWithImportState = false;
+
+    if (
+        (props.initialImportState.status === 'queued' || props.initialImportState.status === 'processing')
+        && props.initialImportState.fileName
+    ) {
+        importInProgressNotice.value = {
+            fileName: props.initialImportState.fileName,
+        };
+        importNoticeUntil.value = Date.now() + 120000;
+        startPolling(120000);
+        startedWithImportState = true;
+    }
+    if (props.initialImportState.status === 'failed' && props.initialImportState.error) {
+        importFailedNotice.value = props.initialImportState.error;
+    }
+
+    if (!startedWithImportState) {
+        startPolling();
+    }
     if (props.openSettings) {
         settingsDialogOpen.value = true;
     }
@@ -1187,6 +1222,21 @@ onMounted(() => {
                 </DialogContent>
             </Dialog>
 
+            <Alert v-if="importInProgressNotice">
+                <LoaderCircle class="size-4 animate-spin" />
+                <AlertTitle>Spreadsheet Import In Progress</AlertTitle>
+                <AlertDescription>
+                    Importing {{ importInProgressNotice.fileName }}. Rows will appear here once the background import finishes.
+                </AlertDescription>
+            </Alert>
+
+            <Alert v-if="importFailedNotice" variant="destructive">
+                <AlertTitle>Spreadsheet Import Failed</AlertTitle>
+                <AlertDescription>
+                    {{ importFailedNotice }}
+                </AlertDescription>
+            </Alert>
+
             <Card>
                 <CardHeader>
                     <CardTitle class="flex items-center gap-2">
@@ -1198,21 +1248,6 @@ onMounted(() => {
                     </CardDescription>
                 </CardHeader>
                 <CardContent class="space-y-4">
-                    <div
-                        v-if="importInProgressNotice"
-                        class="rounded-lg border px-4 py-3"
-                    >
-                        <div class="flex items-start gap-3">
-                            <LoaderCircle class="mt-0.5 size-4 animate-spin text-muted-foreground" />
-                            <div class="space-y-0.5 text-sm">
-                                <p class="font-semibold">Spreadsheet Import In Progress</p>
-                                <p class="text-muted-foreground">
-                                    Importing {{ importInProgressNotice.fileName }}. Rows will appear here once the background import finishes.
-                                </p>
-                            </div>
-                        </div>
-                    </div>
-
                     <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                         <div class="relative flex-1">
                             <Search

@@ -19,6 +19,7 @@ use App\Models\AfsFilingItem;
 use App\Models\DocumentGeneratorTemplate;
 use App\Models\User;
 use App\Services\AfsFiling\AfsFilingItemSigningService;
+use App\Services\AfsFiling\AfsFilingImportStateService;
 use App\Services\DocxTemplateService;
 use App\Support\DocumentStorage;
 use App\Support\FormFieldAliasResolver;
@@ -38,6 +39,7 @@ class AfsFilingItemController extends Controller
     public function __construct(
         private readonly AfsFilingItemRepositoryContract $items,
         private readonly AfsFilingItemSigningService $signingService,
+        private readonly AfsFilingImportStateService $importStateService,
         private readonly DocxTemplateService $docxTemplateService,
     ) {}
 
@@ -72,6 +74,7 @@ class AfsFilingItemController extends Controller
             $excelPath,
             (string) $excelFile->getClientOriginalName(),
         );
+        $this->importStateService->putQueued((int) $user->getKey(), (string) $excelFile->getClientOriginalName());
 
         return response()->json([
             'message' => 'Upload received. Spreadsheet import is processing in the background.',
