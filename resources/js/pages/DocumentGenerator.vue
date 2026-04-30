@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Head, router } from '@inertiajs/vue3';
 import type { ColumnDef } from '@tanstack/vue-table';
-import { ArrowUpDown, Download, Eye, FileText, MoreHorizontal, Pencil, PenLine, Search, Settings2, Trash2, Upload } from 'lucide-vue-next';
+import { ArrowUpDown, Download, Eye, FileText, LoaderCircle, MoreHorizontal, Pencil, PenLine, Search, Settings2, Trash2, Upload } from 'lucide-vue-next';
 import { computed, h, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { toast } from 'vue-sonner';
 import AfsEditDialog from '@/components/afs-components/AfsEditDialog.vue';
@@ -84,6 +84,9 @@ const defaultTemplateFile = ref<File | null>(null);
 const createErrors = ref<Record<string, string[]>>({});
 const createErrorMessage = ref<string | null>(null);
 const creatingBatch = ref(false);
+const importInProgressNotice = ref<{
+    fileName: string;
+} | null>(null);
 
 const itemsData = ref<PaginatedResponse<UnifiedItem>>(props.initialItems);
 const itemsLoading = ref(false);
@@ -116,6 +119,7 @@ const errorDialogFetchedHeaders = ref<string[]>([]);
 
 let pollInterval: ReturnType<typeof setInterval> | null = null;
 let companySearchDebounce: ReturnType<typeof setTimeout> | null = null;
+const forcePollingUntil = ref<number | null>(null);
 
 const selectedVisibleCount = computed(
     () => itemsData.value.data.filter((item) => selectedItemIds.value.includes(item.id)).length,
@@ -237,6 +241,7 @@ const hasPendingVisibleItems = computed(() =>
 
 const stopPolling = () => {
     pollingActive.value = false;
+    forcePollingUntil.value = null;
 
     if (pollInterval) {
         clearInterval(pollInterval);
@@ -262,7 +267,14 @@ const loadItems = async (
         const payload = await getApi<PaginatedResponse<UnifiedItem>>(buildItemsUrl(page));
         itemsData.value = toUnsignedOnly(payload);
 
-        if (pollingActive.value && !hasPendingVisibleItems.value) {
+        const stillForcing = forcePollingUntil.value !== null && Date.now() < forcePollingUntil.value;
+
+        if (importInProgressNotice.value && payload.data.length > 0) {
+            importInProgressNotice.value = null;
+        }
+
+        if (pollingActive.value && !hasPendingVisibleItems.value && !stillForcing) {
+            forcePollingUntil.value = null;
             stopPolling();
         }
     } finally {
@@ -272,10 +284,14 @@ const loadItems = async (
     }
 };
 
-const startPolling = () => {
+const startPolling = (forceDurationMs = 0) => {
     stopPolling();
 
-    if (!hasPendingVisibleItems.value) {
+    if (forceDurationMs > 0) {
+        forcePollingUntil.value = Date.now() + forceDurationMs;
+    }
+
+    if (!hasPendingVisibleItems.value && forceDurationMs <= 0) {
         return;
     }
 
@@ -342,7 +358,10 @@ const postBatch = async () => {
         };
 
         await loadItems(1);
-        startPolling();
+        startPolling(120000);
+        importInProgressNotice.value = {
+            fileName: excelFile.value.name,
+        };
         isUploadDialogOpen.value = false;
         excelFile.value = null;
         defaultTemplateFile.value = null;
@@ -533,7 +552,11 @@ const deleteItems = async (itemIds: number[]) => {
             selectedItemIds.value = selectedItemIds.value.filter((id) => !deletedIds.includes(id));
         }
 
-        await loadItems(1);
+        const currentPageBeforeDelete = itemsData.value.current_page;
+        await loadItems(currentPageBeforeDelete);
+        if (itemsData.value.data.length === 0 && currentPageBeforeDelete > 1) {
+            await loadItems(currentPageBeforeDelete - 1);
+        }
         startPolling();
 
         if (failedCount === 0) {
@@ -1175,6 +1198,21 @@ onMounted(() => {
                     </CardDescription>
                 </CardHeader>
                 <CardContent class="space-y-4">
+                    <div
+                        v-if="importInProgressNotice"
+                        class="rounded-lg border px-4 py-3"
+                    >
+                        <div class="flex items-start gap-3">
+                            <LoaderCircle class="mt-0.5 size-4 animate-spin text-muted-foreground" />
+                            <div class="space-y-0.5 text-sm">
+                                <p class="font-semibold">Spreadsheet Import In Progress</p>
+                                <p class="text-muted-foreground">
+                                    Importing {{ importInProgressNotice.fileName }}. Rows will appear here once the background import finishes.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                         <div class="relative flex-1">
                             <Search

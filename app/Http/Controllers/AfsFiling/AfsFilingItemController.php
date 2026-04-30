@@ -14,12 +14,12 @@ use App\Http\Requests\AfsFiling\AfsFilingUploadRequest;
 use App\Jobs\AfsFiling\ApplyAfsFilingItemSignatureJob;
 use App\Jobs\AfsFiling\DeleteAfsFilingItemJob;
 use App\Jobs\AfsFiling\GenerateAfsFilingItemJob;
+use App\Jobs\AfsFiling\ProcessAfsFilingUploadJob;
 use App\Models\AfsFilingItem;
 use App\Models\DocumentGeneratorTemplate;
 use App\Models\User;
 use App\Services\AfsFiling\AfsFilingItemSigningService;
 use App\Services\DocxTemplateService;
-use App\Services\ExcelExtractionService;
 use App\Support\DocumentStorage;
 use App\Support\FormFieldAliasResolver;
 use Illuminate\Database\UniqueConstraintViolationException;
@@ -41,7 +41,7 @@ class AfsFilingItemController extends Controller
         private readonly DocxTemplateService $docxTemplateService,
     ) {}
 
-    public function store(AfsFilingUploadRequest $request, ExcelExtractionService $excelExtractionService): JsonResponse
+    public function store(AfsFilingUploadRequest $request): JsonResponse
     {
         $excelFile = $request->file('excel_file');
         if (! $excelFile) {
@@ -59,51 +59,23 @@ class AfsFilingItemController extends Controller
         $excelPath = "{$excelStorePath}/{$excelFileName}";
 
         $uploadedDefaultTemplate = $request->file('default_template_file');
-        $templateName = null;
         if ($uploadedDefaultTemplate) {
-            $templateName = $uploadedDefaultTemplate->getClientOriginalName();
             $templatePath = $uploadedDefaultTemplate->store("afs_filing/{$user->id}/templates", $diskName);
             DocumentGeneratorTemplate::query()->updateOrCreate(
                 ['year' => null],
-                ['template_name' => $templateName, 'template_path' => $templatePath],
+                ['template_name' => $uploadedDefaultTemplate->getClientOriginalName(), 'template_path' => $templatePath],
             );
         }
 
-        $extracted = $excelExtractionService->extractFromDocumentStorage($excelPath, 0);
-        $rows = $extracted['rows'] ?? [];
-
-        if (! is_array($rows) || $rows === []) {
-            return response()->json(['message' => 'No data rows found in the uploaded Excel file.'], 422);
-        }
-
-        $this->syncAfsFilingItemSequence();
-        $createdIds = [];
-        $queuedCount = 0;
-        $failedCount = 0;
-
-        try {
-            ['created_ids' => $createdIds, 'queued_count' => $queuedCount, 'failed_count' => $failedCount] =
-                $this->createItemsFromRows($rows, $user, $excelFile, $templateName);
-        } catch (UniqueConstraintViolationException $exception) {
-            if (! $this->isAfsFilingPrimaryKeyCollision($exception)) {
-                throw $exception;
-            }
-
-            $this->syncAfsFilingItemSequence();
-            ['created_ids' => $createdIds, 'queued_count' => $queuedCount, 'failed_count' => $failedCount] =
-                $this->createItemsFromRows($rows, $user, $excelFile, $templateName);
-        }
-
-        foreach ($createdIds as $position => $id) {
-            GenerateAfsFilingItemJob::dispatch($id)->delay(now()->addSeconds($position));
-        }
+        ProcessAfsFilingUploadJob::dispatch(
+            (int) $user->getKey(),
+            $excelPath,
+            (string) $excelFile->getClientOriginalName(),
+        );
 
         return response()->json([
-            'message' => 'AFS filing rows queued for generation.',
+            'message' => 'Upload received. Spreadsheet import is processing in the background.',
             'status' => 'queued',
-            'total_items' => count($rows),
-            'queued_items' => $queuedCount,
-            'failed_items' => $failedCount,
         ], 201);
     }
 
