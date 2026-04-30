@@ -8,6 +8,7 @@ use App\Models\AfsFilingItem;
 use App\Services\AfsFiling\AfsFilingItemGenerationService;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
+use Throwable;
 
 class GenerateAfsFilingItemJob implements ShouldQueue
 {
@@ -34,7 +35,7 @@ class GenerateAfsFilingItemJob implements ShouldQueue
 
     // Called when the job is killed by a timeout or exhausts tries.
     // Ensures the item never stays stuck in queued/processing.
-    public function failed(\Throwable $exception): void
+    public function failed(Throwable $exception): void
     {
         $item = AfsFilingItem::query()->find($this->afsFilingItemId);
         if (! $item instanceof AfsFilingItem) {
@@ -46,8 +47,24 @@ class GenerateAfsFilingItemJob implements ShouldQueue
         }
 
         $item->status = 'failed';
-        $item->error_message = mb_substr($exception->getMessage(), 0, 2000);
+        $item->error_message = mb_substr($this->toUserFriendlyError($exception), 0, 2000);
         $item->completed_at = now();
         $item->save();
+    }
+
+    private function toUserFriendlyError(Throwable $exception): string
+    {
+        $message = trim($exception->getMessage());
+        $normalized = mb_strtolower($message);
+
+        if (str_contains($normalized, 'attempted too many times')) {
+            return 'Generation failed after multiple retry attempts. Please retry this row.';
+        }
+
+        if (str_contains($normalized, 'timed out')) {
+            return 'Generation timed out while processing this row. Please retry.';
+        }
+
+        return $message !== '' ? $message : 'Generation failed. Please retry this row.';
     }
 }

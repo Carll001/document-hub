@@ -18,8 +18,9 @@ class AfsFilingItemRepository implements AfsFilingItemRepositoryContract
 
         $query = AfsFilingItem::query()->where('user_id', $userId);
 
-        if (is_string($filters['status'] ?? null) && $filters['status'] !== '') {
-            $query->where('status', $filters['status']);
+        $statusFilter = is_string($filters['status'] ?? null) ? trim((string) $filters['status']) : '';
+        if ($statusFilter !== '') {
+            $query->where('status', $statusFilter);
         }
 
         $unsignedOnly = filter_var($filters['unsigned_only'] ?? false, FILTER_VALIDATE_BOOLEAN);
@@ -40,6 +41,23 @@ class AfsFilingItemRepository implements AfsFilingItemRepositoryContract
                     ->orWhereRaw('LOWER(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(row_data, "$.company")), "")) like ?', [$needle])
                     ->orWhereRaw('LOWER(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(row_data, "$.Company Name")), "")) like ?', [$needle]);
             });
+        }
+
+        // For "All statuses", keep rows grouped in the product-defined sequence
+        // before applying the regular sort column, so pagination also respects it.
+        if ($statusFilter === '' && ! $completedOnly) {
+            $query->orderByRaw("
+                CASE status
+                    WHEN 'failed' THEN 0
+                    WHEN 'signing' THEN 1
+                    WHEN 'deleting' THEN 2
+                    WHEN 'processing' THEN 3
+                    WHEN 'docx_done' THEN 4
+                    WHEN 'queued' THEN 5
+                    WHEN 'pdf_done' THEN 6
+                    ELSE 99
+                END ASC
+            ");
         }
 
         return $query->orderBy($sortBy, $direction === 'asc' ? 'asc' : 'desc')->paginate($perPage);

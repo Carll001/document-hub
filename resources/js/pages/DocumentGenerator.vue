@@ -110,6 +110,7 @@ const selectedItemIds = ref<number[]>([]);
 const editDialogOpen = ref(false);
 const editingItem = ref<UnifiedItem | null>(null);
 const signingItemIds = ref<number[]>([]);
+const preparingSignatureItemIds = ref<number[]>([]);
 const queuingSignatures = ref(false);
 const signDialogOpen = ref(false);
 const signDialogTarget = ref<UnifiedItem | null>(null);
@@ -124,6 +125,7 @@ const errorDialogOpen = ref(false);
 const errorDialogTitle = ref('Row Error');
 const errorDialogMissingData = ref<string[]>([]);
 const errorDialogErrors = ref<string[]>([]);
+const errorDialogMessage = ref<string | null>(null);
 const errorDialogFetchedHeaders = ref<string[]>([]);
 
 let pollInterval: ReturnType<typeof setInterval> | null = null;
@@ -144,6 +146,32 @@ const selectAllState = computed<boolean | 'indeterminate'>(() => {
 
     return 'indeterminate';
 });
+const allStatusOrder: Record<string, number> = {
+    failed: 0,
+    signing: 1,
+    deleting: 3,
+    processing: 4,
+    docx_done: 5,
+    queued: 6,
+    pdf_done: 7,
+};
+const itemsForTable = computed<UnifiedItem[]>(() => {
+    const rows = [...itemsData.value.data];
+
+    if (itemStatusFilter.value !== 'all') {
+        return rows;
+    }
+
+    const orderFor = (item: UnifiedItem): number => {
+        if (isPreparingSignature(item.id)) {
+            return 2;
+        }
+
+        return allStatusOrder[item.status] ?? Number.MAX_SAFE_INTEGER;
+    };
+
+    return rows.sort((a, b) => orderFor(a) - orderFor(b));
+});
 const canBulkDeleteSelected = computed(
     () => selectedItemIds.value.length > 0 && !deletingItems.value,
 );
@@ -162,6 +190,18 @@ const canBulkSignSelected = computed(() => {
         && item.status !== 'deleting'
         && item.status !== 'signing',
     );
+});
+const hasPreparingSignatures = computed(() => preparingSignatureItemIds.value.length > 0);
+const signingProgressNotice = computed<string | null>(() => {
+    if (preparingSignatureItemIds.value.length === 0) {
+        return null;
+    }
+
+    if (preparingSignatureItemIds.value.length === 1) {
+        return 'Preparing to queue signature for 1 row.';
+    }
+
+    return `Preparing to queue signatures for ${preparingSignatureItemIds.value.length} rows.`;
 });
 
 const sortByFromQuery = (sort: string): string => {
@@ -274,7 +314,26 @@ const loadItems = async (
 
     try {
         const payload = await getApi<PaginatedResponse<UnifiedItem>>(buildItemsUrl(page));
-        itemsData.value = toUnsignedOnly(payload);
+        const unsignedPayload = toUnsignedOnly(payload);
+        itemsData.value = unsignedPayload;
+        const visibleUnsignedIds = new Set(unsignedPayload.data.map((item) => item.id));
+
+        if (preparingSignatureItemIds.value.length > 0) {
+            preparingSignatureItemIds.value = preparingSignatureItemIds.value.filter((id) => visibleUnsignedIds.has(id));
+        }
+
+        if (signingItemIds.value.length > 0) {
+            const completedSigningIds = signingItemIds.value.filter((id) => !visibleUnsignedIds.has(id));
+
+            if (completedSigningIds.length > 0) {
+                toast.success(
+                    completedSigningIds.length === 1
+                        ? 'Signing done.'
+                        : `${completedSigningIds.length} signings done.`,
+                );
+                signingItemIds.value = signingItemIds.value.filter((id) => visibleUnsignedIds.has(id));
+            }
+        }
 
         const stillForcing = forcePollingUntil.value !== null && Date.now() < forcePollingUntil.value;
 
@@ -469,9 +528,16 @@ const toggleAllVisibleRows = (checked: boolean | 'indeterminate') => {
 
 const canEditItem = (item: UnifiedItem) => !['queued', 'processing'].includes(item.status);
 const canDeleteItem = (item: UnifiedItem) => item.status !== 'deleting';
+const isPreparingSignature = (itemId: number) => preparingSignatureItemIds.value.includes(itemId);
+const isQueuedForSigning = (item: UnifiedItem): boolean =>
+    item.status === 'queued' && signingItemIds.value.includes(item.id) && !isPreparingSignature(item.id);
 const displayStatus = (item: UnifiedItem): string =>
-    item.status === 'pdf_done' && !item.signature_applied
-        ? 'Generated'
+    isPreparingSignature(item.id)
+        ? 'Preparing for signing'
+        : item.status === 'pdf_done' && !item.signature_applied
+          ? 'Generated'
+        : isQueuedForSigning(item)
+          ? 'Queued for signing'
         : item.status === 'deleting'
           ? 'Deleting'
           : item.status === 'signing'
@@ -631,7 +697,7 @@ const onEditSaved = async () => {
 const isItemSigning = (itemId: number) => signingItemIds.value.includes(itemId);
 
 const applySignatureToItem = (item: UnifiedItem) => {
-    if (!props.signatureEnabled || !item.pdf_available || item.signature_applied || isItemSigning(item.id)) {
+    if (!props.signatureEnabled || !item.pdf_available || item.signature_applied || isItemSigning(item.id) || isPreparingSignature(item.id)) {
         return;
     }
 
@@ -668,28 +734,41 @@ const applySignatureToSelectedItems = () => {
     signDialogOpen.value = true;
 };
 
-const onItemSigned = async () => {
-    const item = signDialogTarget.value;
-    const queuedBulkCount = signDialogBulkItemIds.value.length;
-    const targetIds = signDialogMode.value === 'bulk'
-        ? signDialogBulkItemIds.value
-        : (item ? [item.id] : []);
+const onItemSignPrepare = (payload: { mode: 'single' | 'bulk'; itemIds: number[] }) => {
+    const targetIds = Array.from(new Set(payload.itemIds));
+    if (targetIds.length === 0) {
+        return;
+    }
 
+    preparingSignatureItemIds.value = Array.from(new Set([...preparingSignatureItemIds.value, ...targetIds]));
+    queuingSignatures.value = true;
+    toast.message(
+        payload.mode === 'bulk'
+            ? 'Preparing for signing selected rows...'
+            : 'Preparing for signing row...',
+    );
+};
+
+const onItemSigned = async (payload: { mode: 'single' | 'bulk'; itemIds: number[]; queuedCount: number }) => {
+    const targetIds = Array.from(new Set(payload.itemIds));
     if (targetIds.length > 0) {
+        preparingSignatureItemIds.value = preparingSignatureItemIds.value.filter((id) => !targetIds.includes(id));
         signingItemIds.value = Array.from(new Set([...signingItemIds.value, ...targetIds]));
     }
 
-    queuingSignatures.value = true;
-    toast.message(signDialogMode.value === 'bulk'
+    toast.message(payload.mode === 'bulk'
         ? 'Queuing selected rows for signing...'
         : 'Queuing row for signing...');
     try {
         await loadItems(itemsData.value.current_page, { silent: true });
         startPolling();
-        if (signDialogMode.value === 'bulk') {
-            toast.success(`${queuedBulkCount} row signatures queued.`);
+        if (payload.mode === 'bulk') {
+            toast.success(`${payload.queuedCount} row signatures queued.`);
         } else {
-            toast.success(item ? `Row ${item.row_number} signature queued.` : 'Signature queued.');
+            const signedItem = targetIds.length === 1
+                ? itemsData.value.data.find((item) => item.id === targetIds[0])
+                : null;
+            toast.success(signedItem ? `Row ${signedItem.row_number} signature queued.` : 'Signature queued.');
         }
     } finally {
         queuingSignatures.value = false;
@@ -698,6 +777,13 @@ const onItemSigned = async () => {
     signDialogMode.value = 'single';
     signDialogBulkItemIds.value = [];
     signDialogTarget.value = null;
+};
+
+const onItemSignFailed = (payload: { mode: 'single' | 'bulk'; itemIds: number[]; message: string }) => {
+    const targetIds = Array.from(new Set(payload.itemIds));
+    preparingSignatureItemIds.value = preparingSignatureItemIds.value.filter((id) => !targetIds.includes(id));
+    queuingSignatures.value = false;
+    toast.error(payload.message);
 };
 
 const onTemplateMappingUpdated = (nextMapping: TemplateMappingPayload) => {
@@ -710,18 +796,42 @@ const parseErrorDetails = (item: UnifiedItem) => {
         : {};
     const missingRaw = (details as Record<string, unknown>).missing_data;
     const errorsRaw = (details as Record<string, unknown>).errors;
+    const messageRaw = (details as Record<string, unknown>).message;
     const missingData = Array.isArray(missingRaw) ? missingRaw.filter((x): x is string => typeof x === 'string' && x.trim() !== '') : [];
     const errors = Array.isArray(errorsRaw) ? errorsRaw.filter((x): x is string => typeof x === 'string' && x.trim() !== '') : [];
+    const detailMessage = typeof messageRaw === 'string' && messageRaw.trim() !== '' ? messageRaw : null;
+    const rawMessage = item.error_message?.trim() || detailMessage;
+    const message = rawMessage ? toUserFriendlyErrorMessage(rawMessage) : null;
 
-    return { missingData, errors };
+    return { missingData, errors, message };
+};
+
+const toUserFriendlyErrorMessage = (message: string): string => {
+    const normalized = message.trim().toLowerCase();
+
+    if (normalized.includes('attempted too many times')) {
+        return 'Generation failed after multiple retry attempts. Please retry this row.';
+    }
+
+    if (normalized.includes('timed out')) {
+        return 'Generation timed out while processing this row. Please retry.';
+    }
+
+    return message;
 };
 
 const openErrorDialog = (item: UnifiedItem) => {
     const parsed = parseErrorDetails(item);
-    errorDialogTitle.value = `Row ${item.row_number} Error`;
+    const companyName = item.company?.trim();
+    errorDialogTitle.value = companyName && companyName.length > 0
+        ? `${companyName} Error`
+        : `Row ${item.row_number} Error`;
     errorDialogMissingData.value = parsed.missingData;
     errorDialogErrors.value = parsed.errors;
-    errorDialogFetchedHeaders.value = Object.keys(item.row_data ?? {});
+    errorDialogMessage.value = parsed.message;
+    errorDialogFetchedHeaders.value = parsed.missingData.length > 0
+        ? Object.keys(item.row_data ?? {})
+        : [];
     errorDialogOpen.value = true;
 };
 
@@ -941,6 +1051,8 @@ const itemColumns = computed<ColumnDef<UnifiedItem>[]>(() => [
                                                       h(PenLine, { class: 'size-4' }),
                                                       row.original.signature_applied
                                                           ? 'Signed'
+                                                          : isPreparingSignature(row.original.id)
+                                                            ? 'Preparing for signing...'
                                                           : isItemSigning(row.original.id)
                                                             ? 'Queuing for signing...'
                                                             : row.original.status === 'signing'
@@ -1086,7 +1198,9 @@ onMounted(() => {
             :target="signDialogTarget"
             :mode="signDialogMode"
             :bulk-item-ids="signDialogBulkItemIds"
+            @prepare="onItemSignPrepare"
             @signed="onItemSigned"
+            @failed="onItemSignFailed"
         />
         <AfsSettingsDialog
             v-model:open="settingsDialogOpen"
@@ -1122,8 +1236,13 @@ onMounted(() => {
                     <DialogTitle>{{ errorDialogTitle }}</DialogTitle>
                 </DialogHeader>
 
-                <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
-                    <div class="space-y-2">
+                <div
+                    :class="[
+                        'grid grid-cols-1 gap-4',
+                        errorDialogMissingData.length > 0 ? 'md:grid-cols-2' : '',
+                    ]"
+                >
+                    <div v-if="errorDialogMissingData.length > 0" class="space-y-2">
                         <p class="font-medium">Missing data ({{ errorDialogMissingData.length }})</p>
                         <div class="rounded-md border p-3">
                             <ul class="list-disc space-y-1 pl-5 text-sm break-words">
@@ -1132,7 +1251,7 @@ onMounted(() => {
                         </div>
                     </div>
 
-                    <div class="space-y-2">
+                    <div v-if="errorDialogMissingData.length > 0" class="space-y-2">
                         <p class="font-medium">Fetched headers ({{ errorDialogFetchedHeaders.length }})</p>
                         <div class="rounded-md border p-3">
                             <ul class="list-disc space-y-1 pl-5 text-sm break-words">
@@ -1141,6 +1260,13 @@ onMounted(() => {
                                 </li>
                             </ul>
                         </div>
+                    </div>
+                </div>
+
+                <div v-if="errorDialogMessage" class="space-y-2 text-sm">
+                    <p class="font-medium">Error message</p>
+                    <div class="rounded-md border p-3 break-words">
+                        {{ errorDialogMessage }}
                     </div>
                 </div>
 
@@ -1260,6 +1386,13 @@ onMounted(() => {
                     {{ importFailedNotice }}
                 </AlertDescription>
             </Alert>
+            <Alert v-if="signingProgressNotice">
+                <LoaderCircle class="size-4 animate-spin" />
+                <AlertTitle>Signature Queue In Progress</AlertTitle>
+                <AlertDescription>
+                    {{ signingProgressNotice }}
+                </AlertDescription>
+            </Alert>
 
             <Card>
                 <CardHeader>
@@ -1306,7 +1439,7 @@ onMounted(() => {
                             >
                                 <PenLine class="mr-2 size-4" />
                                 {{
-                                    queuingSignatures
+                                    hasPreparingSignatures || queuingSignatures
                                         ? 'Queuing for signing...'
                                         : (selectedItemIds.length > 0 ? `Sign selected (${selectedItemIds.length})` : 'Sign selected')
                                 }}
@@ -1317,13 +1450,12 @@ onMounted(() => {
                                 </SelectTrigger>
                                 <SelectContent>
                                     <SelectItem value="all">All</SelectItem>
-                                    <SelectItem value="queued">Queued</SelectItem>
-                                    <SelectItem value="processing">Processing</SelectItem>
-                                    <SelectItem value="signing">Signing</SelectItem>
-                                    <SelectItem value="deleting">Deleting</SelectItem>
-                                    <SelectItem value="docx_done">Docx Done</SelectItem>
-                                    <SelectItem value="pdf_done">Generated</SelectItem>
                                     <SelectItem value="failed">Failed</SelectItem>
+                                    <SelectItem value="signing">Signing</SelectItem>
+                                    <SelectItem value="queued">Preparing for signing</SelectItem>
+                                    <SelectItem value="deleting">Deleting</SelectItem>
+                                    <SelectItem value="processing">Processing</SelectItem>
+                                    <SelectItem value="pdf_done">Generated</SelectItem>
                                 </SelectContent>
                             </Select>
 
@@ -1333,7 +1465,7 @@ onMounted(() => {
                     <DataTable
                         v-if="!tableLoading"
                         :columns="itemColumns"
-                        :data="itemsData.data"
+                        :data="itemsForTable"
                         :meta="itemsData"
                         :loading="false"
                         :sort-by="itemsSortBy"

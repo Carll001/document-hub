@@ -152,8 +152,9 @@ class AfsFilingPageController extends Controller
             $query->where('status', 'pdf_done')->whereNotNull('signature_applied_at');
         }
 
-        if (is_string($filters['status'] ?? null) && $filters['status'] !== '') {
-            $query->where('status', (string) $filters['status']);
+        $statusFilter = is_string($filters['status'] ?? null) ? trim((string) $filters['status']) : '';
+        if ($statusFilter !== '') {
+            $query->where('status', $statusFilter);
         }
 
         if (is_string($filters['company_search'] ?? null) && trim((string) $filters['company_search']) !== '') {
@@ -164,6 +165,21 @@ class AfsFilingPageController extends Controller
         $sortBy = (string) ($filters['sort_by'] ?? 'created_at');
         $sortDirection = (string) ($filters['sort_direction'] ?? 'desc');
         $perPage = (int) ($filters['per_page'] ?? 25);
+
+        if ($statusFilter === '' && (($filters['completed_only'] ?? false) !== true)) {
+            $query->orderByRaw("
+                CASE status
+                    WHEN 'failed' THEN 0
+                    WHEN 'signing' THEN 1
+                    WHEN 'deleting' THEN 2
+                    WHEN 'processing' THEN 3
+                    WHEN 'docx_done' THEN 4
+                    WHEN 'queued' THEN 5
+                    WHEN 'pdf_done' THEN 6
+                    ELSE 99
+                END ASC
+            ");
+        }
 
         $paginator = $query
             ->orderBy($sortBy, $sortDirection === 'asc' ? 'asc' : 'desc')

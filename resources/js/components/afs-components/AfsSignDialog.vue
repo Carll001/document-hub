@@ -25,7 +25,9 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-    signed: [];
+    prepare: [payload: { mode: 'single' | 'bulk'; itemIds: number[] }];
+    signed: [payload: { mode: 'single' | 'bulk'; itemIds: number[]; queuedCount: number }];
+    failed: [payload: { mode: 'single' | 'bulk'; itemIds: number[]; message: string }];
 }>();
 
 const submitting = ref(false);
@@ -103,6 +105,12 @@ const submit = async () => {
 
     submitting.value = true;
     error.value = null;
+    const mode = props.mode === 'bulk' ? 'bulk' : 'single';
+    const itemIds = mode === 'bulk'
+        ? [...(props.bulkItemIds ?? [])]
+        : (props.target ? [props.target.id] : []);
+
+    emit('prepare', { mode, itemIds });
 
     try {
         if (props.mode === 'bulk' && props.bulkItemIds?.length) {
@@ -118,7 +126,11 @@ const submit = async () => {
                 formData,
             );
 
-            emit('signed');
+            emit('signed', {
+                mode: 'bulk',
+                itemIds: [...props.bulkItemIds],
+                queuedCount: props.bulkItemIds.length,
+            });
         } else if (props.target) {
             const formData = new FormData();
             formData.append('president_signature_file', presidentSignatureFile.value);
@@ -132,13 +144,19 @@ const submit = async () => {
                 formData,
             );
 
-            emit('signed');
+            emit('signed', {
+                mode: 'single',
+                itemIds: [props.target.id],
+                queuedCount: 1,
+            });
         }
 
         open.value = false;
         presidentSignatureFile.value = null;
     } catch (err) {
-        error.value = firstValidationMessage(err) ?? (err instanceof Error ? err.message : 'Unable to apply signature.');
+        const message = firstValidationMessage(err) ?? (err instanceof Error ? err.message : 'Unable to apply signature.');
+        error.value = message;
+        emit('failed', { mode, itemIds, message });
     } finally {
         submitting.value = false;
     }
