@@ -110,6 +110,7 @@ const selectedItemIds = ref<number[]>([]);
 const editDialogOpen = ref(false);
 const editingItem = ref<UnifiedItem | null>(null);
 const signingItemIds = ref<number[]>([]);
+const queuingSignatures = ref(false);
 const signDialogOpen = ref(false);
 const signDialogTarget = ref<UnifiedItem | null>(null);
 const signDialogMode = ref<'single' | 'bulk'>('single');
@@ -148,7 +149,7 @@ const canBulkDeleteSelected = computed(
 );
 const tableLoading = computed(() => itemsLoading.value || itemsNavigating.value);
 const canBulkSignSelected = computed(() => {
-    if (!props.signatureEnabled || selectedItemIds.value.length === 0) {
+    if (!props.signatureEnabled || selectedItemIds.value.length === 0 || queuingSignatures.value) {
         return false;
     }
 
@@ -670,13 +671,30 @@ const applySignatureToSelectedItems = () => {
 const onItemSigned = async () => {
     const item = signDialogTarget.value;
     const queuedBulkCount = signDialogBulkItemIds.value.length;
-    await loadItems(itemsData.value.current_page, { silent: true });
-    startPolling();
-    if (signDialogMode.value === 'bulk') {
-        toast.success(`${queuedBulkCount} row signatures queued.`);
-    } else {
-        toast.success(item ? `Row ${item.row_number} signature queued.` : 'Signature queued.');
+    const targetIds = signDialogMode.value === 'bulk'
+        ? signDialogBulkItemIds.value
+        : (item ? [item.id] : []);
+
+    if (targetIds.length > 0) {
+        signingItemIds.value = Array.from(new Set([...signingItemIds.value, ...targetIds]));
     }
+
+    queuingSignatures.value = true;
+    toast.message(signDialogMode.value === 'bulk'
+        ? 'Queuing selected rows for signing...'
+        : 'Queuing row for signing...');
+    try {
+        await loadItems(itemsData.value.current_page, { silent: true });
+        startPolling();
+        if (signDialogMode.value === 'bulk') {
+            toast.success(`${queuedBulkCount} row signatures queued.`);
+        } else {
+            toast.success(item ? `Row ${item.row_number} signature queued.` : 'Signature queued.');
+        }
+    } finally {
+        queuingSignatures.value = false;
+    }
+
     signDialogMode.value = 'single';
     signDialogBulkItemIds.value = [];
     signDialogTarget.value = null;
@@ -913,7 +931,7 @@ const itemColumns = computed<ColumnDef<UnifiedItem>[]>(() => [
                                         ? h(
                                               DropdownMenuItem,
                                               {
-                                                  disabled: !row.original.pdf_available || row.original.signature_applied || isItemSigning(row.original.id),
+                                                  disabled: !row.original.pdf_available || row.original.signature_applied || isItemSigning(row.original.id) || queuingSignatures.value,
                                                   onSelect: () => {
                                                       void applySignatureToItem(row.original);
                                                   },
@@ -921,7 +939,13 @@ const itemColumns = computed<ColumnDef<UnifiedItem>[]>(() => [
                                               {
                                                   default: () => [
                                                       h(PenLine, { class: 'size-4' }),
-                                                      row.original.signature_applied ? 'Signed' : isItemSigning(row.original.id) ? 'Signing...' : 'Add Signature',
+                                                      row.original.signature_applied
+                                                          ? 'Signed'
+                                                          : isItemSigning(row.original.id)
+                                                            ? 'Queuing for signing...'
+                                                            : row.original.status === 'signing'
+                                                              ? 'Signing...'
+                                                              : 'Add Signature',
                                                   ],
                                               },
                                           )
@@ -1281,7 +1305,11 @@ onMounted(() => {
                                 @click="applySignatureToSelectedItems"
                             >
                                 <PenLine class="mr-2 size-4" />
-                                {{ selectedItemIds.length > 0 ? `Sign selected (${selectedItemIds.length})` : 'Sign selected' }}
+                                {{
+                                    queuingSignatures
+                                        ? 'Queuing for signing...'
+                                        : (selectedItemIds.length > 0 ? `Sign selected (${selectedItemIds.length})` : 'Sign selected')
+                                }}
                             </Button>
                             <Select :model-value="itemStatusFilter" @update:model-value="(value) => onItemStatusChange(String(value))">
                                 <SelectTrigger class="h-9 w-[150px] text-sm">
