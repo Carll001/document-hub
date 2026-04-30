@@ -6,6 +6,7 @@ namespace App\Services;
 
 use App\Models\AfsFilingItem;
 use App\Support\DocumentStorage;
+use App\Support\FormFieldAliasResolver;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Str;
@@ -142,10 +143,7 @@ class DocumentGeneratorCompletedExportService
                     continue;
                 }
 
-                $zipPath = $this->uniqueZipPath(
-                    "afs_filing-item-{$item->id}-row-{$item->row_number}.pdf",
-                    $usedPaths,
-                );
+                $zipPath = $this->uniqueZipPath($this->zipEntryFileName($item), $usedPaths);
 
                 $archive->addFromString($zipPath, $contents);
                 $includedItems++;
@@ -224,5 +222,22 @@ class DocumentGeneratorCompletedExportService
         $usedPaths[mb_strtolower($candidate)] = true;
 
         return $candidate;
+    }
+
+    private function zipEntryFileName(AfsFilingItem $item): string
+    {
+        $rowData = is_array($item->row_data) ? $item->row_data : [];
+        $company = FormFieldAliasResolver::resolveCompany($rowData, FormFieldAliasResolver::FORM_AFS);
+        $raw = is_string($company) ? trim($company) : '';
+
+        $normalized = Str::of($raw)
+            ->ascii()
+            ->replaceMatches('/[^A-Za-z0-9._-]+/', '-')
+            ->trim('-._')
+            ->value();
+
+        $base = $normalized !== '' ? "{$normalized}-AFS" : "afs-row-{$item->row_number}";
+
+        return "{$base}.pdf";
     }
 }
