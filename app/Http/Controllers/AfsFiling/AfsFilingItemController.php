@@ -30,6 +30,7 @@ use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use RuntimeException;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -282,7 +283,7 @@ class AfsFilingItemController extends Controller
         $path = $type === 'docx' ? $item->docx_path : $item->pdf_path;
         abort_unless(is_string($path) && $path !== '' && DocumentStorage::disk()->exists($path), 404);
 
-        $fileName = "afs_filing-row-{$item->row_number}.{$type}";
+        $fileName = $this->downloadFileName($item, $type);
         $inline = $request->boolean('inline');
 
         if ($type === 'pdf' && $inline) {
@@ -333,6 +334,23 @@ class AfsFilingItemController extends Controller
         if ($paths !== []) {
             DocumentStorage::disk()->delete($paths);
         }
+    }
+
+    private function downloadFileName(AfsFilingItem $item, string $type): string
+    {
+        $rowData = is_array($item->row_data) ? $item->row_data : [];
+        $company = FormFieldAliasResolver::resolveCompany($rowData, FormFieldAliasResolver::FORM_AFS);
+        $raw = is_string($company) ? trim($company) : '';
+
+        $normalized = Str::of($raw)
+            ->ascii()
+            ->replaceMatches('/[^A-Za-z0-9._-]+/', '-')
+            ->trim('-._')
+            ->value();
+
+        $base = $normalized !== '' ? "{$normalized}-AFS" : "afs-row-{$item->row_number}";
+
+        return "{$base}.{$type}";
     }
 
     /**

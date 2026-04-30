@@ -9,6 +9,7 @@ use App\Models\DocumentGeneratorTemplate;
 use App\Services\DocxTemplateService;
 use App\Services\PdfConversionService;
 use App\Support\DocumentStorage;
+use App\Support\FormFieldAliasResolver;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Str;
 use RuntimeException;
@@ -41,8 +42,9 @@ class AfsFilingItemGenerationService
         $item->save();
 
         $baseDir = "afs_filing/{$item->user_id}/items/{$item->id}";
-        $docxRelativePath = "{$baseDir}/row-{$item->row_number}.docx";
-        $pdfRelativePath = "{$baseDir}/row-{$item->row_number}.pdf";
+        $fileBaseName = $this->itemFileBaseName($item);
+        $docxRelativePath = "{$baseDir}/{$fileBaseName}.docx";
+        $pdfRelativePath = "{$baseDir}/{$fileBaseName}.pdf";
 
         try {
             $template = $this->resolveTemplateForRow($item->row_data ?? []);
@@ -232,5 +234,24 @@ class AfsFilingItemGenerationService
         } finally {
             fclose($stream);
         }
+    }
+
+    private function itemFileBaseName(AfsFilingItem $item): string
+    {
+        $rowData = is_array($item->row_data) ? $item->row_data : [];
+        $company = FormFieldAliasResolver::resolveCompany($rowData, FormFieldAliasResolver::FORM_AFS);
+        $raw = is_string($company) ? trim($company) : '';
+
+        $normalized = Str::of($raw)
+            ->ascii()
+            ->replaceMatches('/[^A-Za-z0-9._-]+/', '-')
+            ->trim('-._')
+            ->value();
+
+        if ($normalized === '') {
+            return "afs-row-{$item->row_number}";
+        }
+
+        return "{$normalized}-AFS";
     }
 }
