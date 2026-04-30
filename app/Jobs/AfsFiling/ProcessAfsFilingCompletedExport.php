@@ -28,7 +28,9 @@ class ProcessAfsFilingCompletedExport implements ShouldQueue
     public function __construct(
         public readonly int $userId,
         public readonly array $itemIds,
-    ) {}
+    ) {
+        $this->onQueue('afs-filing');
+    }
 
     public function handle(DocumentGeneratorCompletedExportService $completedExportService): void
     {

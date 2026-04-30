@@ -3,6 +3,7 @@ import type { ColumnDef, PaginationState, SortingState } from '@tanstack/vue-tab
 import { FlexRender, getCoreRowModel, useVueTable } from '@tanstack/vue-table';
 import { computed } from 'vue';
 import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
@@ -120,8 +121,23 @@ const showingTo = computed(() => {
                 </TableHeader>
                 <TableBody>
                     <TableRow v-if="loading">
-                        <TableCell :colspan="columns.length" class="h-24 text-center">
-                            Loading...
+                        <TableCell :colspan="columns.length" class="p-0">
+                            <div class="rounded-md border-0 p-3">
+                                <div class="border-b p-3">
+                                    <Skeleton class="h-5 w-56" />
+                                </div>
+                                <div class="space-y-3 p-3">
+                                    <div v-for="index in 8" :key="index" class="grid grid-cols-8 gap-3">
+                                        <Skeleton class="h-8 w-full col-span-1" />
+                                        <Skeleton class="h-8 w-full col-span-1" />
+                                        <Skeleton class="h-8 w-full col-span-1" />
+                                        <Skeleton class="h-8 w-full col-span-2" />
+                                        <Skeleton class="h-8 w-full col-span-1" />
+                                        <Skeleton class="h-8 w-full col-span-1" />
+                                        <Skeleton class="h-8 w-full col-span-1" />
+                                    </div>
+                                </div>
+                            </div>
                         </TableCell>
                     </TableRow>
                     <template v-else-if="table.getRowModel().rows?.length">

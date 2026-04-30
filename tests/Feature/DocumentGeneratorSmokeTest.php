@@ -44,7 +44,7 @@ class DocumentGeneratorSmokeTest extends TestCase
             ->get(route('afs-filing.index'))
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
-                ->component('DocumentGenerator')
+                ->component('forms/afs/Index')
                 ->has('initialItems.data')
                 ->has('initialSignature')
                 ->where('signatureEnabled', true));
@@ -62,14 +62,14 @@ class DocumentGeneratorSmokeTest extends TestCase
             ->get(route('afs-filing.index'))
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
-                ->component('DocumentGenerator')
+                ->component('forms/afs/Index')
                 ->where('signatureEnabled', false));
 
         $this->actingAs($staff)
             ->get(route('afs-filing.completed.index'))
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
-                ->component('GeneratedFiles'));
+                ->component('forms/afs/Completed'));
 
         $this->actingAs($staff)
             ->get(route('generated-files.show', ['batch' => $batch]))
@@ -110,7 +110,7 @@ class DocumentGeneratorSmokeTest extends TestCase
             ->get(route('afs-filing.completed.index'))
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
-                ->component('GeneratedFiles')
+                ->component('forms/afs/Completed')
                 ->has('initialItems.data', 1)
                 ->where('initialItems.data.0.id', $signedItem->id)
                 ->where('initialItems.data.0.status', 'pdf_done')
@@ -142,7 +142,7 @@ class DocumentGeneratorSmokeTest extends TestCase
             ->get(route('afs-filing.index'))
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
-                ->component('DocumentGenerator')
+                ->component('forms/afs/Index')
                 ->has('initialItems.data', 1)
                 ->where('initialItems.data.0.id', $unsignedGenerated->id)
                 ->where('initialItems.data.0.signature_applied', false));

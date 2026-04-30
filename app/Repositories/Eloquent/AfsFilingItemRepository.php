@@ -12,7 +12,7 @@ class AfsFilingItemRepository implements AfsFilingItemRepositoryContract
 {
     public function paginateForUser(int $userId, array $filters = []): LengthAwarePaginator
     {
-        $perPage = max(5, min(100, (int) ($filters['per_page'] ?? 25)));
+        $perPage = max(5, min(100, (int) ($filters['per_page'] ?? 15)));
         $sortBy = (string) ($filters['sort_by'] ?? 'updated_at');
         $direction = (string) ($filters['sort_direction'] ?? 'desc');
 

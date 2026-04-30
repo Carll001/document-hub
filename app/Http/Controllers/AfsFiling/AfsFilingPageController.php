@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace App\Http\Controllers\AfsFiling;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\AfsFiling\AfsFilingPageCompletedRequest;
+use App\Http\Requests\AfsFiling\AfsFilingPageIndexRequest;
+use App\Http\Resources\AfsFiling\AfsFilingItemResource;
 use App\Models\AfsFilingItem;
 use App\Models\DocumentGeneratorTemplate;
 use App\Models\User;
@@ -12,7 +15,6 @@ use App\Services\AfsFiling\AfsFilingSignatureService;
 use App\Services\AfsFiling\AfsFilingImportStateService;
 use App\Services\DocumentGeneratorCompletedExportService;
 use App\Support\DocumentStorage;
-use App\Support\FormFieldAliasResolver;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -26,17 +28,9 @@ class AfsFilingPageController extends Controller
         private readonly AfsFilingImportStateService $importStateService,
     ) {}
 
-    public function index(Request $request): Response
+    public function index(AfsFilingPageIndexRequest $request): Response
     {
-        $validated = $request->validate([
-            'page' => ['nullable', 'integer', 'min:1'],
-            'per_page' => ['nullable', 'integer', 'min:5', 'max:100'],
-            'search' => ['nullable', 'string', 'max:255'],
-            'sort' => ['nullable', 'in:uploadedAt,generatedAt,pdfStatus,sourceRowNumber,created_at,updated_at,status,row_number'],
-            'direction' => ['nullable', 'in:asc,desc'],
-            'status' => ['nullable', 'in:queued,processing,signing,deleting,docx_done,pdf_done,failed'],
-            'open_settings' => ['nullable', 'boolean'],
-        ]);
+        $validated = $request->validated();
 
         $sort = (string) ($validated['sort'] ?? 'uploadedAt');
         $sortBy = match ($sort) {
@@ -54,10 +48,10 @@ class AfsFilingPageController extends Controller
         $user = $request->user();
         $signatureEnabled = (bool) config('services.document_generator.signature_enabled', true);
 
-        return Inertia::render('DocumentGenerator', [
+        return Inertia::render('forms/afs/Index', [
             'initialItems' => $this->itemsPayload($user, [
                 'page' => (int) ($validated['page'] ?? 1),
-                'per_page' => (int) ($validated['per_page'] ?? 25),
+                'per_page' => (int) ($validated['per_page'] ?? 15),
                 'sort_by' => $sortBy,
                 'sort_direction' => $direction,
                 'status' => $validated['status'] ?? null,
@@ -69,7 +63,7 @@ class AfsFilingPageController extends Controller
                 'sort' => $sort,
                 'direction' => $direction,
                 'status' => (string) ($validated['status'] ?? 'all'),
-                'per_page' => (int) ($validated['per_page'] ?? 25),
+                'per_page' => (int) ($validated['per_page'] ?? 15),
             ],
             'initialSignature' => $signatureEnabled ? $this->signatureService->payload($user) : ['signature' => null],
             'initialMapping' => $this->globalTemplateMappingPayload(),
@@ -84,18 +78,20 @@ class AfsFilingPageController extends Controller
         return redirect()->route('afs-filing.index', ['open_settings' => 1]);
     }
 
-    public function completed(Request $request, DocumentGeneratorCompletedExportService $completedExportService): Response
+    public function completed(AfsFilingPageCompletedRequest $request, DocumentGeneratorCompletedExportService $completedExportService): Response
     {
+        $validated = $request->validated();
+
         /** @var User $user */
         $user = $request->user();
 
-        return Inertia::render('GeneratedFiles', [
+        return Inertia::render('forms/afs/Completed', [
             'initialItems' => $this->itemsPayload($user, [
-                'page' => (int) $request->integer('page', 1),
-                'per_page' => (int) $request->integer('per_page', 25),
-                'sort_by' => (string) $request->input('sort_by', 'updated_at'),
-                'sort_direction' => (string) $request->input('sort_direction', 'desc'),
-                'company_search' => $request->string('company_search')->toString(),
+                'page' => (int) ($validated['page'] ?? 1),
+                'per_page' => (int) ($validated['per_page'] ?? 15),
+                'sort_by' => (string) ($validated['sort_by'] ?? 'updated_at'),
+                'sort_direction' => (string) ($validated['sort_direction'] ?? 'desc'),
+                'company_search' => isset($validated['company_search']) ? trim((string) $validated['company_search']) : '',
                 'completed_only' => true,
             ]),
             'initialExportState' => $completedExportService->getState((int) $user->getKey()),
@@ -164,7 +160,7 @@ class AfsFilingPageController extends Controller
 
         $sortBy = (string) ($filters['sort_by'] ?? 'created_at');
         $sortDirection = (string) ($filters['sort_direction'] ?? 'desc');
-        $perPage = (int) ($filters['per_page'] ?? 25);
+        $perPage = (int) ($filters['per_page'] ?? 15);
 
         if ($statusFilter === '' && (($filters['completed_only'] ?? false) !== true)) {
             $query->orderByRaw("
@@ -187,35 +183,10 @@ class AfsFilingPageController extends Controller
 
         return [
             'current_page' => $paginator->currentPage(),
-            'data' => $paginator->getCollection()->map(fn (AfsFilingItem $item): array => $this->itemPayload($item))->values()->all(),
+            'data' => AfsFilingItemResource::collection($paginator->getCollection())->resolve(),
             'last_page' => $paginator->lastPage(),
             'per_page' => $paginator->perPage(),
             'total' => $paginator->total(),
-        ];
-    }
-
-    private function itemPayload(AfsFilingItem $item): array
-    {
-        $rowData = is_array($item->row_data) ? $item->row_data : [];
-        $company = FormFieldAliasResolver::resolveCompany($rowData, FormFieldAliasResolver::FORM_AFS);
-
-        return [
-            'id' => (int) $item->id,
-            'row_number' => (int) $item->row_number,
-            'company' => is_string($company) && trim($company) !== '' ? $company : '-',
-            'tin' => FormFieldAliasResolver::resolveTin($rowData, FormFieldAliasResolver::FORM_AFS),
-            'status' => (string) $item->status,
-            'row_data' => $rowData,
-            'docx_available' => is_string($item->docx_path) && $item->docx_path !== '' && DocumentStorage::disk()->exists($item->docx_path),
-            'pdf_available' => is_string($item->pdf_path) && $item->pdf_path !== '' && DocumentStorage::disk()->exists($item->pdf_path),
-            'signature_applied' => $item->signature_applied_at !== null,
-            'signature_applied_at' => $item->signature_applied_at?->toIso8601String(),
-            'error_message' => $item->error_message,
-            'error_details' => is_array($item->error_details) ? $item->error_details : null,
-            'source_excel_name' => $item->source_excel_name,
-            'template_name' => $item->template_name,
-            'created_at' => $item->created_at?->toIso8601String(),
-            'updated_at' => $item->updated_at?->toIso8601String(),
         ];
     }
 
