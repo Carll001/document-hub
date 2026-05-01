@@ -204,10 +204,6 @@ function submitConfirmationTemplate(): void {
                     </div>
 
                     <div class="flex flex-wrap gap-2 justify-end">
-                        <Button type="button" variant="outline" @click="openTemplateDialog">
-                            <FileText class="mr-2 size-4" />
-                            Receipt Template
-                        </Button>
                         <Button type="button" @click="openCreateBatchDialog">
                             <Plus class="mr-2 size-4" />
                             Create Batch
