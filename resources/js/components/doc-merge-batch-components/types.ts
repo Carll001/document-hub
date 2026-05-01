@@ -5,6 +5,13 @@ export type FlashState = {
 
 export type BatchProcessingStatus = 'queued' | 'processing' | 'failed' | null;
 export type ReceiptJobStatus = 'queued' | 'processing' | 'failed' | null;
+export type BatchDownloadExportStatus = 'queued' | 'processing' | 'failed' | 'ready' | null;
+export type BatchDownloadExportState = {
+    status: BatchDownloadExportStatus;
+    error: string | null;
+    itemCount: number | null;
+    downloadUrl: string | null;
+};
 
 export type ConfirmationTemplateState = {
     hasTemplate: boolean;
@@ -101,6 +108,9 @@ export type BatchDetail = {
     processingError: string | null;
     showUrl: string;
     downloadUrl: string;
+    downloadQueueUrl: string;
+    downloadStateUrl: string;
+    downloadExportState: BatchDownloadExportState;
     deleteUrl: string;
     uploadPageFoldersUrl: string;
     uploadZipUrl: string;

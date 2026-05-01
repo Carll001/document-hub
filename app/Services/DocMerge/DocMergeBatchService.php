@@ -2,10 +2,11 @@
 
 declare(strict_types=1);
 
-namespace App\Services;
+namespace App\Services\DocMerge;
 
 use App\Models\DocMergeBatch;
 use App\Models\DocMergeBatchSourceFile;
+use App\Services\BulkZipMergeService;
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Collection;
@@ -60,9 +61,30 @@ class DocMergeBatchService
             ]);
         }
 
-        $inspection = $this->bulkZipMergeService->inspectArchive(
+        return $this->storeZipFromArchivePath(
+            $batch,
             $archivePath,
             $zipFile->getClientOriginalName(),
+        );
+    }
+
+    /**
+     * Persist a ZIP upload from a filesystem path.
+     */
+    public function storeZipFromArchivePath(
+        DocMergeBatch $batch,
+        string $archivePath,
+        string $originalName,
+    ): int {
+        if (! is_file($archivePath)) {
+            throw ValidationException::withMessages([
+                'zip' => 'The uploaded ZIP file is no longer available.',
+            ]);
+        }
+
+        $inspection = $this->bulkZipMergeService->inspectArchive(
+            $archivePath,
+            $originalName,
             1,
         );
         $zip = new ZipArchive;
@@ -92,33 +114,41 @@ class DocMergeBatchService
      */
     public function processBatch(DocMergeBatch $batch, ?string $outputPrefix = null): array
     {
-        $pageFolders = $this->storedPageFolders($batch);
+        $prepared = $this->prepareStoredPageFolders($batch);
+        $pageFolders = $prepared['pageFolders'];
+        $temporarySourcePaths = $prepared['temporarySourcePaths'];
 
-        if (count($pageFolders) < 2) {
-            throw ValidationException::withMessages([
-                'batch' => 'Add at least two page folders like PAGE 1 and PAGE 2 before running merge.',
-            ]);
+        try {
+            if (count($pageFolders) < 2) {
+                throw ValidationException::withMessages([
+                    'batch' => 'Add at least two page folders like PAGE 1 and PAGE 2 before running merge.',
+                ]);
+            }
+
+            $batch->loadMissing(['mergedPdfs', 'bulkMergeFailures']);
+
+            $batch->mergedPdfs->each->delete();
+            $batch->bulkMergeFailures->each->delete();
+
+            $result = $this->bulkZipMergeService->processPageFolders(
+                $batch->user,
+                $pageFolders,
+                $outputPrefix,
+                batch: $batch,
+                inputLabel: $batch->name,
+                inputMode: 'batch',
+            );
+
+            $batch->forceFill([
+                'last_processed_at' => now(),
+            ])->save();
+
+            return $result;
+        } finally {
+            foreach ($temporarySourcePaths as $temporarySourcePath) {
+                @unlink($temporarySourcePath);
+            }
         }
-
-        $batch->loadMissing(['mergedPdfs', 'bulkMergeFailures']);
-
-        $batch->mergedPdfs->each->delete();
-        $batch->bulkMergeFailures->each->delete();
-
-        $result = $this->bulkZipMergeService->processPageFolders(
-            $batch->user,
-            $pageFolders,
-            $outputPrefix,
-            batch: $batch,
-            inputLabel: $batch->name,
-            inputMode: 'batch',
-        );
-
-        $batch->forceFill([
-            'last_processed_at' => now(),
-        ])->save();
-
-        return $result;
     }
 
     /**
@@ -186,6 +216,26 @@ class DocMergeBatchService
      */
     public function storedPageFolders(DocMergeBatch $batch): array
     {
+        return $this->prepareStoredPageFolders($batch)['pageFolders'];
+    }
+
+    /**
+     * @return array{
+     *     pageFolders: list<array{
+     *         name: string,
+     *         number: int,
+     *         filesByKey: array<string, array{
+     *             matchKey: string,
+     *             groupLabel: string,
+     *             displayName: string,
+     *             path: string
+     *         }>
+     *     }>,
+     *     temporarySourcePaths: list<string>
+     * }
+     */
+    private function prepareStoredPageFolders(DocMergeBatch $batch): array
+    {
         $disk = \App\Support\DocumentStorage::disk();
         /** @var Collection<int, DocMergeBatchSourceFile> $sourceFiles */
         $sourceFiles = $batch->sourceFiles()
@@ -195,11 +245,15 @@ class DocMergeBatchService
             ->get();
 
         $groupedFolders = [];
+        $temporarySourcePaths = [];
 
         foreach ($sourceFiles as $sourceFile) {
             if (! $disk->exists($sourceFile->storage_path)) {
                 continue;
             }
+
+            $localPath = $this->materializeDiskFileToLocalTemp($disk, $sourceFile->storage_path);
+            $temporarySourcePaths[] = $localPath;
 
             $groupedFolders[$sourceFile->page_folder_number] ??= [
                 'name' => $sourceFile->page_folder_name,
@@ -210,11 +264,14 @@ class DocMergeBatchService
                 'matchKey' => $sourceFile->match_key,
                 'groupLabel' => $sourceFile->group_label,
                 'displayName' => $sourceFile->display_name,
-                'path' => $disk->path($sourceFile->storage_path),
+                'path' => $localPath,
             ];
         }
 
-        return array_values($groupedFolders);
+        return [
+            'pageFolders' => array_values($groupedFolders),
+            'temporarySourcePaths' => $temporarySourcePaths,
+        ];
     }
 
     /**
@@ -406,6 +463,41 @@ class DocMergeBatchService
             Str::uuid(),
             $safeFileName,
         );
+    }
+
+    private function materializeDiskFileToLocalTemp(
+        FilesystemAdapter $disk,
+        string $storagePath,
+    ): string {
+        $readStream = $disk->readStream($storagePath);
+
+        if (! is_resource($readStream)) {
+            throw new RuntimeException('One of the batch source PDFs is no longer available.');
+        }
+
+        $localPath = tempnam(sys_get_temp_dir(), 'doc-merge-source-');
+
+        if ($localPath === false) {
+            fclose($readStream);
+            throw new RuntimeException('A temporary source PDF could not be created.');
+        }
+
+        $writeStream = fopen($localPath, 'wb');
+
+        if (! is_resource($writeStream)) {
+            fclose($readStream);
+            @unlink($localPath);
+            throw new RuntimeException('A temporary source PDF could not be created.');
+        }
+
+        try {
+            stream_copy_to_stream($readStream, $writeStream);
+        } finally {
+            fclose($readStream);
+            fclose($writeStream);
+        }
+
+        return $localPath;
     }
 
     private function safePdfFilename(string $fileName, string $fallbackBaseName): string

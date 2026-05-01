@@ -2,17 +2,26 @@
 
 declare(strict_types=1);
 
-namespace App\Http\Controllers;
+namespace App\Http\Controllers\DocMerge;
 
-use App\Jobs\ProcessDocMergeBatch;
+use App\Http\Controllers\Controller;
+use App\Http\Requests\DocMerge\DocMergeBatchCursorRequest;
+use App\Http\Requests\DocMerge\DocMergeBatchQueueDownloadRequest;
+use App\Http\Requests\DocMerge\DocMergeBatchShowRequest;
+use App\Http\Resources\DocMerge\DocMergeBatchResource;
+use App\Jobs\DocMerge\ImportDocMergeBatchZip;
+use App\Jobs\DocMerge\ProcessDocMergeBatchExport;
+use App\Jobs\DocMerge\ProcessDocMergeBatch;
 use App\Models\BulkMergeFailure;
 use App\Models\ConfirmationTemplate;
 use App\Models\DocMergeBatch;
 use App\Models\DocMergeBatchSourceFile;
 use App\Models\MergedPdf;
 use App\Models\User;
+use App\Repositories\Eloquent\DocMerge\DocMergeBatchRepository;
 use App\Services\ConfirmationDocxService;
-use App\Services\DocMergeBatchService;
+use App\Services\DocMerge\DocMergeBatchService;
+use App\Services\DocMerge\DocMergeBatchExportService;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -34,11 +43,9 @@ class DocMergeBatchController extends Controller
     /**
      * Return the next page of saved batch folders.
      */
-    public function batches(Request $request): JsonResponse
+    public function batches(DocMergeBatchCursorRequest $request): JsonResponse
     {
-        $validated = $request->validate([
-            'cursor' => ['nullable', 'integer', 'min:1'],
-        ]);
+        $validated = $request->validated();
 
         return response()->json(
             $this->batchPagePayload(
@@ -51,14 +58,12 @@ class DocMergeBatchController extends Controller
      * Show the saved batch workspace.
      */
     public function show(
-        Request $request,
+        DocMergeBatchShowRequest $request,
         DocMergeBatch $docMergeBatch,
         ConfirmationDocxService $confirmationDocxService,
     ): Response {
         abort_unless($docMergeBatch->user->is($request->user()), 404);
-        $validated = $request->validate([
-            'page' => ['nullable', 'integer', 'min:1'],
-        ]);
+        $validated = $request->validated();
 
         $docMergeBatch->loadCount(['mergedPdfs', 'bulkMergeFailures']);
         $requestedPage = (int) ($validated['page'] ?? 1);
@@ -68,7 +73,7 @@ class DocMergeBatchController extends Controller
             $resultsPage = $this->resultsPage($docMergeBatch, $resultsPage->lastPage());
         }
 
-        return Inertia::render('DocMergeBatch', [
+        return Inertia::render('DocMerge/Batch', [
             'flash' => [
                 'success' => $request->session()->get('success'),
                 'error' => $request->session()->get('error'),
@@ -84,13 +89,11 @@ class DocMergeBatchController extends Controller
     /**
      * Return the next page of merged results for one batch.
      */
-    public function results(Request $request, DocMergeBatch $docMergeBatch): JsonResponse
+    public function results(DocMergeBatchCursorRequest $request, DocMergeBatch $docMergeBatch): JsonResponse
     {
         abort_unless($docMergeBatch->user->is($request->user()), 404);
 
-        $validated = $request->validate([
-            'cursor' => ['nullable', 'integer', 'min:1'],
-        ]);
+        $validated = $request->validated();
 
         return response()->json(
             $this->resultsPagePayload(
@@ -186,7 +189,6 @@ class DocMergeBatchController extends Controller
     public function storeZip(
         Request $request,
         DocMergeBatch $docMergeBatch,
-        DocMergeBatchService $docMergeBatchService,
     ): RedirectResponse {
         abort_unless($docMergeBatch->user->is($request->user()), 404);
 
@@ -205,26 +207,50 @@ class DocMergeBatchController extends Controller
 
         /** @var UploadedFile $zip */
         $zip = $validated['zip'];
+        $disk = \App\Support\DocumentStorage::disk();
+        $tempZipPath = sprintf(
+            'doc-merge/%d/batches/%d/imports/%s-%s.zip',
+            $docMergeBatch->user_id,
+            $docMergeBatch->id,
+            now()->format('YmdHis'),
+            Str::uuid(),
+        );
+        $stored = $disk->putFileAs(
+            dirname($tempZipPath),
+            $zip,
+            basename($tempZipPath),
+        );
+
+        if ($stored === false || ! $disk->exists($tempZipPath)) {
+            return to_route('doc-merge.batches.show', ['docMergeBatch' => $docMergeBatch])
+                ->with('error', 'The ZIP could not be queued right now. Please try again.');
+        }
 
         try {
-            $docMergeBatchService->storeZip(
-                $docMergeBatch,
-                $zip,
-            );
-            $this->queueBatchProcessing(
-                $docMergeBatch,
+            $docMergeBatch->forceFill([
+                'processing_status' => DocMergeBatch::PROCESSING_STATUS_QUEUED,
+                'processing_error' => null,
+            ])->save();
+
+            ImportDocMergeBatchZip::dispatch(
+                $docMergeBatch->getKey(),
+                $tempZipPath,
+                $zip->getClientOriginalName(),
                 $validated['outputPrefix'] ?? null,
-            );
+            )->afterCommit();
 
             return to_route('doc-merge.batches.show', ['docMergeBatch' => $docMergeBatch])
-                ->with('success', 'Batch processing queued. Results will refresh automatically.');
-        } catch (ValidationException $exception) {
-            throw $exception;
+                ->with('success', 'ZIP import queued. Results will refresh automatically.');
         } catch (\Throwable $exception) {
-            report($exception);
+            $disk->delete($tempZipPath);
+            $docMergeBatch->forceFill([
+                'processing_status' => null,
+                'processing_error' => null,
+            ])->save();
 
+            report($exception);
             return to_route('doc-merge.batches.show', ['docMergeBatch' => $docMergeBatch])
-                ->with('error', $exception->getMessage() !== '' ? $exception->getMessage() : 'The ZIP could not be imported right now.');
+                ->with('error', 'The ZIP could not be queued right now. Please try again.');
         }
     }
 
@@ -311,14 +337,84 @@ class DocMergeBatchController extends Controller
     /**
      * Download the batch ZIP.
      */
-    public function download(
-        Request $request,
+    public function queueDownload(
+        DocMergeBatchQueueDownloadRequest $request,
         DocMergeBatch $docMergeBatch,
-        DocMergeBatchService $docMergeBatchService,
-    ): BinaryFileResponse {
+        DocMergeBatchExportService $exportService,
+    ): JsonResponse {
         abort_unless($docMergeBatch->user->is($request->user()), 404);
 
-        return $docMergeBatchService->downloadBatch($docMergeBatch);
+        $state = $exportService->getState($docMergeBatch->user_id, $docMergeBatch->id);
+        if (in_array($state['status'], [
+            DocMergeBatchExportService::STATUS_QUEUED,
+            DocMergeBatchExportService::STATUS_PROCESSING,
+        ], true)) {
+            return response()->json([
+                'message' => 'A batch ZIP export is already processing.',
+                'export_state' => $state,
+            ], 409);
+        }
+
+        $exportService->forgetState($docMergeBatch->user_id, $docMergeBatch->id);
+        $exportService->putState($docMergeBatch->user_id, $docMergeBatch->id, [
+            'status' => DocMergeBatchExportService::STATUS_QUEUED,
+            'error' => null,
+            'itemCount' => null,
+            'downloadUrl' => null,
+            'localPath' => null,
+        ]);
+
+        ProcessDocMergeBatchExport::dispatch($docMergeBatch->user_id, $docMergeBatch->id);
+
+        return response()->json([
+            'message' => 'Batch ZIP export queued. Your ZIP will be ready shortly.',
+            'export_state' => $exportService->getState($docMergeBatch->user_id, $docMergeBatch->id),
+        ]);
+    }
+
+    public function downloadState(
+        Request $request,
+        DocMergeBatch $docMergeBatch,
+        DocMergeBatchExportService $exportService,
+    ): JsonResponse {
+        abort_unless($docMergeBatch->user->is($request->user()), 404);
+
+        return response()->json(
+            $exportService->getState($docMergeBatch->user_id, $docMergeBatch->id),
+        );
+    }
+
+    public function downloadFile(
+        Request $request,
+        DocMergeBatch $docMergeBatch,
+        DocMergeBatchExportService $exportService,
+    ): BinaryFileResponse {
+        abort_unless($docMergeBatch->user->is($request->user()), 404);
+        $state = $exportService->getState($docMergeBatch->user_id, $docMergeBatch->id);
+        $cached = cache()->get($exportService->cacheKey($docMergeBatch->user_id, $docMergeBatch->id));
+
+        abort_unless(
+            $state['status'] === DocMergeBatchExportService::STATUS_READY
+                && is_array($cached)
+                && is_string($cached['localPath'] ?? null)
+                && \Illuminate\Support\Facades\Storage::disk('local')->exists($cached['localPath']),
+            404,
+        );
+
+        $downloadName = sprintf(
+            '%s-merged-files.zip',
+            Str::of($docMergeBatch->name)
+                ->ascii()
+                ->replaceMatches('/[^A-Za-z0-9._-]+/', '-')
+                ->trim('-._')
+                ->value() ?: 'doc-merge-batch',
+        );
+
+        return response()->download(
+            $exportService->localAbsolutePath((string) $cached['localPath']),
+            $downloadName,
+            ['Content-Type' => 'application/zip'],
+        );
     }
 
     /**
@@ -342,11 +438,11 @@ class DocMergeBatchController extends Controller
 
     private function batchPage(User $user, int $page): LengthAwarePaginator
     {
-        return DocMergeBatch::query()
-            ->whereBelongsTo($user)
-            ->withCount(['mergedPdfs', 'bulkMergeFailures'])
-            ->latest()
-            ->paginate(self::BATCHES_PER_PAGE, ['*'], 'page', $page);
+        return app(DocMergeBatchRepository::class)->paginateForUser(
+            (int) $user->getKey(),
+            $page,
+            self::BATCHES_PER_PAGE,
+        );
     }
 
     /**
@@ -452,7 +548,7 @@ class DocMergeBatchController extends Controller
      */
     private function transformBatch(DocMergeBatch $batch): array
     {
-        return [
+        return array_merge((new DocMergeBatchResource($batch))->resolve(), [
             'id' => $batch->uuid,
             'name' => $batch->name,
             'mergedCount' => (int) ($batch->merged_pdfs_count ?? $batch->mergedPdfs()->count()),
@@ -462,10 +558,13 @@ class DocMergeBatchController extends Controller
             'processingError' => $batch->processing_error,
             'showUrl' => route('doc-merge.batches.show', ['docMergeBatch' => $batch]),
             'downloadUrl' => route('doc-merge.batches.download', ['docMergeBatch' => $batch]),
+            'downloadQueueUrl' => route('doc-merge.batches.download.queue', ['docMergeBatch' => $batch]),
+            'downloadStateUrl' => route('doc-merge.batches.download.state', ['docMergeBatch' => $batch]),
+            'downloadExportState' => app(DocMergeBatchExportService::class)->getState($batch->user_id, $batch->id),
             'deleteUrl' => route('doc-merge.batches.destroy', ['docMergeBatch' => $batch]),
             'uploadPageFoldersUrl' => route('doc-merge.batches.page-folders.store', ['docMergeBatch' => $batch]),
             'uploadZipUrl' => route('doc-merge.batches.zip.store', ['docMergeBatch' => $batch]),
-        ];
+        ]);
     }
 
     /**

@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace App\Jobs;
+namespace App\Jobs\DocMerge;
 
 use App\Models\DocMergeBatch;
-use App\Services\DocMergeBatchService;
+use App\Services\DocMerge\DocMergeBatchService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -26,6 +26,7 @@ class ProcessDocMergeBatch implements ShouldQueue
         public readonly int $batchId,
         public readonly ?string $outputPrefix = null,
     ) {
+        $this->onQueue('document-merger');
     }
 
     public function handle(DocMergeBatchService $docMergeBatchService): void

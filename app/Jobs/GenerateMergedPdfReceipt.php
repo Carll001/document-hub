@@ -31,6 +31,7 @@ class GenerateMergedPdfReceipt implements ShouldQueue
         public readonly array $placeholders,
         public readonly array $placeholderValues,
     ) {
+        $this->onQueue('document-merger');
     }
 
     public function handle(MergedPdfReceiptService $mergedPdfReceiptService): void

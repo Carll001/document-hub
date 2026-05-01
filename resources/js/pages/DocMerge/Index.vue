@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { Head, useForm } from '@inertiajs/vue3';
+import { FileText, Plus } from 'lucide-vue-next';
 import { computed, ref, watch } from 'vue';
 import { toast } from 'vue-sonner';
 import BatchFoldersSection from '@/components/doc-merge-components/BatchFoldersSection.vue';
 import CreateBatchDialog from '@/components/doc-merge-components/CreateBatchDialog.vue';
-import DocMergeToolbar from '@/components/doc-merge-components/DocMergeToolbar.vue';
 import type {
     BatchPaginationState,
     BatchSummary,
@@ -12,6 +12,7 @@ import type {
     FlashState,
 } from '@/components/doc-merge-components/types';
 import SharedTemplateDialog from '@/components/doc-merge-components/SharedTemplateDialog.vue';
+import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import AppLayout from '@/layouts/AppLayout.vue';
 import docMerge from '@/routes/doc-merge';
@@ -164,13 +165,6 @@ function submitConfirmationTemplate(): void {
     <Head title="Doc Merge" />
 
     <AppLayout :breadcrumbs="breadcrumbs">
-        <template #subheader>
-            <DocMergeToolbar
-                @open-create-batch="openCreateBatchDialog"
-                @open-template="openTemplateDialog"
-            />
-        </template>
-
         <div class="flex flex-1 flex-col gap-6 p-4 md:p-6">
             <CreateBatchDialog
                 :open="isCreateBatchDialogOpen"
@@ -194,6 +188,33 @@ function submitConfirmationTemplate(): void {
                 @submit="submitConfirmationTemplate"
                 @update:open="handleTemplateDialogOpenChange"
             />
+
+            <Card class="rounded-3xl">
+                <div class="flex flex-col gap-5 p-6 md:flex-row md:items-center md:justify-between md:p-8">
+                    <div class="space-y-2">
+                        <p class="text-xs font-semibold tracking-[0.3em] text-teal-700 uppercase">
+                            Doc Merge Workspace
+                        </p>
+                        <h1 class="text-3xl font-semibold tracking-tight text-foreground md:text-4xl">
+                            Batch Folders
+                        </h1>
+                        <p class="max-w-3xl text-sm leading-7 text-muted-foreground">
+                            Create folders for merge runs, upload sources in each batch, and manage outputs in one shared workspace.
+                        </p>
+                    </div>
+
+                    <div class="flex flex-wrap gap-2 justify-end">
+                        <Button type="button" variant="outline" @click="openTemplateDialog">
+                            <FileText class="mr-2 size-4" />
+                            Receipt Template
+                        </Button>
+                        <Button type="button" @click="openCreateBatchDialog">
+                            <Plus class="mr-2 size-4" />
+                            Create Batch
+                        </Button>
+                    </div>
+                </div>
+            </Card>
 
             <Card class="rounded-3xl">
                 <BatchFoldersSection

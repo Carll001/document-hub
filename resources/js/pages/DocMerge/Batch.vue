@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Head, router, useForm } from '@inertiajs/vue3';
+import { Download, LoaderCircle, Settings2, Trash2, Upload } from 'lucide-vue-next';
 import { computed, onBeforeUnmount, ref, toRef, watch } from 'vue';
 import { toast } from 'vue-sonner';
 import BatchBulkFolderDialog from '@/components/doc-merge-batch-components/BatchBulkFolderDialog.vue';
@@ -7,14 +8,12 @@ import BatchBulkZipDialog from '@/components/doc-merge-batch-components/BatchBul
 import BatchDeleteDialog from '@/components/doc-merge-batch-components/BatchDeleteDialog.vue';
 import BatchDeleteResultsDialog from '@/components/doc-merge-batch-components/BatchDeleteResultsDialog.vue';
 import BatchFailureDialog from '@/components/doc-merge-batch-components/BatchFailureDialog.vue';
-import BatchHeader from '@/components/doc-merge-batch-components/BatchHeader.vue';
 import BatchPreviewDialog from '@/components/doc-merge-batch-components/BatchPreviewDialog.vue';
-import BatchReceiptDialog from '@/components/doc-merge-batch-components/BatchReceiptDialog.vue';
-import BatchRemoveReceiptDialog from '@/components/doc-merge-batch-components/BatchRemoveReceiptDialog.vue';
 import BatchResultsTable from '@/components/doc-merge-batch-components/BatchResultsTable.vue';
 import BatchSendEmailDialog from '@/components/doc-merge-batch-components/BatchSendEmailDialog.vue';
 import type {
     BatchDetail,
+    BatchDownloadExportState,
     BatchMergeHistoryRecord,
     BatchMergedOutput,
     ConfirmationTemplateState,
@@ -24,22 +23,11 @@ import type {
 } from '@/components/doc-merge-batch-components/types';
 import { useBatchPageFolders } from '@/components/doc-merge-batch-components/useBatchPageFolders';
 import { useBatchResultSelection } from '@/components/doc-merge-batch-components/useBatchResultSelection';
-import {
-    batchProcessingIsActive,
-    bulkOutputPreview,
-    defaultConfirmationPlaceholderValue,
-    defaultEmailMessage,
-    defaultEmailSubject,
-    isFailureRecord,
-    isMergedRecord,
-    mergeHistoryRecordKey,
-    receiptJobIsActive,
-} from '@/components/doc-merge-batch-components/utils';
+import { batchProcessingIsActive, bulkOutputPreview, defaultEmailMessage, defaultEmailSubject, isFailureRecord, isMergedRecord, mergeHistoryRecordKey, receiptJobIsActive } from '@/components/doc-merge-batch-components/utils';
 import { Card } from '@/components/ui/card';
-import {
-    birReceiptPlaceholderValue,
-    parseBirReceiptEmailText,
-} from '@/lib/bir-receipt';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import AppLayout from '@/layouts/AppLayout.vue';
 import docMerge from '@/routes/doc-merge';
 import type { BreadcrumbItem } from '@/types';
@@ -65,8 +53,6 @@ const isBulkZipDialogOpen = ref(false);
 const isBulkFolderDialogOpen = ref(false);
 const isPreviewDialogOpen = ref(false);
 const isFailureDialogOpen = ref(false);
-const isRemoveReceiptDialogOpen = ref(false);
-const isReceiptDialogOpen = ref(false);
 const isSendEmailDialogOpen = ref(false);
 const isDeleteResultsDialogOpen = ref(false);
 const isDeleteBatchDialogOpen = ref(false);
@@ -74,8 +60,6 @@ const previewedMergedPdf = ref<BatchMergedOutput | null>(null);
 const mergeFailureForDialog = ref<Extract<BatchMergeHistoryRecord, { recordType: 'merge_failure' }> | null>(
     null,
 );
-const mergedPdfForReceiptRemoval = ref<BatchMergedOutput | null>(null);
-const mergedPdfForReceipt = ref<BatchMergedOutput | null>(null);
 const mergedPdfForEmail = ref<BatchMergedOutput | null>(null);
 const mergeHistoryForDeletion = ref<BatchMergeHistoryRecord[]>([]);
 
@@ -108,12 +92,6 @@ const bulkFolderForm = useForm<{
     outputPrefix: '',
     pageFolders: [],
 });
-const removeReceiptForm = useForm<Record<string, never>>({});
-const receiptForm = useForm<{
-    placeholders: Record<string, string>;
-}>({
-    placeholders: {},
-});
 
 const {
     bulkFolderClientError,
@@ -138,6 +116,7 @@ const {
     toggleMergeHistorySelection,
 } = useBatchResultSelection(computed(() => props.batch.results));
 const batchPollTimeoutId = ref<number | null>(null);
+const downloadExportState = ref<BatchDownloadExportState>(props.batch.downloadExportState);
 const busyBatchErrorMessage =
     'This batch is already queued or processing. Wait for it to finish before making more changes.';
 
@@ -152,7 +131,31 @@ const hasActiveReceiptJobs = computed(() =>
     ),
 );
 const shouldPollBatch = computed(
-    () => isBatchBusy.value || hasActiveReceiptJobs.value,
+    () => isBatchBusy.value || hasActiveReceiptJobs.value || isDownloadExportBusy.value,
+);
+const isBatchQueued = computed(
+    () => props.batch.processingStatus === 'queued',
+);
+const isBatchProcessing = computed(
+    () => props.batch.processingStatus === 'processing',
+);
+const isBatchFailed = computed(
+    () => props.batch.processingStatus === 'failed',
+);
+const isDownloadExportQueued = computed(
+    () => downloadExportState.value.status === 'queued',
+);
+const isDownloadExportProcessing = computed(
+    () => downloadExportState.value.status === 'processing',
+);
+const isDownloadExportFailed = computed(
+    () => downloadExportState.value.status === 'failed',
+);
+const isDownloadExportReady = computed(
+    () => downloadExportState.value.status === 'ready',
+);
+const isDownloadExportBusy = computed(
+    () => isDownloadExportQueued.value || isDownloadExportProcessing.value,
 );
 
 const canBulkDeleteMergeHistory = computed(
@@ -223,48 +226,6 @@ const bulkFolderFieldError = computed(() => {
 const bulkFolderOutputPrefixError = computed(
     () => bulkFolderForm.errors.outputPrefix,
 );
-const canSubmitReceipt = computed(() => {
-    if (
-        mergedPdfForReceipt.value === null ||
-        receiptForm.processing ||
-        !props.confirmationTemplate.hasTemplate ||
-        isBatchBusy.value ||
-        receiptJobIsActive(mergedPdfForReceipt.value.receiptJobStatus)
-    ) {
-        return false;
-    }
-
-    return props.confirmationTemplate.placeholders.every((placeholder) =>
-        Object.prototype.hasOwnProperty.call(
-            receiptForm.placeholders,
-            placeholder,
-        ),
-    );
-});
-const receiptFieldError = computed(() => {
-    const directError = receiptForm.errors.placeholders;
-
-    if (directError) {
-        return directError;
-    }
-
-    const nestedEntry = Object.entries(receiptForm.errors).find(([key]) =>
-        key.startsWith('placeholders.'),
-    );
-
-    return nestedEntry?.[1] ?? null;
-});
-const receiptPlaceholderErrors = computed<Record<string, string | undefined>>(
-    () =>
-        Object.fromEntries(
-            props.confirmationTemplate.placeholders.map((placeholder) => [
-                placeholder,
-                receiptForm.errors[
-                    `placeholders.${placeholder}` as keyof typeof receiptForm.errors
-                ],
-            ]),
-        ),
-);
 const canSendEmail = computed(
     () =>
         mergedPdfForEmail.value !== null &&
@@ -331,30 +292,51 @@ function scheduleBatchPoll(): void {
         return;
     }
 
-    batchPollTimeoutId.value = window.setTimeout(() => {
-        router.visit(
-            `${window.location.pathname}${window.location.search}`,
-            {
-                only: ['batch'],
-                preserveScroll: true,
-                preserveState: true,
-                replace: true,
-                onFinish: () => {
-                    if (shouldPollBatch.value) {
-                        scheduleBatchPoll();
-                    }
-                },
+    batchPollTimeoutId.value = window.setTimeout(async () => {
+        if (isDownloadExportBusy.value) {
+            try {
+                const response = await fetch(props.batch.downloadStateUrl, {
+                    method: 'GET',
+                    credentials: 'same-origin',
+                    headers: {
+                        Accept: 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest',
+                    },
+                });
+
+                if (response.ok) {
+                    downloadExportState.value = (await response.json()) as BatchDownloadExportState;
+                }
+            } catch {
+                // Keep polling.
+            }
+        }
+
+        router.visit(`${window.location.pathname}${window.location.search}`, {
+            only: ['batch'],
+            preserveScroll: true,
+            preserveState: true,
+            replace: true,
+            onFinish: () => {
+                if (shouldPollBatch.value) {
+                    scheduleBatchPoll();
+                }
             },
-        );
+        });
     }, 3000);
 }
 
+watch(
+    () => props.batch.downloadExportState,
+    (state) => {
+        if (!isDownloadExportBusy.value) {
+            downloadExportState.value = state;
+        }
+    },
+);
+
 function showBusyBatchToast(): void {
     toast.error(busyBatchErrorMessage);
-}
-
-function receiptJobBusyMessage(fileName: string): string {
-    return `A receipt update is already queued for ${fileName}.`;
 }
 
 function handleBulkZipDialogOpenChange(open: boolean): void {
@@ -394,30 +376,6 @@ function handleFailureDialogOpenChange(open: boolean): void {
 
     if (!open) {
         mergeFailureForDialog.value = null;
-    }
-}
-
-function handleRemoveReceiptDialogOpenChange(open: boolean): void {
-    if (removeReceiptForm.processing) {
-        return;
-    }
-
-    isRemoveReceiptDialogOpen.value = open;
-
-    if (!open) {
-        resetRemoveReceiptForm();
-    }
-}
-
-function handleReceiptDialogOpenChange(open: boolean): void {
-    if (receiptForm.processing) {
-        return;
-    }
-
-    isReceiptDialogOpen.value = open;
-
-    if (!open) {
-        resetReceiptForm();
     }
 }
 
@@ -485,6 +443,42 @@ function openDeleteBatchDialog(): void {
     isDeleteBatchDialogOpen.value = true;
 }
 
+async function queueBatchDownloadZip(): Promise<void> {
+    if (isDownloadExportBusy.value) {
+        toast.error('A batch ZIP export is already processing.');
+        return;
+    }
+
+    try {
+        const response = await fetch(props.batch.downloadQueueUrl, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+                Accept: 'application/json',
+                'Content-Type': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest',
+                'X-XSRF-TOKEN':
+                    document.querySelector('meta[name=\"csrf-token\"]')?.getAttribute('content') ?? '',
+            },
+            body: JSON.stringify({}),
+        });
+
+        const payload = (await response.json()) as { message?: string; export_state?: BatchDownloadExportState };
+        if (!response.ok) {
+            if (payload.export_state) {
+                downloadExportState.value = payload.export_state;
+            }
+            throw new Error(payload.message ?? 'Unable to queue batch ZIP download.');
+        }
+
+        downloadExportState.value = payload.export_state ?? downloadExportState.value;
+        toast.success(payload.message ?? 'Batch ZIP export queued.');
+        scheduleBatchPoll();
+    } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Unable to queue batch ZIP download.');
+    }
+}
+
 function resetBulkZipForm(): void {
     bulkZipForm.reset();
     bulkZipForm.clearErrors();
@@ -497,21 +491,10 @@ function resetBulkFolderForm(): void {
     bulkFolderForm.pageFolders = [];
 }
 
-function resetRemoveReceiptForm(): void {
-    mergedPdfForReceiptRemoval.value = null;
-    removeReceiptForm.clearErrors();
-}
-
 function resetDeleteForm(): void {
     mergeHistoryForDeletion.value = [];
     deleteForm.reset();
     deleteForm.clearErrors();
-}
-
-function resetReceiptForm(): void {
-    mergedPdfForReceipt.value = null;
-    receiptForm.reset();
-    receiptForm.clearErrors();
 }
 
 function resetSendEmailForm(): void {
@@ -575,74 +558,6 @@ function openDeleteDialogForSelection(): void {
     isDeleteResultsDialogOpen.value = true;
 }
 
-function openRemoveReceiptDialog(record: BatchMergeHistoryRecord): void {
-    if (!isMergedRecord(record)) {
-        return;
-    }
-
-    if (isBatchBusy.value) {
-        showBusyBatchToast();
-
-        return;
-    }
-
-    if (receiptJobIsActive(record.receiptJobStatus)) {
-        toast.error(receiptJobBusyMessage(record.fileName));
-
-        return;
-    }
-
-    mergedPdfForReceiptRemoval.value = record;
-    removeReceiptForm.clearErrors();
-    isRemoveReceiptDialogOpen.value = true;
-}
-
-function openReceiptDialog(record: BatchMergeHistoryRecord): void {
-    if (!isMergedRecord(record)) {
-        return;
-    }
-
-    if (isBatchBusy.value) {
-        showBusyBatchToast();
-
-        return;
-    }
-
-    if (receiptJobIsActive(record.receiptJobStatus)) {
-        toast.error(receiptJobBusyMessage(record.fileName));
-
-        return;
-    }
-
-    if (!props.confirmationTemplate.hasTemplate) {
-        toast.error(
-            'Upload the shared receipt template on the main Doc Merge page first.',
-        );
-
-        return;
-    }
-
-    mergedPdfForReceipt.value = record;
-    receiptForm.placeholders = Object.fromEntries(
-        props.confirmationTemplate.placeholders.map((placeholder) => [
-            placeholder,
-            defaultConfirmationPlaceholderValue(record, placeholder),
-        ]),
-    );
-    receiptForm.clearErrors();
-    isReceiptDialogOpen.value = true;
-}
-
-function updateReceiptPlaceholder(payload: {
-    placeholder: string;
-    value: string;
-}): void {
-    receiptForm.placeholders = {
-        ...receiptForm.placeholders,
-        [payload.placeholder]: payload.value,
-    };
-}
-
 function openSendEmailDialog(record: BatchMergeHistoryRecord): void {
     if (!isMergedRecord(record)) {
         return;
@@ -704,79 +619,6 @@ function submitBulkFolderMerge(): void {
     });
 }
 
-function submitReceipt(): void {
-    const mergedPdf = mergedPdfForReceipt.value;
-
-    if (isBatchBusy.value) {
-        showBusyBatchToast();
-
-        return;
-    }
-
-    if (!mergedPdf) {
-        return;
-    }
-
-    if (receiptJobIsActive(mergedPdf.receiptJobStatus)) {
-        toast.error(receiptJobBusyMessage(mergedPdf.fileName));
-
-        return;
-    }
-
-    receiptForm
-        .transform((data) => ({
-            placeholders: data.placeholders,
-        }))
-        .post(mergedPdf.receiptStoreUrl, {
-            preserveScroll: true,
-            onSuccess: (page) => {
-                const success = (page.props as { flash?: FlashState }).flash
-                    ?.success;
-
-                if (success) {
-                    isReceiptDialogOpen.value = false;
-                    resetReceiptForm();
-                }
-            },
-        });
-}
-
-function removeReceipt(): void {
-    const mergedPdf = mergedPdfForReceiptRemoval.value;
-
-    if (isBatchBusy.value) {
-        showBusyBatchToast();
-
-        return;
-    }
-
-    if (
-        mergedPdf &&
-        receiptJobIsActive(mergedPdf.receiptJobStatus)
-    ) {
-        toast.error(receiptJobBusyMessage(mergedPdf.fileName));
-
-        return;
-    }
-
-    if (!mergedPdf?.receiptRemoveUrl) {
-        return;
-    }
-
-    removeReceiptForm.delete(mergedPdf.receiptRemoveUrl, {
-        preserveScroll: true,
-        onSuccess: (page) => {
-            const success = (page.props as { flash?: FlashState }).flash
-                ?.success;
-
-            if (success) {
-                isRemoveReceiptDialogOpen.value = false;
-                resetRemoveReceiptForm();
-            }
-        },
-    });
-}
-
 function submitDelete(): void {
     if (isBatchBusy.value) {
         showBusyBatchToast();
@@ -825,53 +667,90 @@ function submitSendEmail(): void {
     });
 }
 
-async function pasteReceiptDetailsFromClipboard(): Promise<void> {
-    if (typeof navigator === 'undefined' || !navigator.clipboard?.readText) {
-        toast.error('Clipboard paste is not available in this browser.');
+function selectedMergedRecords(): BatchMergedOutput[] {
+    return filteredMergeHistory.value.filter((record): record is BatchMergedOutput =>
+        isMergedRecord(record) && selectedMergeHistorySet.value.has(mergeHistoryRecordKey(record)),
+    );
+}
 
+function bulkDownloadSelectedMerged(): void {
+    const selected = selectedMergedRecords();
+
+    if (selected.length === 0) {
+        toast.error('Select at least one merged file to download.');
         return;
     }
 
-    try {
-        const clipboardText = await navigator.clipboard.readText();
-        const details = parseBirReceiptEmailText(clipboardText);
-
-        if (!details) {
-            toast.error('Clipboard does not contain BIR receipt details yet.');
-
+    selected.forEach((record) => {
+        if (!record.downloadUrl) {
             return;
         }
 
-        const nextPlaceholders = { ...receiptForm.placeholders };
-        let appliedCount = 0;
+        const anchor = document.createElement('a');
+        anchor.href = record.downloadUrl;
+        anchor.target = '_blank';
+        anchor.rel = 'noopener noreferrer';
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+    });
+}
 
-        for (const placeholder of props.confirmationTemplate.placeholders) {
-            const value = birReceiptPlaceholderValue(placeholder, details);
+async function bulkSendEmailSelectedMerged(): Promise<void> {
+    const selected = selectedMergedRecords();
 
-            if (!value) {
-                continue;
-            }
-
-            nextPlaceholders[placeholder] = value;
-            appliedCount++;
-        }
-
-        if (appliedCount === 0) {
-            toast.error(
-                'This template does not have matching file/date/time placeholders.',
-            );
-
-            return;
-        }
-
-        receiptForm.placeholders = nextPlaceholders;
-        receiptForm.clearErrors();
-        toast.success(
-            `Filled ${appliedCount} field${appliedCount === 1 ? '' : 's'} from the copied email details.`,
-        );
-    } catch {
-        toast.error('Unable to read the clipboard right now.');
+    if (selected.length === 0) {
+        toast.error('Select at least one merged file to send.');
+        return;
     }
+
+    const recipientEmail = window.prompt('Recipient email for selected files:')?.trim() ?? '';
+
+    if (recipientEmail === '') {
+        return;
+    }
+
+    const subject = window.prompt('Email subject (optional):')?.trim() ?? '';
+    const message = window.prompt('Email message (optional):')?.trim() ?? '';
+    const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') ?? '';
+    let successCount = 0;
+
+    for (const record of selected) {
+        try {
+            const response = await fetch(record.sendEmailUrl, {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: {
+                    Accept: 'application/json, text/html',
+                    'Content-Type': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'X-CSRF-TOKEN': csrf,
+                },
+                body: JSON.stringify({
+                    recipientEmail,
+                    subject: subject !== '' ? subject : defaultEmailSubject(record),
+                    message: message !== '' ? message : defaultEmailMessage(record),
+                }),
+            });
+
+            if (response.ok) {
+                successCount++;
+            }
+        } catch {
+            // Continue sending the rest.
+        }
+    }
+
+    if (successCount === 0) {
+        toast.error('Unable to queue emails for selected files.');
+        return;
+    }
+
+    toast.success(
+        successCount === selected.length
+            ? `Queued ${successCount} email${successCount === 1 ? '' : 's'}.`
+            : `Queued ${successCount} of ${selected.length} emails.`,
+    );
 }
 
 function deleteBatch(): void {
@@ -889,23 +768,119 @@ function deleteBatch(): void {
     <Head :title="`Batch: ${props.batch.name}`" />
 
     <AppLayout :breadcrumbs="breadcrumbs">
-        <template #subheader>
-            <BatchHeader
-                variant="toolbar"
-                :batch="props.batch"
-                :delete-batch-processing="deleteBatchForm.processing"
-                @open-bulk-folder="openBulkFolderDialog"
-                @open-bulk-zip="openBulkZipDialog"
-                @open-delete-batch="openDeleteBatchDialog"
-            />
-        </template>
-
         <div class="flex flex-1 flex-col gap-6 p-4 md:p-6">
-            <BatchHeader
-                variant="summary"
-                :batch="props.batch"
-                :delete-batch-processing="deleteBatchForm.processing"
-            />
+            <Card class="rounded-3xl">
+                <div class="flex flex-col gap-5 p-6 md:flex-row md:items-center md:justify-between md:p-8">
+                    <div class="space-y-2">
+                        <p class="text-xs font-semibold tracking-[0.3em] text-teal-700 uppercase">
+                            Doc Merge Batch
+                        </p>
+                        <h1 class="text-3xl font-semibold tracking-tight text-foreground md:text-4xl">
+                            {{ props.batch.name }}
+                        </h1>
+                        <p class="max-w-3xl text-sm leading-7 text-muted-foreground">
+                            Upload page folders or ZIP sources, review merge results, and manage receipts and email sending for this batch.
+                        </p>
+                    </div>
+
+                    <div class="flex flex-wrap gap-2 justify-end">
+                        <Button type="button" variant="outline" :disabled="isBatchBusy" @click="openBulkFolderDialog">
+                            <Upload class="mr-2 size-4" />
+                            Bulk Merge Folders
+                        </Button>
+                        <Button type="button" variant="outline" :disabled="isBatchBusy" @click="openBulkZipDialog">
+                            <Upload class="mr-2 size-4" />
+                            Bulk Merge ZIP
+                        </Button>
+                        <DropdownMenu>
+                            <DropdownMenuTrigger as-child>
+                                <Button type="button" variant="outline">
+                                    <Settings2 class="mr-2 size-4" />
+                                    Settings
+                                </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" class="w-52">
+                                <DropdownMenuItem @select.prevent="queueBatchDownloadZip">
+                                    <span class="flex w-full items-center gap-2">
+                                        <Download class="size-4" />
+                                        Download Batch ZIP
+                                    </span>
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                    variant="destructive"
+                                    :disabled="deleteBatchForm.processing || isBatchBusy"
+                                    @select="openDeleteBatchDialog"
+                                >
+                                    <Trash2 class="size-4" />
+                                    Delete Batch
+                                </DropdownMenuItem>
+                            </DropdownMenuContent>
+                        </DropdownMenu>
+                    </div>
+                </div>
+            </Card>
+
+            <Alert v-if="isBatchQueued || isBatchProcessing">
+                <LoaderCircle class="size-4 animate-spin" />
+                <AlertTitle>Batch Processing In Progress</AlertTitle>
+                <AlertDescription>
+                    {{
+                        isBatchQueued
+                            ? 'Your batch is queued and will start shortly.'
+                            : 'Your batch is currently processing. Results will refresh automatically when ready.'
+                    }}
+                </AlertDescription>
+            </Alert>
+
+            <Alert v-if="isBatchFailed" variant="destructive">
+                <AlertTitle>Batch Processing Failed</AlertTitle>
+                <AlertDescription>
+                    {{ props.batch.processingError || 'The latest batch run failed. Please try again.' }}
+                </AlertDescription>
+            </Alert>
+
+            <Alert v-if="isDownloadExportQueued || isDownloadExportProcessing">
+                <LoaderCircle class="size-4 animate-spin" />
+                <AlertTitle>Batch ZIP Export In Progress</AlertTitle>
+                <AlertDescription>
+                    {{
+                        isDownloadExportQueued
+                            ? 'Your batch ZIP export is queued and will start shortly.'
+                            : 'Your batch ZIP export is processing. We will keep checking until it is ready.'
+                    }}
+                </AlertDescription>
+            </Alert>
+
+            <Alert v-if="isDownloadExportFailed" variant="destructive">
+                <AlertTitle>Batch ZIP Export Failed</AlertTitle>
+                <AlertDescription>
+                    {{ downloadExportState.error || 'The batch ZIP could not be prepared right now.' }}
+                </AlertDescription>
+            </Alert>
+
+            <Alert v-if="isDownloadExportReady">
+                <AlertTitle>Batch ZIP Ready</AlertTitle>
+                <AlertDescription class="flex flex-wrap items-center gap-3">
+                    <span>
+                        {{
+                            downloadExportState.itemCount
+                                ? `${downloadExportState.itemCount} merged file${downloadExportState.itemCount === 1 ? '' : 's'} ready.`
+                                : 'Your batch ZIP is ready to download.'
+                        }}
+                    </span>
+                    <Button
+                        v-if="downloadExportState.downloadUrl"
+                        as-child
+                        size="sm"
+                        variant="secondary"
+                    >
+                        <a :href="downloadExportState.downloadUrl">
+                            <Download class="mr-2 size-4" />
+                            Download ZIP
+                        </a>
+                    </Button>
+                </AlertDescription>
+            </Alert>
 
             <Card class="rounded-3xl">
                 <BatchResultsTable
@@ -921,10 +896,10 @@ function deleteBatch(): void {
                     :total-results="props.batch.results.length"
                     @delete-record="openDeleteDialogForRecord"
                     @open-bulk-delete="openDeleteDialogForSelection"
+                    @bulk-download-selected="bulkDownloadSelectedMerged"
+                    @bulk-send-email-selected="bulkSendEmailSelectedMerged"
                     @open-failure="openFailureDialog"
                     @open-preview="openPreviewDialog"
-                    @open-receipt="openReceiptDialog"
-                    @open-remove-receipt="openRemoveReceiptDialog"
                     @open-send-email="openSendEmailDialog"
                     @toggle-all="toggleAllVisibleMergeHistory"
                     @toggle-record="toggleMergeHistorySelection($event.record, $event.checked)"
@@ -937,29 +912,6 @@ function deleteBatch(): void {
             :open="isFailureDialogOpen"
             :failure="mergeFailureForDialog"
             @update:open="handleFailureDialogOpenChange"
-        />
-
-        <BatchRemoveReceiptDialog
-            :open="isRemoveReceiptDialogOpen"
-            :merged-pdf="mergedPdfForReceiptRemoval"
-            :processing="removeReceiptForm.processing"
-            @submit="removeReceipt"
-            @update:open="handleRemoveReceiptDialogOpenChange"
-        />
-
-        <BatchReceiptDialog
-            :open="isReceiptDialogOpen"
-            :can-submit="canSubmitReceipt"
-            :field-error="receiptFieldError"
-            :merged-pdf="mergedPdfForReceipt"
-            :placeholder-errors="receiptPlaceholderErrors"
-            :placeholders="receiptForm.placeholders"
-            :processing="receiptForm.processing"
-            :template="props.confirmationTemplate"
-            @paste-from-email="pasteReceiptDetailsFromClipboard"
-            @submit="submitReceipt"
-            @update:open="handleReceiptDialogOpenChange"
-            @update:placeholder="updateReceiptPlaceholder"
         />
 
         <BatchPreviewDialog

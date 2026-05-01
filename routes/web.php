@@ -7,8 +7,8 @@ use App\Http\Controllers\AfsFiling\AfsFilingExportController;
 use App\Http\Controllers\AfsFiling\AfsFilingItemController;
 use App\Http\Controllers\AfsFiling\AfsFilingPageController;
 use App\Http\Controllers\AfsFiling\AfsFilingSignatureController;
-use App\Http\Controllers\DocMergeBatchController;
-use App\Http\Controllers\DocMergeController;
+use App\Http\Controllers\DocMerge\DocMergeBatchController;
+use App\Http\Controllers\DocMerge\DocMergeController;
 use App\Http\Controllers\EmailSyncAccountManagementController;
 use App\Http\Controllers\EmailSyncController;
 use App\Http\Controllers\Form1702ExController;
@@ -73,7 +73,10 @@ Route::middleware(['auth', 'verified'])->group(function () {
                             ->whereNumber('pageFolderNumber')
                             ->name('page-folders.destroy');
                         Route::post('{docMergeBatch}/process', 'process')->name('process');
-                        Route::get('{docMergeBatch}/download', 'download')->name('download');
+                        Route::post('{docMergeBatch}/download', 'queueDownload')->name('download.queue');
+                        Route::get('{docMergeBatch}/download/state', 'downloadState')->name('download.state');
+                        Route::get('{docMergeBatch}/download', 'downloadFile')->name('download');
+                        Route::get('{docMergeBatch}/download/file', 'downloadFile')->name('download.file');
                         Route::delete('{docMergeBatch}', 'destroy')->name('destroy');
                     });
                 Route::get('{mergedPdf}/preview', 'preview')->name('preview');

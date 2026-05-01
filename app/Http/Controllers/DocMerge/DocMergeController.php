@@ -2,15 +2,17 @@
 
 declare(strict_types=1);
 
-namespace App\Http\Controllers;
+namespace App\Http\Controllers\DocMerge;
 
 use App\Jobs\GenerateMergedPdfReceipt;
+use App\Http\Controllers\Controller;
 use App\Mail\MergedPdfEmail;
 use App\Models\BulkMergeFailure;
 use App\Models\ConfirmationTemplate;
 use App\Models\DocMergeBatch;
 use App\Models\MergedPdf;
 use App\Models\User;
+use App\Repositories\Eloquent\DocMerge\DocMergeBatchRepository;
 use App\Services\BulkZipMergeService;
 use App\Services\ConfirmationDocxService;
 use App\Services\PdfMergeService;
@@ -42,15 +44,17 @@ class DocMergeController extends Controller
         $user = $request->user();
         $validated = $request->validate([
             'page' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', Rule::in([10, 25, 50, 100])],
         ]);
         $requestedPage = (int) ($validated['page'] ?? 1);
-        $batchPage = $this->batchPage($user, $requestedPage);
+        $perPage = (int) ($validated['per_page'] ?? 10);
+        $batchPage = $this->batchPage($user, $requestedPage, $perPage);
 
         if ($requestedPage > 1 && $requestedPage > $batchPage->lastPage()) {
-            $batchPage = $this->batchPage($user, $batchPage->lastPage());
+            $batchPage = $this->batchPage($user, $batchPage->lastPage(), $perPage);
         }
 
-        return Inertia::render('DocMerge', [
+        return Inertia::render('DocMerge/Index', [
             'flash' => [
                 'success' => $request->session()->get('success'),
                 'error' => $request->session()->get('error'),
@@ -785,7 +789,9 @@ class DocMergeController extends Controller
      *     batches: array<int, array<string, mixed>>,
      *     batchPagination: array{
      *         currentPage: int,
-     *         lastPage: int
+     *         lastPage: int,
+     *         perPage: int,
+     *         total: int
      *     }
      * }
      */
@@ -808,6 +814,8 @@ class DocMergeController extends Controller
             'batchPagination' => [
                 'currentPage' => $batchPage->currentPage(),
                 'lastPage' => $batchPage->lastPage(),
+                'perPage' => $batchPage->perPage(),
+                'total' => $batchPage->total(),
             ],
         ];
     }
@@ -1228,13 +1236,13 @@ class DocMergeController extends Controller
         ], JSON_THROW_ON_ERROR));
     }
 
-    private function batchPage(User $user, int $page): LengthAwarePaginator
+    private function batchPage(User $user, int $page, int $perPage): LengthAwarePaginator
     {
-        return DocMergeBatch::query()
-            ->whereBelongsTo($user)
-            ->withCount(['mergedPdfs', 'bulkMergeFailures'])
-            ->latest()
-            ->paginate(9, ['*'], 'page', $page);
+        return app(DocMergeBatchRepository::class)->paginateForUser(
+            (int) $user->getKey(),
+            $page,
+            $perPage,
+        );
     }
 
     private function redirectToMergedPdfContext(MergedPdf $mergedPdf): RedirectResponse

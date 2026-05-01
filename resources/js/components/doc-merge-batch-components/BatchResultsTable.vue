@@ -2,7 +2,6 @@
 import {
     Download,
     Eye,
-    FileText,
     Mail,
     MoreHorizontal,
     Search,
@@ -32,14 +31,12 @@ import {
     TableRow,
 } from '@/components/ui/table';
 import type {
+    BatchMergedOutput,
     BatchMergeHistoryRecord,
     BatchResultsPaginationState,
 } from '@/components/doc-merge-batch-components/types';
 import {
-    receiptJobIsActive,
-    receiptJobStatusLabel,
     formatDateTime,
-    formatFileSize,
     formatTinDigitsOnly,
     isMergedRecord,
     mergeHistoryRecordKey,
@@ -60,12 +57,12 @@ const props = defineProps<{
 const paginationControls = ref<HTMLElement | null>(null);
 
 const emit = defineEmits<{
+    bulkDownloadSelected: [];
+    bulkSendEmailSelected: [];
     deleteRecord: [record: BatchMergeHistoryRecord];
     openBulkDelete: [];
     openFailure: [record: BatchMergeHistoryRecord];
     openPreview: [record: BatchMergeHistoryRecord];
-    openReceipt: [record: BatchMergeHistoryRecord];
-    openRemoveReceipt: [record: BatchMergeHistoryRecord];
     openSendEmail: [record: BatchMergeHistoryRecord];
     toggleAll: [checked: boolean | 'indeterminate'];
     toggleRecord: [payload: { record: BatchMergeHistoryRecord; checked: boolean | 'indeterminate' }];
@@ -87,9 +84,14 @@ function visitPage(page: number): void {
     );
 }
 
-function receiptMutationDisabled(record: BatchMergeHistoryRecord): boolean {
-    return props.isBatchBusy || (isMergedRecord(record) && receiptJobIsActive(record.receiptJobStatus));
-}
+const selectedMergedCount = computed(() =>
+    props.results.filter((record): record is BatchMergedOutput =>
+        isMergedRecord(record) && props.isRecordSelected(record),
+    ).length,
+);
+
+const canBulkDownloadSelected = computed(() => selectedMergedCount.value > 0);
+const canBulkSendEmailSelected = computed(() => selectedMergedCount.value > 0 && !props.isBatchBusy);
 </script>
 
 <template>
@@ -115,21 +117,53 @@ function receiptMutationDisabled(record: BatchMergeHistoryRecord): boolean {
                 />
             </div>
 
-            <Button
-                type="button"
-                variant="destructive"
-                size="sm"
-                class="gap-2 self-end md:self-auto"
-                :disabled="!props.canBulkDelete"
-                @click="emit('openBulkDelete')"
-            >
-                <Trash2 class="size-4" />
-                {{
-                    props.selectedCount > 0
-                        ? `Delete selected (${props.selectedCount})`
-                        : 'Delete selected'
-                }}
-            </Button>
+            <div class="flex flex-wrap gap-2 self-end md:self-auto">
+                <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    class="gap-2"
+                    :disabled="!canBulkDownloadSelected"
+                    @click="emit('bulkDownloadSelected')"
+                >
+                    <Download class="size-4" />
+                    {{
+                        selectedMergedCount > 0
+                            ? `Download selected (${selectedMergedCount})`
+                            : 'Download selected'
+                    }}
+                </Button>
+                <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    class="gap-2"
+                    :disabled="!canBulkSendEmailSelected"
+                    @click="emit('bulkSendEmailSelected')"
+                >
+                    <Mail class="size-4" />
+                    {{
+                        selectedMergedCount > 0
+                            ? `Send email selected (${selectedMergedCount})`
+                            : 'Send email selected'
+                    }}
+                </Button>
+                <Button
+                    type="button"
+                    variant="destructive"
+                    size="sm"
+                    class="gap-2"
+                    :disabled="!props.canBulkDelete"
+                    @click="emit('openBulkDelete')"
+                >
+                    <Trash2 class="size-4" />
+                    {{
+                        props.selectedCount > 0
+                            ? `Delete selected (${props.selectedCount})`
+                            : 'Delete selected'
+                    }}
+                </Button>
+            </div>
         </div>
 
         <div class="overflow-hidden rounded-2xl border bg-background">
@@ -145,13 +179,10 @@ function receiptMutationDisabled(record: BatchMergeHistoryRecord): boolean {
                             />
                         </TableHead>
                         <TableHead class="w-[1%]">#</TableHead>
-                        <TableHead>Status</TableHead>
                         <TableHead>Result</TableHead>
                         <TableHead>TIN</TableHead>
-                        <TableHead>Sources</TableHead>
-                        <TableHead>Receipt</TableHead>
-                        <TableHead>Size</TableHead>
-                        <TableHead>Generated</TableHead>
+                        <TableHead>Uploaded at</TableHead>
+                        <TableHead>Status</TableHead>
                         <TableHead class="w-[1%] text-right">Actions</TableHead>
                     </TableRow>
                 </TableHeader>
@@ -173,18 +204,6 @@ function receiptMutationDisabled(record: BatchMergeHistoryRecord): boolean {
                             </TableCell>
                             <TableCell class="text-sm text-muted-foreground">
                                 {{ index + 1 }}
-                            </TableCell>
-                            <TableCell>
-                                <Badge
-                                    v-if="isMergedRecord(record)"
-                                    variant="outline"
-                                    class="border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300"
-                                >
-                                    Success
-                                </Badge>
-                                <Badge v-else variant="destructive">
-                                    Failed
-                                </Badge>
                             </TableCell>
                             <TableCell>
                                 <div class="min-w-0 space-y-1">
@@ -217,80 +236,19 @@ function receiptMutationDisabled(record: BatchMergeHistoryRecord): boolean {
                                 }}
                             </TableCell>
                             <TableCell class="text-sm text-muted-foreground">
-                                <template v-if="isMergedRecord(record)">
-                                    <Badge
-                                        v-if="record.sourceFileNames.length > 0"
-                                        variant="outline"
-                                        class="max-w-[14rem] truncate align-middle"
-                                        :title="record.sourceFileNames[0]"
-                                    >
-                                        {{ record.sourceFileNames[0] }}
-                                    </Badge>
-                                    <span v-else>
-                                        {{ `${record.sourceCount} source${record.sourceCount === 1 ? '' : 's'}` }}
-                                    </span>
-                                </template>
-                                <span v-else>-</span>
+                                {{ formatDateTime(record.createdAt) }}
                             </TableCell>
                             <TableCell>
-                                <div
+                                <Badge
                                     v-if="isMergedRecord(record)"
-                                    class="space-y-1"
+                                    variant="outline"
+                                    class="border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300"
                                 >
-                                    <Badge
-                                        v-if="record.receiptJobStatus"
-                                        :variant="
-                                            record.receiptJobStatus === 'failed'
-                                                ? 'destructive'
-                                                : 'outline'
-                                        "
-                                        :class="
-                                            record.receiptJobStatus === 'queued'
-                                                ? 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300'
-                                                : record.receiptJobStatus === 'processing'
-                                                  ? 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-300'
-                                                  : undefined
-                                        "
-                                    >
-                                        {{
-                                            receiptJobStatusLabel(
-                                                record.receiptJobStatus,
-                                            )
-                                        }}
-                                    </Badge>
-                                    <Badge
-                                        v-else-if="record.hasReceipt"
-                                        variant="outline"
-                                        class="border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-300"
-                                    >
-                                        Attached
-                                    </Badge>
-                                    <span v-else class="text-sm text-muted-foreground">
-                                        -
-                                    </span>
-                                    <p
-                                        v-if="
-                                            record.receiptJobStatus === 'failed' &&
-                                            record.receiptJobError
-                                        "
-                                        class="max-w-[16rem] text-xs text-destructive"
-                                    >
-                                        {{ record.receiptJobError }}
-                                    </p>
-                                </div>
-                                <span v-else class="text-sm text-muted-foreground">
-                                    -
-                                </span>
-                            </TableCell>
-                            <TableCell class="text-sm text-muted-foreground">
-                                {{
-                                    record.fileSize === null
-                                        ? '-'
-                                        : formatFileSize(record.fileSize)
-                                }}
-                            </TableCell>
-                            <TableCell class="text-sm text-muted-foreground">
-                                {{ formatDateTime(record.createdAt) }}
+                                    Success
+                                </Badge>
+                                <Badge v-else variant="destructive">
+                                    Failed
+                                </Badge>
                             </TableCell>
                             <TableCell>
                                 <div class="flex justify-end">
@@ -317,36 +275,12 @@ function receiptMutationDisabled(record: BatchMergeHistoryRecord): boolean {
                                                     Preview
                                                 </DropdownMenuItem>
                                                 <DropdownMenuItem
-                                                    :disabled="receiptMutationDisabled(record)"
-                                                    @select="emit('openReceipt', record)"
-                                                >
-                                                    <FileText class="size-4" />
-                                                    {{
-                                                        record.hasReceipt
-                                                            ? 'Replace receipt'
-                                                            : 'Add receipt'
-                                                    }}
-                                                </DropdownMenuItem>
-                                                <DropdownMenuItem
                                                     :disabled="props.isBatchBusy"
                                                     @select="emit('openSendEmail', record)"
                                                 >
                                                     <Mail class="size-4" />
                                                     Send to email
                                                 </DropdownMenuItem>
-                                                <DropdownMenuItem
-                                                    v-if="
-                                                        record.hasReceipt &&
-                                                        record.receiptRemoveUrl
-                                                    "
-                                                    :disabled="receiptMutationDisabled(record)"
-                                                    variant="destructive"
-                                                    @select="emit('openRemoveReceipt', record)"
-                                                >
-                                                    <Trash2 class="size-4" />
-                                                    Remove receipt
-                                                </DropdownMenuItem>
-                                                <DropdownMenuSeparator />
                                                 <DropdownMenuItem :as-child="true">
                                                     <a
                                                         :href="record.downloadUrl ?? undefined"
@@ -388,7 +322,7 @@ function receiptMutationDisabled(record: BatchMergeHistoryRecord): boolean {
                         </TableRow>
                     </template>
 
-                    <TableEmpty v-else :colspan="10">
+                    <TableEmpty v-else :colspan="7">
                         {{
                             props.totalResults === 0
                                 ? 'No merge results in this batch yet.'

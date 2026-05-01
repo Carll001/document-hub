@@ -32,6 +32,8 @@ export type BatchSummary = {
 export type BatchPaginationState = {
     currentPage: number;
     lastPage: number;
+    perPage: number;
+    total: number;
 };
 
 export type MergedPdfRecord = {
