@@ -36,6 +36,13 @@ export type PaginatedResponse<T> = {
     total: number;
 };
 
+export type CompletedExportState = {
+    status: 'queued' | 'processing' | 'failed' | 'ready' | null;
+    error: string | null;
+    itemCount: number | null;
+    downloadUrl: string | null;
+};
+
 export type SignatureAnchor = 'top_left' | 'top_right' | 'bottom_left' | 'bottom_right' | 'center';
 export type SignaturePlacementMode = 'fixed' | 'text_anchor';
 

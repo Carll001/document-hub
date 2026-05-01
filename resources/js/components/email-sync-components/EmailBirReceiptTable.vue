@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { router } from '@inertiajs/vue3';
+import type { ColumnDef } from '@tanstack/vue-table';
 import { Search } from 'lucide-vue-next';
-import { computed, ref } from 'vue';
+import { computed, h } from 'vue';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import { DataTable } from '@/components/ui/data-table';
 import { Input } from '@/components/ui/input';
 import {
     Select,
@@ -12,15 +13,6 @@ import {
     SelectTrigger,
     SelectValue,
 } from '@/components/ui/select';
-import {
-    Table,
-    TableBody,
-    TableCell,
-    TableEmpty,
-    TableHead,
-    TableHeader,
-    TableRow,
-} from '@/components/ui/table';
 import type { EmailRecord, EmailSyncAccountOption } from '@/components/email-sync-components/types';
 import { emailMatchStatusLabel } from '@/components/email-sync-components/utils';
 
@@ -50,7 +42,6 @@ const emit = defineEmits<{
     'update:accountFilterIds': [value: number[]];
 }>();
 
-const paginationControls = ref<HTMLElement | null>(null);
 const ALL_FORM_TYPES_VALUE = '__all_form_types__';
 const ALL_ACCOUNTS_VALUE = '__all_accounts__';
 
@@ -96,6 +87,29 @@ function visitPage(page: number): void {
     );
 }
 
+function updatePerPage(perPage: number): void {
+    if (perPage === props.pagination.perPage) {
+        return;
+    }
+
+    router.get(
+        props.pageUrl,
+        {
+            page: 1,
+            appliedPage: props.appliedPage,
+            per_page: perPage,
+            search: props.searchTerm.trim() || undefined,
+            formType: props.formTypeFilter || undefined,
+            accountIds: props.accountFilterIds.length > 0 ? props.accountFilterIds : undefined,
+        },
+        {
+            preserveScroll: true,
+            preserveState: true,
+            only: ['emails', 'pagination', 'stats', 'flash', 'receiptCounts', 'appliedPagination', 'filters'],
+        },
+    );
+}
+
 function updateSelectedAccount(value: string): void {
     if (value === ALL_ACCOUNTS_VALUE) {
         emit('update:accountFilterIds', []);
@@ -105,245 +119,170 @@ function updateSelectedAccount(value: string): void {
 
     emit('update:accountFilterIds', [Number(value)]);
 }
+
+const tableMeta = computed(() => ({
+    current_page: props.pagination.currentPage,
+    last_page: props.pagination.lastPage,
+    per_page: props.pagination.perPage,
+    total: props.pagination.total,
+}));
+
+const columns = computed<ColumnDef<EmailRecord>[]>(() => [
+    {
+        accessorKey: 'accountLabel',
+        header: () => h('div', { class: 'text-left' }, 'Account'),
+        enableSorting: false,
+        cell: ({ row }) =>
+            h('div', { class: 'space-y-1 text-sm text-muted-foreground' }, [
+                h('p', { class: 'font-medium text-foreground' }, row.original.accountLabel),
+                row.original.accountEmail ? h('p', row.original.accountEmail) : null,
+            ]),
+    },
+    {
+        accessorKey: 'matchedTin',
+        header: () => h('div', { class: 'text-left' }, 'TIN'),
+        enableSorting: false,
+        cell: ({ row }) => row.original.matchedTin || '-',
+    },
+    {
+        id: 'fileName',
+        header: () => h('div', { class: 'text-left' }, 'File Name'),
+        enableSorting: false,
+        cell: ({ row }) =>
+            h(
+                'div',
+                {
+                    class: 'max-w-[26rem] truncate text-sm text-foreground',
+                    title: row.original.parsedBirReceiptDetails.fileName || undefined,
+                },
+                row.original.parsedBirReceiptDetails.fileName || '-',
+            ),
+    },
+    {
+        id: 'formType',
+        header: () => h('div', { class: 'text-left' }, 'Form Type'),
+        enableSorting: false,
+        cell: ({ row }) => row.original.parsedBirReceiptDetails.formType || 'Not detected',
+    },
+    {
+        id: 'dateReceived',
+        header: () => h('div', { class: 'text-left' }, 'Date Received'),
+        enableSorting: false,
+        cell: ({ row }) => row.original.parsedBirReceiptDetails.dateReceived || '-',
+    },
+    {
+        id: 'timeReceived',
+        header: () => h('div', { class: 'text-left' }, 'Time Received'),
+        enableSorting: false,
+        cell: ({ row }) => row.original.parsedBirReceiptDetails.timeReceived || '-',
+    },
+    {
+        accessorKey: 'matchStatus',
+        header: () => h('div', { class: 'text-left' }, 'Match Status'),
+        enableSorting: false,
+        cell: ({ row }) =>
+            h('div', { class: 'space-y-1' }, [
+                h(
+                    Badge,
+                    { variant: statusVariant(row.original.matchStatus), class: 'rounded-full' },
+                    () => emailMatchStatusLabel(row.original.matchStatus),
+                ),
+                row.original.matchError
+                    ? h('p', { class: 'max-w-[18rem] text-xs text-destructive' }, row.original.matchError)
+                    : null,
+            ]),
+    },
+]);
 </script>
 
 <template>
-    <section class="flex min-h-0 flex-1 flex-col">
-        <div class="border-b px-5 py-4">
-            <div
-                class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between"
-            >
-                <div class="flex w-full max-w-5xl flex-col gap-3 md:flex-row">
-                    <div class="relative flex-1">
-                        <Search
-                            class="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
-                        />
-                        <Input
-                            :model-value="props.searchTerm"
-                            class="h-10 rounded-2xl pl-10 text-sm"
-                            type="search"
-                            placeholder="Search TIN, file name, date, time, or status"
-                            @update:model-value="
-                                emit('update:searchTerm', String($event))
-                            "
-                        />
-                    </div>
-
-                    <Select
-                        :model-value="
-                            props.formTypeFilter === ''
-                                ? ALL_FORM_TYPES_VALUE
-                                : props.formTypeFilter
-                        "
-                        @update:model-value="
-                            emit(
-                                'update:formTypeFilter',
-                                $event === ALL_FORM_TYPES_VALUE
-                                    ? ''
-                                    : String($event ?? ''),
-                            )
-                        "
-                    >
-                        <SelectTrigger class="h-10 w-full rounded-2xl md:w-[15rem]">
-                            <SelectValue placeholder="All form types" />
-                        </SelectTrigger>
-                        <SelectContent>
-                            <SelectItem :value="ALL_FORM_TYPES_VALUE">
-                                All form types
-                            </SelectItem>
-                            <SelectItem
-                                v-for="formType in props.formTypeOptions"
-                                :key="formType"
-                                :value="formType"
-                            >
-                                {{ formType }}
-                            </SelectItem>
-                        </SelectContent>
-                    </Select>
-
-                    <Select
-                        :model-value="selectedAccountValue"
-                        @update:model-value="
-                            updateSelectedAccount(String($event ?? ALL_ACCOUNTS_VALUE))
-                        "
-                    >
-                        <SelectTrigger class="h-10 w-full rounded-2xl md:w-[15rem]">
-                            <SelectValue placeholder="All accounts" />
-                        </SelectTrigger>
-                        <SelectContent>
-                            <SelectItem :value="ALL_ACCOUNTS_VALUE">
-                                All accounts
-                            </SelectItem>
-                            <SelectItem
-                                v-for="account in props.accountOptions"
-                                :key="account.id"
-                                :value="String(account.id)"
-                            >
-                                {{ account.label }}
-                                <span v-if="account.isActive === false">
-                                    (inactive)
-                                </span>
-                            </SelectItem>
-                        </SelectContent>
-                    </Select>
+    <section class="space-y-4">
+        <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div class="grid w-full grid-cols-1 gap-3 md:grid-cols-3">
+                <div class="relative w-full">
+                    <Search
+                        class="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
+                    />
+                    <Input
+                        :model-value="props.searchTerm"
+                        class="pl-10 text-sm w-full"
+                        type="search"
+                        placeholder="Search TIN, file name, date, time, or status"
+                        @update:model-value="emit('update:searchTerm', String($event))"
+                    />
                 </div>
 
-                <p class="text-sm text-muted-foreground">
-                    {{ props.emails.length }} parsed BIR email{{
-                        props.emails.length === 1 ? '' : 's'
-                    }}
-                </p>
+                <Select
+                    :model-value="
+                        props.formTypeFilter === ''
+                            ? ALL_FORM_TYPES_VALUE
+                            : props.formTypeFilter
+                    "
+                    @update:model-value="
+                        emit(
+                            'update:formTypeFilter',
+                            $event === ALL_FORM_TYPES_VALUE
+                                ? ''
+                                : String($event ?? ''),
+                        )
+                    "
+                >
+                    <SelectTrigger class="w-full">
+                        <SelectValue placeholder="All form types" />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem :value="ALL_FORM_TYPES_VALUE">
+                            All form types
+                        </SelectItem>
+                        <SelectItem
+                            v-for="formType in props.formTypeOptions"
+                            :key="formType"
+                            :value="formType"
+                        >
+                            {{ formType }}
+                        </SelectItem>
+                    </SelectContent>
+                </Select>
+
+                <Select
+                    :model-value="selectedAccountValue"
+                    @update:model-value="
+                        updateSelectedAccount(String($event ?? ALL_ACCOUNTS_VALUE))
+                    "
+                >
+                    <SelectTrigger class="w-full">
+                        <SelectValue placeholder="All accounts" />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem :value="ALL_ACCOUNTS_VALUE">
+                            All accounts
+                        </SelectItem>
+                        <SelectItem
+                            v-for="account in props.accountOptions"
+                            :key="account.id"
+                            :value="String(account.id)"
+                        >
+                            {{ account.label }}
+                            <span v-if="account.isActive === false">
+                                (inactive)
+                            </span>
+                        </SelectItem>
+                    </SelectContent>
+                </Select>
             </div>
         </div>
 
-        <div class="min-h-0 flex-1 overflow-y-auto p-3">
-            <div class="overflow-hidden rounded-2xl border bg-background">
-                <Table>
-                    <TableHeader>
-                        <TableRow>
-                            <TableHead>ACCOUNT</TableHead>
-                            <TableHead>TIN</TableHead>
-                            <TableHead>FILE NAME</TableHead>
-                            <TableHead>FORM TYPE</TableHead>
-                            <TableHead>DATE RECEIVED</TableHead>
-                            <TableHead>TIME RECEIVED</TableHead>
-                            <TableHead>MATCH STATUS</TableHead>
-                        </TableRow>
-                    </TableHeader>
-
-                    <TableBody>
-                        <template v-if="props.emails.length > 0">
-                            <TableRow
-                                v-for="email in props.emails"
-                                :key="email.id"
-                            >
-                                <TableCell class="text-sm text-muted-foreground">
-                                    <div class="space-y-1">
-                                        <p class="font-medium text-foreground">
-                                            {{ email.accountLabel }}
-                                        </p>
-                                        <p v-if="email.accountEmail">
-                                            {{ email.accountEmail }}
-                                        </p>
-                                    </div>
-                                </TableCell>
-                                <TableCell class="font-medium text-foreground">
-                                    {{ email.matchedTin || '-' }}
-                                </TableCell>
-                                <TableCell
-                                    class="max-w-[26rem] truncate text-sm text-foreground"
-                                    :title="
-                                        email.parsedBirReceiptDetails.fileName ||
-                                        undefined
-                                    "
-                                >
-                                    {{
-                                        email.parsedBirReceiptDetails.fileName ||
-                                        '-'
-                                    }}
-                                </TableCell>
-                                <TableCell class="text-sm text-muted-foreground">
-                                    {{
-                                        email.parsedBirReceiptDetails.formType ||
-                                        'Not detected'
-                                    }}
-                                </TableCell>
-                                <TableCell class="text-sm text-muted-foreground">
-                                    {{
-                                        email.parsedBirReceiptDetails.dateReceived ||
-                                        '-'
-                                    }}
-                                </TableCell>
-                                <TableCell class="text-sm text-muted-foreground">
-                                    {{
-                                        email.parsedBirReceiptDetails.timeReceived ||
-                                        '-'
-                                    }}
-                                </TableCell>
-                                <TableCell>
-                                    <div class="space-y-1">
-                                        <Badge
-                                            :variant="
-                                                statusVariant(email.matchStatus)
-                                            "
-                                            class="rounded-full"
-                                        >
-                                            {{
-                                                emailMatchStatusLabel(
-                                                    email.matchStatus,
-                                                )
-                                            }}
-                                        </Badge>
-                                        <p
-                                            v-if="email.matchError"
-                                            class="max-w-[18rem] text-xs text-destructive"
-                                        >
-                                            {{ email.matchError }}
-                                        </p>
-                                    </div>
-                                </TableCell>
-                            </TableRow>
-                        </template>
-
-                        <TableEmpty v-else :colspan="7">
-                            {{
-                                props.totalStoredEmails === 0
-                                    ? 'No unmatched BIR receipt email yet. Sync your inbox to build the list.'
-                                    : 'No unmatched BIR receipt email matches your current filters.'
-                            }}
-                        </TableEmpty>
-                    </TableBody>
-                </Table>
-            </div>
-
-            <div
-                v-if="props.pagination.lastPage > 1"
-                ref="paginationControls"
-                class="mt-4 flex items-center justify-between gap-3 border-t px-1 pt-3"
-            >
-                <p class="text-xs text-muted-foreground">
-                    Showing
-                    {{ props.pagination.from ?? 0 }}
-                    to
-                    {{ props.pagination.to ?? 0 }}
-                    of
-                    {{ props.pagination.total }}
-                    saved emails.
-                </p>
-
-                <div class="flex items-center gap-2">
-                    <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        :disabled="props.pagination.currentPage <= 1"
-                        @click="visitPage(props.pagination.currentPage - 1)"
-                    >
-                        Previous
-                    </Button>
-                    <span class="text-sm">Page {{ props.pagination.currentPage }} / {{ props.pagination.lastPage }}</span>
-                    <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        :disabled="
-                            props.pagination.currentPage >=
-                            props.pagination.lastPage
-                        "
-                        @click="visitPage(props.pagination.currentPage + 1)"
-                    >
-                        Next
-                    </Button>
-                </div>
-            </div>
-
-            <p
-                v-else-if="props.totalStoredEmails > 0"
-                class="mt-3 px-1 text-xs text-muted-foreground"
-            >
-                You are caught up with the email saved in this view.
-            </p>
-            <div v-else class="mt-3" />
-        </div>
+        <DataTable
+            :columns="columns"
+            :data="props.emails"
+            :meta="tableMeta"
+            :empty-message="
+                props.totalStoredEmails === 0
+                    ? 'No unmatched BIR receipt email yet. Sync your inbox to build the list.'
+                    : 'No unmatched BIR receipt email matches your current filters.'
+            "
+            @page-change="visitPage"
+            @per-page-change="updatePerPage"
+        />
     </section>
 </template>

@@ -53,7 +53,7 @@ const emit = defineEmits<{
                     type="button"
                     size="sm"
                     :variant="props.inboxFilter === 'all' ? 'default' : 'secondary'"
-                    class="rounded-full text-xs"
+                    class="text-xs"
                     @click="emit('update:inboxFilter', 'all')"
                 >
                     All
@@ -66,7 +66,7 @@ const emit = defineEmits<{
                             ? 'default'
                             : 'secondary'
                     "
-                    class="rounded-full text-xs"
+                    class="text-xs"
                     @click="emit('update:inboxFilter', 'attachments')"
                 >
                     With files
@@ -106,7 +106,7 @@ const emit = defineEmits<{
                     type="button"
                     variant="outline"
                     size="sm"
-                    class="w-full rounded-full text-xs"
+                    class="w-full text-xs"
                     :disabled="props.isLoadingMore"
                     @click="emit('loadMore')"
                 >

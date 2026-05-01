@@ -12,12 +12,7 @@ import {
     DropdownMenuItem,
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import {
-    CardContent,
-    CardDescription,
-    CardHeader,
-    CardTitle,
-} from '@/components/ui/card';
+import { CardContent } from '@/components/ui/card';
 import type {
     BatchPaginationState,
     BatchSummary,
@@ -236,14 +231,6 @@ const batchColumns = computed<ColumnDef<BatchSummary>[]>(() => [
 </script>
 
 <template>
-    <CardHeader class="space-y-1">
-        <CardTitle class="text-xl">Batch folders</CardTitle>
-        <CardDescription>
-            Create a folder-like batch, open it, then manage bulk uploads and
-            the merge table inside that workspace.
-        </CardDescription>
-    </CardHeader>
-
     <CardContent class="space-y-4">
         <DataTable
             :columns="batchColumns"

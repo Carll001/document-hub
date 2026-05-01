@@ -16,9 +16,6 @@ import { Button } from '@/components/ui/button';
 import {
     Card,
     CardContent,
-    CardDescription,
-    CardHeader,
-    CardTitle,
 } from '@/components/ui/card';
 import AppLayout from '@/layouts/AppLayout.vue';
 import forms from '@/routes/forms';
@@ -399,13 +396,6 @@ function schedulePoll(): void {
             </Card>
 
             <Card class="rounded-3xl">
-                <CardHeader>
-                    <CardTitle class="text-xl">Completed file table</CardTitle>
-                    <CardDescription>
-                        Only rows with a generated PDF and attached receipt appear here.
-                    </CardDescription>
-                </CardHeader>
-
                 <CardContent>
                     <CompletedRowsTable
                         :bulk-send-processing="bulkSendForm.processing"

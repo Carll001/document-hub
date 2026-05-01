@@ -138,9 +138,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
             ->name('email-sync.')
             ->group(function () {
                 Route::get('/', 'index')->name('index');
-                Route::get('all-emails', 'allEmails')->name('all-emails');
                 Route::get('messages', 'emails')->name('emails');
-                Route::get('all-emails/messages', 'allEmailMessages')->name('all-emails.messages');
                 Route::post('/', 'sync')->name('sync');
                 Route::post('backfill', 'backfill')->name('backfill');
                 Route::get('{syncedEmail}/rendered', 'renderedMessage')->name('rendered');

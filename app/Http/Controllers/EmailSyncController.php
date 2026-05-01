@@ -33,6 +33,7 @@ class EmailSyncController extends Controller
         $validated = $request->validate([
             'page' => ['nullable', 'integer', 'min:1'],
             'appliedPage' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', Rule::in([10, 25, 50, 100])],
             'search' => ['nullable', 'string', 'max:120'],
             'formType' => ['nullable', 'string', 'max:64'],
             'accountIds' => ['nullable', 'array'],
@@ -42,6 +43,7 @@ class EmailSyncController extends Controller
         $user = $request->user();
         $search = isset($validated['search']) ? trim((string) $validated['search']) : '';
         $formType = isset($validated['formType']) ? trim((string) $validated['formType']) : '';
+        $perPage = (int) ($validated['per_page'] ?? self::EMAILS_PER_PAGE);
         $accountIds = $this->normalizedAccountIds($validated['accountIds'] ?? []);
 
         $emailPage = $this->birReceiptPage(
@@ -50,6 +52,7 @@ class EmailSyncController extends Controller
             $search,
             $formType,
             $accountIds,
+            $perPage,
         );
 
         $appliedPage = $this->appliedBirReceiptPage(
@@ -57,6 +60,7 @@ class EmailSyncController extends Controller
             (int) ($validated['appliedPage'] ?? 1),
             $formType,
             $accountIds,
+            $perPage,
         );
 
         $latestSyncedEmail = SyncedEmail::query()
@@ -64,7 +68,7 @@ class EmailSyncController extends Controller
             ->latest('synced_at')
             ->first();
 
-        return Inertia::render('EmailSync', [
+        return Inertia::render('EmailSync/Index', [
             'connection' => [
                 'accountCount' => EmailSyncAccount::query()->where('is_active', true)->count(),
                 'hasActiveAccounts' => EmailSyncAccount::query()->where('is_active', true)->exists(),
@@ -118,76 +122,6 @@ class EmailSyncController extends Controller
         return response()->json(
             $this->legacyEmailPagePayload(
                 $this->emailPage($request->user(), $page),
-            ),
-        );
-    }
-
-    public function allEmails(Request $request): Response
-    {
-        $validated = $request->validate([
-            'accountIds' => ['nullable', 'array'],
-            'accountIds.*' => ['integer', Rule::exists('email_sync_accounts', 'id')],
-        ]);
-
-        $user = $request->user();
-        $accountIds = $this->normalizedAccountIds($validated['accountIds'] ?? []);
-        $emailPage = $this->emailPage($user, 1, $accountIds);
-        $latestSyncedEmail = SyncedEmail::query()
-            ->visibleTo($user)
-            ->latest('synced_at')
-            ->first();
-
-        return Inertia::render('AllEmailSync', [
-            'connection' => [
-                'accountCount' => EmailSyncAccount::query()->where('is_active', true)->count(),
-                'hasActiveAccounts' => EmailSyncAccount::query()->where('is_active', true)->exists(),
-                'smtpConfigured' => $this->smtpConfigured(),
-                'smtpHost' => config('mail.mailers.smtp.host'),
-                'smtpPort' => config('mail.mailers.smtp.port'),
-                'smtpScheme' => config('mail.mailers.smtp.scheme'),
-            ],
-            'flash' => [
-                'success' => $request->session()->get('success'),
-                'error' => $request->session()->get('error'),
-                'syncResult' => $request->session()->get('syncResult'),
-                'syncResultDetails' => $request->session()->get('syncResultDetails'),
-            ],
-            'stats' => [
-                'totalStored' => SyncedEmail::query()
-                    ->visibleTo($user)
-                    ->count(),
-                'latestSyncedAt' => $latestSyncedEmail?->synced_at?->toIso8601String(),
-            ],
-            'emails' => $this->transformEmails(collect($emailPage->items())),
-            'hasMoreEmails' => $emailPage->hasMorePages(),
-            'nextEmailsCursor' => $emailPage->hasMorePages()
-                ? (string) ($emailPage->currentPage() + 1)
-                : null,
-            'filters' => [
-                'accountIds' => $accountIds,
-                'accountOptions' => $this->filterAccountOptions($user),
-            ],
-            'syncAccounts' => [
-                'options' => $this->syncAccountOptions(),
-            ],
-            'syncState' => $this->syncState(),
-        ]);
-    }
-
-    public function allEmailMessages(Request $request): JsonResponse
-    {
-        $validated = $request->validate([
-            'cursor' => ['nullable', 'integer', 'min:1'],
-            'accountIds' => ['nullable', 'array'],
-            'accountIds.*' => ['integer', Rule::exists('email_sync_accounts', 'id')],
-        ]);
-
-        $page = (int) ($validated['cursor'] ?? 1);
-        $accountIds = $this->normalizedAccountIds($validated['accountIds'] ?? []);
-
-        return response()->json(
-            $this->legacyEmailPagePayload(
-                $this->emailPage($request->user(), $page, $accountIds),
             ),
         );
     }
@@ -348,7 +282,7 @@ class EmailSyncController extends Controller
         return back()->with('success', 'Older email import queued. Results will refresh automatically.');
     }
 
-    private function emailPage($user, int $page, array $accountIds = []): LengthAwarePaginator
+    private function emailPage($user, int $page, array $accountIds = [], int $perPage = self::EMAILS_PER_PAGE): LengthAwarePaginator
     {
         $query = SyncedEmail::query()
             ->visibleTo($user)
@@ -362,26 +296,26 @@ class EmailSyncController extends Controller
             $query->whereIn('email_sync_account_id', $accountIds);
         }
 
-        return $query->paginate(self::EMAILS_PER_PAGE, ['*'], 'page', $page);
+        return $query->paginate($perPage, ['*'], 'page', $page);
     }
 
-    private function birReceiptPage($user, int $page, string $search, string $formType = '', array $accountIds = []): LengthAwarePaginator
+    private function birReceiptPage($user, int $page, string $search, string $formType = '', array $accountIds = [], int $perPage = self::EMAILS_PER_PAGE): LengthAwarePaginator
     {
         return $this->birReceiptQuery($user, false, $search, $formType, $accountIds)
             ->orderByRaw(
                 'CASE WHEN received_at IS NULL OR received_at > synced_at THEN synced_at ELSE received_at END DESC',
             )
             ->orderByDesc('id')
-            ->paginate(self::EMAILS_PER_PAGE, ['*'], 'page', $page)
+            ->paginate($perPage, ['*'], 'page', $page)
             ->withQueryString();
     }
 
-    private function appliedBirReceiptPage($user, int $page, string $formType = '', array $accountIds = []): LengthAwarePaginator
+    private function appliedBirReceiptPage($user, int $page, string $formType = '', array $accountIds = [], int $perPage = self::EMAILS_PER_PAGE): LengthAwarePaginator
     {
         return $this->birReceiptQuery($user, true, '', $formType, $accountIds)
             ->orderByDesc('bir_receipt_applied_at')
             ->orderByDesc('id')
-            ->paginate(self::EMAILS_PER_PAGE, ['*'], 'appliedPage', $page)
+            ->paginate($perPage, ['*'], 'appliedPage', $page)
             ->withQueryString();
     }
 

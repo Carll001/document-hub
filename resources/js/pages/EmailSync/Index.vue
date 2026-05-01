@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Head, router, useForm } from '@inertiajs/vue3';
-import { CheckCircle2, Mail } from 'lucide-vue-next';
+import { CheckCircle2 } from 'lucide-vue-next';
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { toast } from 'vue-sonner';
 import EmailAppliedReceiptsDialog from '@/components/email-sync-components/EmailAppliedReceiptsDialog.vue';
@@ -10,6 +10,7 @@ import EmailSyncToolbar from '@/components/email-sync-components/EmailSyncToolba
 import type { EmailSyncPageProps } from '@/components/email-sync-components/types';
 import { formatDateTime } from '@/components/email-sync-components/utils';
 import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
 import AppLayout from '@/layouts/AppLayout.vue';
 import emailSync from '@/routes/email-sync';
 import type { BreadcrumbItem } from '@/types';
@@ -99,12 +100,14 @@ function reloadReceiptFilters(
     searchValue: string,
     formTypeValue: string,
     accountIds: number[],
+    perPage: number = props.pagination.perPage,
 ): void {
     router.get(
         emailSync.index.url(),
         {
             page: 1,
             appliedPage: 1,
+            per_page: perPage,
             search: searchValue.trim() || undefined,
             formType: formTypeValue || undefined,
             accountIds: accountIds.length > 0 ? accountIds : undefined,
@@ -135,6 +138,7 @@ watch([searchTerm, formTypeFilter], ([searchValue, formTypeValue]) => {
             searchValue,
             formTypeValue,
             accountFilterIds.value,
+            props.pagination.perPage,
         );
     }, 300);
 });
@@ -151,6 +155,7 @@ function updateAccountFilterIds(value: number[]): void {
         searchTerm.value,
         formTypeFilter.value,
         value,
+        props.pagination.perPage,
     );
 }
 
@@ -287,77 +292,66 @@ function submitImportSelected(): void {
     <Head title="Email Sync" />
 
     <AppLayout :breadcrumbs="breadcrumbs">
-        <template #subheader>
-            <div
-                class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between"
-            >
-                <div class="flex flex-col gap-2">
-                    <EmailSyncStats
-                        :latest-sync-label="latestSyncLabel"
-                        :total-stored="props.stats.totalStored"
-                    />
-                    <p class="text-xs text-muted-foreground">
-                        {{ props.receiptCounts.unmatched }} unmatched and
-                        {{ props.receiptCounts.applied }} applied BIR receipt
-                        email{{ props.receiptCounts.applied === 1 ? '' : 's' }} across
-                        {{ props.connection.accountCount }} active account{{
-                            props.connection.accountCount === 1 ? '' : 's'
-                        }}.
-                    </p>
-                </div>
+        <div class="flex flex-1 flex-col gap-6 p-4 md:p-6">
+            <Card class="rounded-3xl">
+                <div class="flex flex-col gap-5 p-6 md:flex-row md:items-center md:justify-between md:p-8">
+                    <div class="space-y-2">
+                        <p class="text-xs font-semibold tracking-[0.3em] text-teal-700 uppercase">Email Sync Workspace</p>
+                        <h1 class="text-3xl font-semibold tracking-tight text-foreground md:text-4xl">BIR Receipt Inbox</h1>
+                        <EmailSyncStats
+                            :latest-sync-label="latestSyncLabel"
+                            :total-stored="props.stats.totalStored"
+                        />
+                        <p class="text-xs text-muted-foreground">
+                            {{ props.receiptCounts.unmatched }} unmatched and
+                            {{ props.receiptCounts.applied }} applied BIR receipt
+                            email{{ props.receiptCounts.applied === 1 ? '' : 's' }} across
+                            {{ props.connection.accountCount }} active account{{
+                                props.connection.accountCount === 1 ? '' : 's'
+                            }}.
+                        </p>
+                    </div>
 
-                <div class="flex  gap-2 lg:items-end">
-                    <EmailSyncToolbar
-                        :can-backfill="canBackfill"
-                        :connection="props.connection"
-                        :open="isSyncDialogOpen"
-                        :start-date="startDate"
-                        :selected-account-ids="selectedSyncAccountIds"
-                        :running-action-label="toolbarRunningActionLabel"
-                        :running-account-labels="toolbarRunningAccountLabels"
-                        :account-options="props.syncAccounts.options"
-                        :sync-processing="toolbarSyncProcessing"
-                        :backfill-processing="toolbarBackfillProcessing"
-                        :flash-error="toolbarFlashError"
-                        :sync-result-details="toolbarResultDetails"
-                        :errors="{
-                            accountIds: syncForm.errors.accountIds ?? backfillForm.errors.accountIds,
-                            startDate: backfillForm.errors.startDate,
-                        }"
-                        @update:open="isSyncDialogOpen = $event"
-                        @sync-all="submitSyncAll"
-                        @sync-selected="submitSyncSelected"
-                        @import-selected="submitImportSelected"
-                        @update:start-date="startDate = $event"
-                        @update:selected-account-ids="selectedSyncAccountIds = $event"
-                    />
-                    <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        class="gap-2 self-start rounded-full lg:self-end"
-                        @click="router.get(emailSync.allEmails())"
-                    >
-                        <Mail class="size-4" />
-                        All emails
-                    </Button>
-                    <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        class="gap-2 self-start rounded-full lg:self-end"
-                        @click="isAppliedDialogOpen = true"
-                    >
-                        <CheckCircle2 class="size-4" />
-                        Applied receipts ({{ props.receiptCounts.applied }})
-                    </Button>
+                    <div class="flex gap-2 lg:items-end">
+                        <EmailSyncToolbar
+                            :can-backfill="canBackfill"
+                            :connection="props.connection"
+                            :open="isSyncDialogOpen"
+                            :start-date="startDate"
+                            :selected-account-ids="selectedSyncAccountIds"
+                            :running-action-label="toolbarRunningActionLabel"
+                            :running-account-labels="toolbarRunningAccountLabels"
+                            :account-options="props.syncAccounts.options"
+                            :sync-processing="toolbarSyncProcessing"
+                            :backfill-processing="toolbarBackfillProcessing"
+                            :flash-error="toolbarFlashError"
+                            :sync-result-details="toolbarResultDetails"
+                            :errors="{
+                                accountIds: syncForm.errors.accountIds ?? backfillForm.errors.accountIds,
+                                startDate: backfillForm.errors.startDate,
+                            }"
+                            @update:open="isSyncDialogOpen = $event"
+                            @sync-all="submitSyncAll"
+                            @sync-selected="submitSyncSelected"
+                            @import-selected="submitImportSelected"
+                            @update:start-date="startDate = $event"
+                            @update:selected-account-ids="selectedSyncAccountIds = $event"
+                        />
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            class="gap-2 self-start lg:self-end"
+                            @click="isAppliedDialogOpen = true"
+                        >
+                            <CheckCircle2 class="size-4" />
+                            Applied receipts ({{ props.receiptCounts.applied }})
+                        </Button>
+                    </div>
                 </div>
-            </div>
-        </template>
-
-        <div class="p-2 md:p-4">
-            <div class="overflow-hidden rounded-[28px] border bg-background shadow-sm">
-                <div class="flex min-h-[calc(100vh-10rem)] flex-col">
+            </Card>
+            <Card class="rounded-3xl p-4 md:p-6">
+                <div class="flex flex-col">
                     <EmailBirReceiptTable
                         :emails="props.emails"
                         :applied-page="props.appliedPagination.currentPage"
@@ -374,7 +368,7 @@ function submitImportSelected(): void {
                         @update:account-filter-ids="updateAccountFilterIds"
                     />
                 </div>
-            </div>
+            </Card>
         </div>
 
         <EmailAppliedReceiptsDialog

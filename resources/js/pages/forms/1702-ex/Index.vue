@@ -177,7 +177,7 @@ const receiptValueErrors = computed<Record<string, string | undefined>>(() =>
         props.receiptTemplate.fields.map((field) => [
             field.key,
             receiptForm.errors[
-                `values.${field.key}` as keyof typeof receiptForm.errors
+            `values.${field.key}` as keyof typeof receiptForm.errors
             ],
         ]),
     ),
@@ -533,13 +533,11 @@ function submitRemoveReceipt(): void {
 </script>
 
 <template>
+
     <Head title="Company Name" />
 
     <AppLayout :breadcrumbs="breadcrumbs">
-        <Dialog
-            :open="isUploadDialogOpen"
-            @update:open="isUploadDialogOpen = $event"
-        >
+        <Dialog :open="isUploadDialogOpen" @update:open="isUploadDialogOpen = $event">
             <DialogContent class="sm:max-w-xl">
                 <DialogHeader class="space-y-1">
                     <DialogTitle>Upload spreadsheet</DialogTitle>
@@ -551,28 +549,16 @@ function submitRemoveReceipt(): void {
 
                 <form class="space-y-6" @submit.prevent="submitImport">
                     <div class="space-y-3">
-                        <input
-                            ref="spreadsheetInput"
-                            type="file"
-                            class="hidden"
-                            accept=".csv,.xlsx,.xls"
-                            @change="handleSpreadsheetSelected"
-                        />
+                        <input ref="spreadsheetInput" type="file" class="hidden" accept=".csv,.xlsx,.xls"
+                            @change="handleSpreadsheetSelected" />
 
-                        <Button
-                            type="button"
-                            variant="outline"
-                            class="w-full justify-start gap-2"
-                            @click="openSpreadsheetPicker"
-                        >
+                        <Button type="button" variant="outline" class="w-full justify-start gap-2"
+                            @click="openSpreadsheetPicker">
                             <Upload class="size-4" />
                             Choose spreadsheet
                         </Button>
 
-                        <p
-                            v-if="selectedSpreadsheetSummary"
-                            class="text-sm text-muted-foreground"
-                        >
+                        <p v-if="selectedSpreadsheetSummary" class="text-sm text-muted-foreground">
                             {{ selectedSpreadsheetSummary }}
                         </p>
 
@@ -587,31 +573,22 @@ function submitRemoveReceipt(): void {
                         <Label for="receiptAcceptanceStartDate">
                             Receipt acceptance start date
                         </Label>
-                        <Input
-                            id="receiptAcceptanceStartDate"
-                            v-model="importForm.receiptAcceptanceStartDate"
-                            type="date"
-                        />
+                        <Input id="receiptAcceptanceStartDate" v-model="importForm.receiptAcceptanceStartDate"
+                            type="date" />
                         <p class="text-xs text-muted-foreground">
-                            Only BIR receipts with a Date received by BIR on or after this date will auto-apply to this uploaded spreadsheet.
+                            Only BIR receipts with a Date received by BIR on or after this date will auto-apply to this
+                            uploaded spreadsheet.
                         </p>
                         <InputError :message="importForm.errors.receiptAcceptanceStartDate" />
                     </div>
 
                     <DialogFooter class="gap-2">
-                        <Button
-                            type="button"
-                            variant="secondary"
-                            :disabled="importForm.processing"
-                            @click="isUploadDialogOpen = false"
-                        >
+                        <Button type="button" variant="secondary" :disabled="importForm.processing"
+                            @click="isUploadDialogOpen = false">
                             Cancel
                         </Button>
                         <Button type="submit" :disabled="!canSubmitImport">
-                            <LoaderCircle
-                                v-if="importForm.processing"
-                                class="mr-2 size-4 animate-spin"
-                            />
+                            <LoaderCircle v-if="importForm.processing" class="mr-2 size-4 animate-spin" />
                             <Upload v-else class="mr-2 size-4" />
                             {{ importForm.processing ? 'Uploading...' : 'Upload and generate' }}
                         </Button>
@@ -620,10 +597,7 @@ function submitRemoveReceipt(): void {
             </DialogContent>
         </Dialog>
 
-        <Dialog
-            :open="isSettingsDialogOpen"
-            @update:open="isSettingsDialogOpen = $event"
-        >
+        <Dialog :open="isSettingsDialogOpen" @update:open="isSettingsDialogOpen = $event">
             <DialogContent class="sm:max-w-2xl">
                 <DialogHeader class="space-y-1">
                     <DialogTitle>PDF defaults</DialogTitle>
@@ -635,13 +609,8 @@ function submitRemoveReceipt(): void {
                 <form class="space-y-6" @submit.prevent="submitSettings">
                     <div class="space-y-2">
                         <Label for="fileNamePrefix">File name prefix</Label>
-                        <Input
-                            id="fileNamePrefix"
-                            v-model="settingsForm.fileNamePrefix"
-                            type="text"
-                            maxlength="120"
-                            placeholder="Optional prefix"
-                        />
+                        <Input id="fileNamePrefix" v-model="settingsForm.fileNamePrefix" type="text" maxlength="120"
+                            placeholder="Optional prefix" />
                         <p class="text-xs text-muted-foreground">
                             Preview: <span class="font-medium text-foreground">{{ batchPrefixPreview }}</span>
                         </p>
@@ -649,12 +618,8 @@ function submitRemoveReceipt(): void {
                     </div>
 
                     <DialogFooter class="gap-2">
-                        <Button
-                            type="button"
-                            variant="secondary"
-                            :disabled="settingsForm.processing"
-                            @click="isSettingsDialogOpen = false"
-                        >
+                        <Button type="button" variant="secondary" :disabled="settingsForm.processing"
+                            @click="isSettingsDialogOpen = false">
                             Cancel
                         </Button>
                         <Button type="submit" :disabled="!canSubmitSettings">
@@ -679,20 +644,14 @@ function submitRemoveReceipt(): void {
                     <AlertDialogCancel :disabled="deleteRowsForm.processing">
                         Cancel
                     </AlertDialogCancel>
-                    <AlertDialogAction
-                        :disabled="deleteRowsForm.processing"
-                        @click="submitDeleteRows"
-                    >
+                    <AlertDialogAction :disabled="deleteRowsForm.processing" @click="submitDeleteRows">
                         Delete rows
                     </AlertDialogAction>
                 </AlertDialogFooter>
             </AlertDialogContent>
         </AlertDialog>
 
-        <Dialog
-            :open="isRegenerateDialogOpen"
-            @update:open="isRegenerateDialogOpen = $event"
-        >
+        <Dialog :open="isRegenerateDialogOpen" @update:open="isRegenerateDialogOpen = $event">
             <DialogContent class="sm:max-w-2xl">
                 <DialogHeader class="space-y-1">
                     <DialogTitle>Regenerate PDF</DialogTitle>
@@ -715,16 +674,13 @@ function submitRemoveReceipt(): void {
                     </div>
 
                     <div class="rounded-2xl border bg-muted/20 p-4 text-sm text-muted-foreground">
-                        This keeps the saved footer configuration hidden and only queues a fresh PDF build for the selected row.
+                        This keeps the saved footer configuration hidden and only queues a fresh PDF build for the
+                        selected row.
                     </div>
 
                     <DialogFooter class="gap-2">
-                        <Button
-                            type="button"
-                            variant="secondary"
-                            :disabled="regenerateForm.processing"
-                            @click="isRegenerateDialogOpen = false"
-                        >
+                        <Button type="button" variant="secondary" :disabled="regenerateForm.processing"
+                            @click="isRegenerateDialogOpen = false">
                             Cancel
                         </Button>
                         <Button type="submit" :disabled="!canSubmitRegenerate">
@@ -735,51 +691,27 @@ function submitRemoveReceipt(): void {
             </DialogContent>
         </Dialog>
 
-        <Form1702ExRemoveReceiptDialog
-            :open="isRemoveReceiptDialogOpen"
-            :processing="removeReceiptForm.processing"
-            :row="pendingReceiptRemovalRow"
-            @confirm="submitRemoveReceipt"
-            @update:open="handleRemoveReceiptDialogOpenChange"
-        />
+        <Form1702ExRemoveReceiptDialog :open="isRemoveReceiptDialogOpen" :processing="removeReceiptForm.processing"
+            :row="pendingReceiptRemovalRow" @confirm="submitRemoveReceipt"
+            @update:open="handleRemoveReceiptDialogOpenChange" />
 
-        <Form1702ExReceiptDialog
-            :can-submit="canSubmitReceipt"
-            :field-error="receiptFieldError"
-            :fields="props.receiptTemplate.fields"
-            :open="isReceiptDialogOpen"
-            :processing="receiptForm.processing"
-            :row="pendingReceiptRow"
-            :value-errors="receiptValueErrors"
-            :values="receiptForm.values"
-            @paste-from-email="pasteReceiptValuesFromEmail"
-            @submit="submitReceipt"
-            @update:open="handleReceiptDialogOpenChange"
-            @update:value="updateReceiptValue"
-        />
+        <Form1702ExReceiptDialog :can-submit="canSubmitReceipt" :field-error="receiptFieldError"
+            :fields="props.receiptTemplate.fields" :open="isReceiptDialogOpen" :processing="receiptForm.processing"
+            :row="pendingReceiptRow" :value-errors="receiptValueErrors" :values="receiptForm.values"
+            @paste-from-email="pasteReceiptValuesFromEmail" @submit="submitReceipt"
+            @update:open="handleReceiptDialogOpenChange" @update:value="updateReceiptValue" />
 
-        <Form1702ExRecipientDialog
-            :can-submit="canSubmitRecipient"
-            :errors="recipientForm.errors"
-            :open="isRecipientDialogOpen"
-            :processing="recipientForm.processing"
-            :recipient-email="recipientForm.recipientEmail"
-            :row="pendingRecipientRow"
-            @submit="submitRecipient"
+        <Form1702ExRecipientDialog :can-submit="canSubmitRecipient" :errors="recipientForm.errors"
+            :open="isRecipientDialogOpen" :processing="recipientForm.processing"
+            :recipient-email="recipientForm.recipientEmail" :row="pendingRecipientRow" @submit="submitRecipient"
             @update:open="isRecipientDialogOpen = $event"
-            @update:recipient-email="recipientForm.recipientEmail = $event"
-        />
-        <Form1702ExTemporaryReceiptDialog
-            :errors="temporaryReceiptForm.errors"
-            :open="isTemporaryReceiptDialogOpen"
-            :recipient-email="temporaryReceiptForm.recipientEmail"
-            :row="pendingTemporaryReceiptRow"
+            @update:recipient-email="recipientForm.recipientEmail = $event" />
+        <Form1702ExTemporaryReceiptDialog :errors="temporaryReceiptForm.errors" :open="isTemporaryReceiptDialogOpen"
+            :recipient-email="temporaryReceiptForm.recipientEmail" :row="pendingTemporaryReceiptRow"
             :temporary-receipt="temporaryReceiptForm.temporaryReceipt"
-            @select-temporary-receipt="selectTemporaryReceipt"
-            @submit="submitTemporaryReceipt"
+            @select-temporary-receipt="selectTemporaryReceipt" @submit="submitTemporaryReceipt"
             @update:open="handleTemporaryReceiptDialogOpenChange"
-            @update:recipient-email="updateTemporaryReceiptRecipientEmail"
-        />
+            @update:recipient-email="updateTemporaryReceiptRecipientEmail" />
 
         <div class="flex flex-1 flex-col gap-6 p-4 md:p-6">
             <Card class="rounded-3xl">
@@ -793,16 +725,23 @@ function submitRemoveReceipt(): void {
                         </h1>
                         <p class="max-w-3xl text-sm leading-7 text-muted-foreground">
                             Upload spreadsheets directly, keep one shared PDF default configuration,
-                            and manage every imported row in a single paginated table.
+                            and manage every imported row in a single paginated table. The latest shared defaults are
+                            used for new uploads. Template:
+                            <a :href="templateSpreadsheetUrl"
+                                class="font-medium text-foreground underline underline-offset-4">
+                                download spreadsheet
+                            </a>
+                            . Receipt alignment:
+                            <a :href="receiptTemplateUrl"
+                                class="font-medium text-foreground underline underline-offset-4">
+                                open receipt template
+                            </a>
+                            .
                         </p>
                     </div>
 
                     <div class="flex flex-wrap gap-2 justify-end">
-                        <Button
-                            type="button"
-                            variant="secondary"
-                            @click="router.get(props.completedFilesUrl)"
-                        >
+                        <Button type="button" variant="secondary" @click="router.get(props.completedFilesUrl)">
                             Completed Files
                         </Button>
                         <Button type="button" variant="outline" @click="openSettingsDialog">
@@ -854,7 +793,8 @@ function submitRemoveReceipt(): void {
                     <span>
                         {{
                             props.rowsExportState.rowCount !== null
-                                ? `Your Excel export is ready with ${props.rowsExportState.rowCount} row${props.rowsExportState.rowCount === 1 ? '' : 's'}.`
+                                ? `Your Excel export is ready with ${props.rowsExportState.rowCount}
+                        row${props.rowsExportState.rowCount === 1 ? '' : 's'}.`
                                 : 'Your Excel export is ready to download.'
                         }}
                     </span>
@@ -866,71 +806,23 @@ function submitRemoveReceipt(): void {
                 </AlertDescription>
             </Alert>
 
-            <Alert v-if="props.rowsExportState.status === 'failed' && props.rowsExportState.error" variant="destructive">
+            <Alert v-if="props.rowsExportState.status === 'failed' && props.rowsExportState.error"
+                variant="destructive">
                 <AlertTitle>Rows Export Failed</AlertTitle>
                 <AlertDescription>
                     {{ props.rowsExportState.error }}
                 </AlertDescription>
             </Alert>
 
-            <Card class="rounded-3xl">
-                <CardHeader>
-                    <CardTitle class="text-xl">Import and output table</CardTitle>
-                    <CardDescription>
-                        The latest shared defaults are used for new uploads. Template:
-                        <a
-                            :href="templateSpreadsheetUrl"
-                            class="font-medium text-foreground underline underline-offset-4"
-                        >
-                            download spreadsheet
-                        </a>
-                        . Receipt alignment:
-                        <a
-                            :href="receiptTemplateUrl"
-                            class="font-medium text-foreground underline underline-offset-4"
-                        >
-                            open receipt template
-                        </a>
-                        .
-                    </CardDescription>
-                </CardHeader>
-
+            <Card >
                 <CardContent class="space-y-4">
-                    <div class="grid gap-4 rounded-2xl border bg-muted/20 p-4 md:grid-cols-3">
-                        <div>
-                            <p class="text-xs font-semibold tracking-[0.2em] text-muted-foreground uppercase">
-                                File Prefix
-                            </p>
-                            <p class="mt-1 text-sm font-medium text-foreground">
-                                {{ props.settings.fileNamePrefix || 'None' }}
-                            </p>
-                        </div>
-                        <div class="md:col-span-2">
-                            <p class="text-xs font-semibold tracking-[0.2em] text-muted-foreground uppercase">
-                                Receipt Acceptance Start
-                            </p>
-                            <p class="mt-1 text-sm font-medium text-foreground">
-                                {{ props.settings.receiptAcceptanceStartDate || 'Not set' }}
-                            </p>
-                        </div>
-                    </div>
-
-                    <PaginatedRowsTable
-                        :export-url="props.rowsExportUrl"
-                        :filters="props.filters"
-                        :is-busy="props.hasActiveJobs"
-                        :is-delete-processing="deleteRowsForm.processing"
-                        :page-url="props.indexUrl"
-                        :pagination="props.pagination"
-                        :rows="props.rows"
-                        :rows-export-state="props.rowsExportState"
-                        @open-recipient-editor="openRecipientEditor"
-                        @open-receipt="openReceiptDialog"
-                        @open-remove-receipt="openRemoveReceiptDialog"
-                        @open-temporary-receipt="openTemporaryReceiptDialog"
-                        @regenerate="regenerateRow"
-                        @request-delete="requestDelete"
-                    />
+                    <PaginatedRowsTable :export-url="props.rowsExportUrl" :filters="props.filters"
+                        :is-busy="props.hasActiveJobs" :is-delete-processing="deleteRowsForm.processing"
+                        :page-url="props.indexUrl" :pagination="props.pagination" :rows="props.rows"
+                        :rows-export-state="props.rowsExportState" @open-recipient-editor="openRecipientEditor"
+                        @open-receipt="openReceiptDialog" @open-remove-receipt="openRemoveReceiptDialog"
+                        @open-temporary-receipt="openTemporaryReceiptDialog" @regenerate="regenerateRow"
+                        @request-delete="requestDelete" />
                 </CardContent>
             </Card>
         </div>

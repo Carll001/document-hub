@@ -1,22 +1,13 @@
 <script setup lang="ts">
 import { Head } from '@inertiajs/vue3';
-import type { ColumnDef } from '@tanstack/vue-table';
-import { ArrowLeft, Download, Eye, MoreHorizontal, Trash2 } from 'lucide-vue-next';
-import { computed, h, onBeforeUnmount, ref, watch } from 'vue';
+import { ArrowLeft, Download } from 'lucide-vue-next';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { toast } from 'vue-sonner';
-import { Badge } from '@/components/ui/badge';
-import { Checkbox } from '@/components/ui/checkbox';
+import AfsCompletedTable from '@/components/afs-components/AfsCompletedTable.vue';
+import type { CompletedExportState, PaginatedResponse, SortDirection, UnifiedItem } from '@/components/afs-components/types';
+import { useAfsCompletedColumns } from '@/components/afs-components/useAfsCompletedColumns';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { DataTable } from '@/components/ui/data-table';
-import {
-    DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuItem,
-    DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+import { Card, CardContent } from '@/components/ui/card';
 import {
     AlertDialog,
     AlertDialogAction,
@@ -29,45 +20,11 @@ import {
 } from '@/components/ui/alert-dialog';
 import AppLayout from '@/layouts/AppLayout.vue';
 import documentGeneratorRoutes from '@/routes/afs-filing';
-import { csrfToken, statusBadgeClass, statusBadgeVariant } from '@/components/afs-components/utils';
+import { csrfToken } from '@/components/afs-components/utils';
 import type { BreadcrumbItem } from '@/types';
 
-type SortDirection = 'asc' | 'desc';
-
-type CompletedExportState = {
-    status: 'queued' | 'processing' | 'failed' | 'ready' | null;
-    error: string | null;
-    itemCount: number | null;
-    downloadUrl: string | null;
-};
-
-type GeneratedFileItem = {
-    id: number;
-    row_number: number;
-    tin?: string | null;
-    company: string;
-    status: string;
-    docx_available: boolean;
-    pdf_available: boolean;
-    signature_applied: boolean;
-    signature_applied_at: string | null;
-    error_message: string | null;
-    source_excel_name: string;
-    template_name: string;
-    created_at: string | null;
-    updated_at: string | null;
-};
-
-type PaginatedResponse<T> = {
-    current_page: number;
-    data: T[];
-    last_page: number;
-    per_page: number;
-    total: number;
-};
-
 const props = defineProps<{
-    initialItems: PaginatedResponse<GeneratedFileItem>;
+    initialItems: PaginatedResponse<UnifiedItem>;
     initialExportState: CompletedExportState;
 }>();
 
@@ -78,7 +35,7 @@ const breadcrumbs: BreadcrumbItem[] = [
     },
 ];
 
-const itemsData = ref<PaginatedResponse<GeneratedFileItem>>(props.initialItems);
+const itemsData = ref<PaginatedResponse<UnifiedItem>>(props.initialItems);
 const itemsLoading = ref(false);
 const itemsSortBy = ref('updated_at');
 const itemsSortDirection = ref<SortDirection>('desc');
@@ -92,21 +49,6 @@ const exportState = ref<CompletedExportState>(props.initialExportState);
 let companySearchDebounce: ReturnType<typeof setTimeout> | null = null;
 let exportPollTimeout: ReturnType<typeof setTimeout> | null = null;
 
-const selectedVisibleCount = computed(
-    () => itemsData.value.data.filter((item) => selectedItemIds.value.includes(item.id)).length,
-);
-const selectAllState = computed<boolean | 'indeterminate'>(() => {
-    if (itemsData.value.data.length === 0 || selectedVisibleCount.value === 0) {
-        return false;
-    }
-
-    if (selectedVisibleCount.value === itemsData.value.data.length) {
-        return true;
-    }
-
-    return 'indeterminate';
-});
-
 const canDeleteSelected = computed(
     () => selectedItemIds.value.length > 0 && !deletingItems.value,
 );
@@ -116,19 +58,6 @@ const canDownloadSelected = computed(
 const exportBusy = computed(
     () => exportState.value.status === 'queued' || exportState.value.status === 'processing' || exportQueueing.value,
 );
-
-const formatDateTime = (value: string | null): string => {
-    if (!value) {
-        return '-';
-    }
-
-    const parsed = new Date(value);
-    if (Number.isNaN(parsed.getTime())) {
-        return value;
-    }
-
-    return parsed.toLocaleString();
-};
 
 const buildItemsUrl = (page = itemsData.value.current_page) => {
     const query: Record<string, string> = {
@@ -169,7 +98,7 @@ const loadItems = async (page = itemsData.value.current_page) => {
     itemsLoading.value = true;
 
     try {
-        itemsData.value = await getApi<PaginatedResponse<GeneratedFileItem>>(buildItemsUrl(page));
+        itemsData.value = await getApi<PaginatedResponse<UnifiedItem>>(buildItemsUrl(page));
     } finally {
         itemsLoading.value = false;
     }
@@ -345,10 +274,8 @@ const handleConfirmedDelete = async () => {
     deleteConfirmIds.value = [];
 };
 
-const onCompanySearchInput = (event: Event) => {
-    const target = event.target as HTMLInputElement;
-    companySearch.value = target.value;
-
+const onCompanySearchInput = (value: string) => {
+    companySearch.value = value;
     if (companySearchDebounce) {
         clearTimeout(companySearchDebounce);
     }
@@ -358,157 +285,32 @@ const onCompanySearchInput = (event: Event) => {
     }, 300);
 };
 
-const itemColumns = computed<ColumnDef<GeneratedFileItem>[]>(() => [
-    {
-        id: 'selection',
-        header: () =>
-            h(Checkbox, {
-                modelValue: selectAllState.value,
-                disabled: itemsData.value.data.length === 0 || deletingItems.value,
-                'aria-label': 'Select visible completed rows',
-                'onUpdate:modelValue': (value: boolean | 'indeterminate') => toggleAllVisibleRows(value),
-            }),
-        enableSorting: false,
-        cell: ({ row }) =>
-            h(Checkbox, {
-                modelValue: selectedItemIds.value.includes(row.original.id),
-                disabled: deletingItems.value,
-                'aria-label': `Select completed row ${row.original.row_number}`,
-                'onUpdate:modelValue': (value: boolean | 'indeterminate') => toggleItemSelection(row.original.id, value),
-            }),
-    },
-    {
-        id: 'index',
-        header: '#',
-        enableSorting: false,
-        cell: ({ row }) =>
-            String(
-                (itemsData.value.current_page - 1) * itemsData.value.per_page
-                + row.index
-                + 1,
-            ),
-    },
-    {
-        id: 'tin',
-        header: 'TIN',
-        enableSorting: false,
-        cell: ({ row }) => row.original.tin && row.original.tin.trim() !== '' ? row.original.tin : '-',
-    },
-    {
-        id: 'company',
-        accessorKey: 'company',
-        header: 'Company',
-        enableSorting: false,
-        cell: ({ row }) => row.original.company || '-',
-    },
-    {
-        id: 'created_at',
-        accessorKey: 'created_at',
-        header: 'Uploaded',
-        enableSorting: true,
-        cell: ({ row }) => formatDateTime(row.original.created_at),
-    },
-    {
-        id: 'status',
-        accessorKey: 'status',
-        header: 'Status',
-        enableSorting: true,
-        cell: ({ row }) =>
-            h(
-                Badge,
-                {
-                    variant: statusBadgeVariant(row.original.status),
-                    class: statusBadgeClass(row.original.status),
-                },
-                () => (row.original.signature_applied ? 'Signed' : row.original.status === 'pdf_done' ? 'Generated' : row.original.status),
-            ),
-    },
-    {
-        id: 'actions',
-        header: 'Actions',
-        enableSorting: false,
-        cell: ({ row }) =>
-            h(
-                DropdownMenu,
-                {},
-                {
-                    default: () => [
-                        h(
-                            DropdownMenuTrigger,
-                            { asChild: true },
-                            {
-                                default: () =>
-                                    h(
-                                        Button,
-                                        {
-                                            variant: 'ghost',
-                                            size: 'icon-sm',
-                                            'aria-label': 'Completed row actions',
-                                        },
-                                        {
-                                            default: () => h(MoreHorizontal, { class: 'size-4' }),
-                                        },
-                                    ),
-                            },
-                        ),
-                        h(
-                            DropdownMenuContent,
-                            { align: 'end', class: 'w-44' },
-                            {
-                                default: () => [
-                                    h(
-                                        DropdownMenuItem,
-                                        { asChild: true },
-                                        {
-                                            default: () =>
-                                                h(
-                                                    'a',
-                                                    {
-                                                        href: `${documentGeneratorRoutes.items.download.url({ item: row.original.id, type: 'pdf' })}?inline=1`,
-                                                        target: '_blank',
-                                                        rel: 'noopener noreferrer',
-                                                        class: 'flex w-full items-center gap-2',
-                                                    },
-                                                    [h(Eye, { class: 'size-4' }), 'Preview'],
-                                                ),
-                                        },
-                                    ),
-                                    h(
-                                        DropdownMenuItem,
-                                        { asChild: true },
-                                        {
-                                            default: () =>
-                                                h(
-                                                    'a',
-                                                    {
-                                                        href: documentGeneratorRoutes.items.download.url({ item: row.original.id, type: 'pdf' }),
-                                                        class: 'flex w-full items-center gap-2',
-                                                    },
-                                                    [h(Download, { class: 'size-4' }), 'Download'],
-                                                ),
-                                        },
-                                    ),
-                                    h(
-                                        DropdownMenuItem,
-                                        {
-                                            disabled: deletingItems.value,
-                                            class: 'text-destructive focus:text-destructive',
-                                            onSelect: () => {
-                                                confirmDelete([row.original.id]);
-                                            },
-                                        },
-                                        {
-                                            default: () => [h(Trash2, { class: 'size-4' }), 'Delete'],
-                                        },
-                                    ),
-                                ],
-                            },
-                        ),
-                    ],
-                },
-            ),
-    },
-]);
+const selectedVisibleCount = computed(
+    () => itemsData.value.data.filter((item) => selectedItemIds.value.includes(item.id)).length,
+);
+const selectAllState = computed<boolean | 'indeterminate'>(() => {
+    if (itemsData.value.data.length === 0 || selectedVisibleCount.value === 0) {
+        return false;
+    }
+
+    if (selectedVisibleCount.value === itemsData.value.data.length) {
+        return true;
+    }
+
+    return 'indeterminate';
+});
+
+const itemColumns = useAfsCompletedColumns({
+    currentPage: computed(() => itemsData.value.current_page),
+    perPage: computed(() => itemsData.value.per_page),
+    itemsCount: computed(() => itemsData.value.data.length),
+    deletingItems,
+    selectedItemIds,
+    selectAllState,
+    toggleAllVisibleRows,
+    toggleItemSelection,
+    requestDeleteRow: (itemId) => confirmDelete([itemId]),
+});
 
 watch(
     () => itemsData.value.data.map((item) => item.id),
@@ -554,7 +356,7 @@ onBeforeUnmount(() => {
 
     <AppLayout :breadcrumbs="breadcrumbs">
         <div class="flex flex-1 flex-col gap-6 p-4 md:p-6">
-            <Card class="rounded-3xl">
+            <Card >
                 <CardContent class="flex flex-col gap-5 p-6 md:flex-row md:items-center md:justify-between md:p-8">
                     <div class="space-y-2">
                         <p class="text-xs font-semibold tracking-[0.3em] text-teal-700 uppercase">
@@ -599,64 +401,25 @@ onBeforeUnmount(() => {
             </Card>
 
             <Card>
-                <CardHeader>
-                    <CardTitle>Generated Rows</CardTitle>
-                    <CardDescription>
-                        Signed AFS outputs. Use bulk actions to download or delete completed rows.
-                    </CardDescription>
-                </CardHeader>
                 <CardContent class="space-y-4">
-                    <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                        <div class="w-full max-w-[360px]">
-                            <Label for="company-search" class="mb-2 block">Search company or TIN</Label>
-                            <Input
-                                id="company-search"
-                                :model-value="companySearch"
-                                placeholder="Type company name or TIN..."
-                                @input="onCompanySearchInput"
-                            />
-                        </div>
-
-                        <div class="flex flex-wrap gap-2">
-                            <Button
-                                type="button"
-                                variant="outline"
-                                class="gap-2"
-                                :disabled="!canDownloadSelected || exportBusy"
-                                @click="void queueCompletedExport(selectedItemIds)"
-                            >
-                                <Download class="size-4" />
-                                {{ selectedItemIds.length > 0 ? `Download selected (${selectedItemIds.length})` : 'Download selected' }}
-                            </Button>
-
-                            <Button
-                                type="button"
-                                variant="destructive"
-                                class="gap-2"
-                                :disabled="!canDeleteSelected"
-                                @click="confirmDelete(selectedItemIds)"
-                            >
-                                <Trash2 class="size-4" />
-                                {{ selectedItemIds.length > 0 ? `Delete selected (${selectedItemIds.length})` : 'Delete selected' }}
-                            </Button>
-                        </div>
-                    </div>
-
-                    <p v-if="exportState.status === 'queued' || exportState.status === 'processing'" class="text-sm text-muted-foreground">
-                        Preparing completed ZIP export...
-                    </p>
-                    <p v-else-if="exportState.status === 'failed' && exportState.error" class="text-sm text-destructive">
-                        {{ exportState.error }}
-                    </p>
-
-                    <DataTable
-                        :columns="itemColumns"
-                        :data="itemsData.data"
-                        :meta="itemsData"
-                        :loading="itemsLoading"
-                        :sort-by="itemsSortBy"
-                        :sort-direction="itemsSortDirection"
-                        empty-message="No completed files available."
+                    <AfsCompletedTable
+                        :items-data="itemsData"
+                        :items-loading="itemsLoading"
+                        :items-sort-by="itemsSortBy"
+                        :items-sort-direction="itemsSortDirection"
+                        :item-columns="itemColumns"
+                        :items-for-table="itemsData.data"
+                        :company-search="companySearch"
+                        :selected-item-ids="selectedItemIds"
+                        :deleting-items="deletingItems"
+                        :export-busy="exportBusy"
+                        :can-download-selected="canDownloadSelected"
+                        :can-delete-selected="canDeleteSelected"
+                        :export-status="exportState.status"
+                        :export-error="exportState.error"
+                        @update:company-search="onCompanySearchInput"
+                        @request-download-selected="void queueCompletedExport(selectedItemIds)"
+                        @request-delete-selected="confirmDelete(selectedItemIds)"
                         @page-change="loadItems"
                         @per-page-change="async (perPage) => { itemsData.per_page = perPage; await loadItems(1); }"
                         @sort-change="async (column, direction) => { itemsSortBy = column; itemsSortDirection = direction; await loadItems(1); }"

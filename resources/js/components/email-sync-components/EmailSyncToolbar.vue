@@ -101,7 +101,7 @@ function clearSelection(): void {
         <Button
             type="button"
             size="sm"
-            class="gap-1.5 rounded-full text-xs"
+            class="gap-1.5 text-xs"
             @click="emit('update:open', true)"
         >
             <LoaderCircle v-if="isRunning" class="size-3.5 animate-spin" />

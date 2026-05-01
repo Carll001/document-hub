@@ -1,26 +1,22 @@
 <script setup lang="ts">
 import { Head, router } from '@inertiajs/vue3';
-import type { ColumnDef } from '@tanstack/vue-table';
-import { ArrowUpDown, Download, Eye, FileText, LoaderCircle, MoreHorizontal, Pencil, PenLine, Search, Settings2, Trash2, Upload } from 'lucide-vue-next';
-import { computed, h, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { Download, LoaderCircle, Settings2, Trash2, Upload } from 'lucide-vue-next';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { toast } from 'vue-sonner';
+import AfsIndexTable from '@/components/afs-components/AfsIndexTable.vue';
 import AfsEditDialog from '@/components/afs-components/AfsEditDialog.vue';
 import AfsSettingsDialog from '@/components/afs-components/AfsSettingsDialog.vue';
 import AfsSignDialog from '@/components/afs-components/AfsSignDialog.vue';
 import type { PaginatedResponse, SignatureSettings, TemplateMappingPayload, UnifiedItem } from '@/components/afs-components/types';
+import { useAfsIndexColumns } from '@/components/afs-components/useAfsIndexColumns';
 import {
     csrfToken,
     getApi,
-    statusBadgeClass,
-    statusBadgeVariant,
 } from '@/components/afs-components/utils';
 import { resolveTin } from '@/lib/form-field-aliases';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Checkbox } from '@/components/ui/checkbox';
-import { DataTable } from '@/components/ui/data-table';
 import {
     Dialog,
     DialogContent,
@@ -43,15 +39,10 @@ import {
     DropdownMenu,
     DropdownMenuContent,
     DropdownMenuItem,
-    DropdownMenuSub,
-    DropdownMenuSubContent,
-    DropdownMenuSubTrigger,
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Spinner } from '@/components/ui/spinner';
 import AppLayout from '@/layouts/AppLayout.vue';
 import documentGeneratorRoutes from '@/routes/afs-filing';
 import generatedFilesRoutes from '@/routes/afs-filing/completed';
@@ -837,321 +828,31 @@ const openErrorDialog = (item: UnifiedItem) => {
     errorDialogOpen.value = true;
 };
 
-const itemColumns = computed<ColumnDef<UnifiedItem>[]>(() => [
-    {
-        id: 'selection',
-        header: () =>
-            h(Checkbox, {
-                modelValue: selectAllState.value,
-                disabled: itemsData.value.data.length === 0 || deletingItems.value,
-                'aria-label': 'Select visible rows',
-                'onUpdate:modelValue': (value: boolean | 'indeterminate') => toggleAllVisibleRows(value),
-            }),
-        enableSorting: false,
-        cell: ({ row }) =>
-            h(Checkbox, {
-                modelValue: selectedItemIds.value.includes(row.original.id),
-                disabled: deletingItems.value,
-                'aria-label': `Select row ${row.original.row_number}`,
-                'onUpdate:modelValue': (value: boolean | 'indeterminate') => toggleItemSelection(row.original.id, value),
-            }),
-    },
-    {
-        id: 'index',
-        header: '#',
-        enableSorting: false,
-        cell: ({ row }) =>
-            String(
-                (itemsData.value.current_page - 1) * itemsData.value.per_page
-                + row.index
-                + 1,
-            ),
-    },
-    {
-        id: 'tin',
-        header: 'TIN',
-        enableSorting: false,
-        cell: ({ row }) => extractTin(row.original),
-    },
-    {
-        id: 'company',
-        accessorKey: 'company',
-        header: 'Company',
-        enableSorting: false,
-        cell: ({ row }) => row.original.company || '-',
-    },
-    {
-        id: 'created_at',
-        accessorKey: 'created_at',
-        header: () =>
-            h('span', { class: 'inline-flex items-center gap-1' }, [
-                'Uploaded',
-                h(ArrowUpDown, { class: 'size-4 text-muted-foreground' }),
-            ]),
-        enableSorting: true,
-        cell: ({ row }) => formatDateTime(row.original.created_at),
-    },
-    {
-        id: 'status',
-        accessorKey: 'status',
-        header: () =>
-            h('span', { class: 'inline-flex items-center gap-1' }, [
-                'Status',
-                h(ArrowUpDown, { class: 'size-4 text-muted-foreground' }),
-            ]),
-        enableSorting: true,
-        cell: ({ row }) =>
-            h(
-                'div',
-                { class: 'flex items-center gap-2' },
-                [
-                    h(
-                        Badge,
-                        {
-                            variant: statusBadgeVariant(row.original.status),
-                            class: statusBadgeClass(row.original.status),
-                        },
-                        () => displayStatus(row.original),
-                    ),
-                ],
-            ),
-    },
-    {
-        id: 'error_message',
-        accessorKey: 'error_message',
-        header: 'Error',
-        enableSorting: false,
-        cell: ({ row }) => {
-            const parsed = parseErrorDetails(row.original);
-            const hasDetails = parsed.missingData.length > 0 || parsed.errors.length > 0;
-
-            if (hasDetails || row.original.error_message) {
-                return h(
-                    Badge,
-                    {
-                        variant: 'destructive',
-                        class: 'cursor-pointer',
-                        onClick: () => openErrorDialog(row.original),
-                    },
-                    () => 'Error',
-                );
-            }
-
-            return '-';
-        },
-    },
-    {
-        id: 'actions',
-        header: 'Actions',
-        enableSorting: false,
-        cell: ({ row }) =>
-            h(
-                DropdownMenu,
-                {},
-                {
-                    default: () => [
-                        h(
-                            DropdownMenuTrigger,
-                            { asChild: true },
-                            {
-                                default: () =>
-                                    h(
-                                        Button,
-                                        {
-                                            variant: 'ghost',
-                                            size: 'icon-sm',
-                                            'aria-label': 'Row actions',
-                                        },
-                                        {
-                                            default: () =>
-                                                h(MoreHorizontal, {
-                                                    class: 'size-4',
-                                                }),
-                                        },
-                                    ),
-                            },
-                        ),
-                        h(
-                            DropdownMenuContent,
-                            { align: 'end', class: 'w-44' },
-                            {
-                                default: () => [
-                                    h(
-                                        DropdownMenuItem,
-                                        {
-                                            disabled: !canEditItem(row.original),
-                                            onSelect: () => {
-                                                if (!canEditItem(row.original)) {
-                                                    return;
-                                                }
-                                                openEditDialog(row.original);
-                                            },
-                                        },
-                                        {
-                                            default: () => [h(Pencil, { class: 'size-4' }), 'Edit'],
-                                        },
-                                    ),
-                                    h(
-                                        DropdownMenuSub,
-                                        {},
-                                        {
-                                            default: () => [
-                                                h(
-                                                    DropdownMenuSubTrigger,
-                                                    {
-                                                        disabled: !row.original.docx_available && !row.original.pdf_available,
-                                                    },
-                                                    {
-                                                        default: () => [h(Download, { class: 'mr-2 size-4' }), 'Download as'],
-                                                    },
-                                                ),
-                                                h(
-                                                    DropdownMenuSubContent,
-                                                    { class: 'w-40' },
-                                                    {
-                                                        default: () => [
-                                                            row.original.docx_available
-                                                                ? h(
-                                                                      DropdownMenuItem,
-                                                                      { asChild: true },
-                                                                      {
-                                                                          default: () =>
-                                                                              h(
-                                                                                  'a',
-                                                                                  {
-                                                                                      href: documentGeneratorRoutes.items.download.url({ item: row.original.id, type: 'docx' }),
-                                                                                      class: 'flex w-full items-center gap-2',
-                                                                                  },
-                                                                                  [h(FileText, { class: 'mr-2 size-4' }), 'DOCX'],
-                                                                              ),
-                                                                      },
-                                                                  )
-                                                                : h(
-                                                                      DropdownMenuItem,
-                                                                      { disabled: true },
-                                                                      {
-                                                                          default: () => [h(FileText, { class: 'mr-2 size-4' }), 'DOCX'],
-                                                                      },
-                                                                  ),
-                                                            row.original.pdf_available
-                                                                ? h(
-                                                                      DropdownMenuItem,
-                                                                      { asChild: true },
-                                                                      {
-                                                                          default: () =>
-                                                                              h(
-                                                                                  'a',
-                                                                                  {
-                                                                                      href: documentGeneratorRoutes.items.download.url({ item: row.original.id, type: 'pdf' }),
-                                                                                      class: 'flex w-full items-center gap-2',
-                                                                                  },
-                                                                                  [h(FileText, { class: 'mr-2 size-4' }), 'PDF'],
-                                                                              ),
-                                                                      },
-                                                                  )
-                                                                : h(
-                                                                      DropdownMenuItem,
-                                                                      { disabled: true },
-                                                                      {
-                                                                          default: () => [h(FileText, { class: 'mr-2 size-4' }), 'PDF'],
-                                                                      },
-                                                                  ),
-                                                        ],
-                                                    },
-                                                ),
-                                            ],
-                                        },
-                                    ),
-                                    row.original.pdf_available
-                                        ? h(
-                                              DropdownMenuItem,
-                                              { asChild: true },
-                                              {
-                                                  default: () =>
-                                                      h(
-                                                          'a',
-                                                          {
-                                                              href: `${documentGeneratorRoutes.items.download.url({ item: row.original.id, type: 'pdf' })}?inline=1`,
-                                                              target: '_blank',
-                                                              rel: 'noopener noreferrer',
-                                                              class: 'flex w-full items-center gap-2',
-                                                          },
-                                                          [h(Eye, { class: 'size-4' }), 'Preview PDF'],
-                                                      ),
-                                              },
-                                          )
-                                        : h(
-                                              DropdownMenuItem,
-                                              { disabled: true },
-                                              {
-                                                  default: () => [h(Eye, { class: 'size-4' }), 'Preview PDF'],
-                                              },
-                                          ),
-                                    props.signatureEnabled
-                                        ? h(
-                                              DropdownMenuItem,
-                                              {
-                                                  disabled: !row.original.pdf_available || row.original.signature_applied || isItemSigning(row.original.id) || queuingSignatures.value,
-                                                  onSelect: () => {
-                                                      void applySignatureToItem(row.original);
-                                                  },
-                                              },
-                                              {
-                                                  default: () => [
-                                                      h(PenLine, { class: 'size-4' }),
-                                                      row.original.signature_applied
-                                                          ? 'Signed'
-                                                          : isPreparingSignature(row.original.id)
-                                                            ? 'Preparing for signing...'
-                                                          : isItemSigning(row.original.id)
-                                                            ? 'Queuing for signing...'
-                                                            : row.original.status === 'signing'
-                                                              ? 'Signing...'
-                                                              : 'Add Signature',
-                                                  ],
-                                              },
-                                          )
-                                        : null,
-                                    row.original.status === 'failed'
-                                        ? h(
-                                              DropdownMenuItem,
-                                              {
-                                                  onSelect: () => {
-                                                      void retryItem(row.original);
-                                                  },
-                                              },
-                                              {
-                                                  default: () => [
-                                                      h(Upload, { class: 'size-4' }),
-                                                      'Retry',
-                                                  ],
-                                              },
-                                          )
-                                        : null,
-                                    h(
-                                        DropdownMenuItem,
-                                        {
-                                            disabled: !canDeleteItem(row.original) || deletingItems.value,
-                                            variant: 'destructive',
-                                            onSelect: () => {
-                                                confirmDelete([row.original.id]);
-                                            },
-                                        },
-                                        {
-                                            default: () => [
-                                                h(Trash2, { class: 'size-4' }),
-                                                'Delete',
-                                            ],
-                                        },
-                                    ),
-                                ],
-                            },
-                        ),
-                    ],
-                },
-            ),
-    },
-]);
+const itemColumns = useAfsIndexColumns({
+    selectAllState,
+    itemsCount: computed(() => itemsData.value.data.length),
+    deletingItems,
+    selectedItemIds,
+    currentPage: computed(() => itemsData.value.current_page),
+    perPage: computed(() => itemsData.value.per_page),
+    signatureEnabled: props.signatureEnabled,
+    queuingSignatures,
+    toggleAllVisibleRows,
+    toggleItemSelection,
+    extractTin,
+    formatDateTime,
+    displayStatus,
+    parseErrorDetails,
+    openErrorDialog,
+    canEditItem,
+    openEditDialog,
+    isItemSigning,
+    isPreparingSignature,
+    applySignatureToItem,
+    retryItem,
+    canDeleteItem,
+    confirmDelete,
+});
 
 watch(
     () => props.initialItems,
@@ -1445,81 +1146,28 @@ onMounted(() => {
             </Alert>
 
             <Card>
-                <CardHeader>
-                    <CardTitle class="flex items-center gap-2">
-                        Generated Rows
-                        <Spinner v-if="pollingActive" class="size-4" />
-                    </CardTitle>
-                    <CardDescription>
-                        One table across all batches with row status, editing, and file downloads.
-                    </CardDescription>
-                </CardHeader>
                 <CardContent class="space-y-4">
-                    <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                        <div class="relative flex-1">
-                            <Search
-                                class="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
-                            />
-                            <Input
-                                id="company-search"
-                                :model-value="companySearch"
-                                type="search"
-                                placeholder="Search company, TIN, or status"
-                                class="pl-10"
-                                @input="onCompanySearchInput"
-                            />
-                        </div>
-
-                        <div class="flex flex-wrap gap-2 self-end md:self-auto">
-                            <Button
-                                type="button"
-                                variant="destructive"
-                                :disabled="!canBulkDeleteSelected"
-                                @click="deleteSelectedItems"
-                            >
-                                <Trash2 class="mr-2 size-4" />
-                                {{ selectedItemIds.length > 0 ? `Delete selected (${selectedItemIds.length})` : 'Delete selected' }}
-                            </Button>
-                            <Button
-                                v-if="props.signatureEnabled"
-                                type="button"
-                                variant="secondary"
-                                :disabled="!canBulkSignSelected"
-                                @click="applySignatureToSelectedItems"
-                            >
-                                <PenLine class="mr-2 size-4" />
-                                {{
-                                    hasPreparingSignatures || queuingSignatures
-                                        ? 'Queuing for signing...'
-                                        : (selectedItemIds.length > 0 ? `Sign selected (${selectedItemIds.length})` : 'Sign selected')
-                                }}
-                            </Button>
-                            <Select :model-value="itemStatusFilter" @update:model-value="(value) => onItemStatusChange(String(value))">
-                                <SelectTrigger class="h-9 w-[150px] text-sm">
-                                    <SelectValue placeholder="All statuses" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="all">All</SelectItem>
-                                    <SelectItem value="failed">Failed</SelectItem>
-                                    <SelectItem value="signing">Signing</SelectItem>
-                                    <SelectItem value="queued">Preparing for signing</SelectItem>
-                                    <SelectItem value="deleting">Deleting</SelectItem>
-                                    <SelectItem value="processing">Processing</SelectItem>
-                                    <SelectItem value="pdf_done">Generated</SelectItem>
-                                </SelectContent>
-                            </Select>
-
-                        </div>
-                    </div>
-
-                    <DataTable
-                        :columns="itemColumns"
-                        :data="itemsForTable"
-                        :meta="itemsData"
-                        :loading="tableLoading"
-                        :sort-by="itemsSortBy"
-                        :sort-direction="itemsSortDirection"
-                        empty-message="No rows available."
+                    <AfsIndexTable
+                        :status="itemStatusFilter"
+                        :company-search="companySearch"
+                        :show-bulk-sign="props.signatureEnabled"
+                        :bulk-sign-label="
+                            hasPreparingSignatures || queuingSignatures
+                                ? 'Queuing for signing...'
+                                : (selectedItemIds.length > 0 ? `Sign selected (${selectedItemIds.length})` : 'Sign selected')
+                        "
+                        :can-bulk-sign-selected="canBulkSignSelected"
+                        :can-bulk-delete-selected="canBulkDeleteSelected"
+                        :table-loading="tableLoading"
+                        :items-for-table="itemsForTable"
+                        :items-data="itemsData"
+                        :items-sort-by="itemsSortBy"
+                        :items-sort-direction="itemsSortDirection"
+                        :item-columns="itemColumns"
+                        @status-change="onItemStatusChange"
+                        @company-search-input="onCompanySearchInput"
+                        @bulk-sign="applySignatureToSelectedItems"
+                        @bulk-delete="deleteSelectedItems"
                         @page-change="(page) => { visitIndex({ page }); startPolling(); }"
                         @per-page-change="(perPage) => { itemsData.per_page = perPage; visitIndex({ page: 1, perPage }); startPolling(); }"
                         @sort-change="(column, direction) => { itemsSortBy = column; itemsSortDirection = direction; visitIndex({ page: 1, sortBy: column, direction }); startPolling(); }"

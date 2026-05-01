@@ -11,7 +11,7 @@ import { router } from '@inertiajs/vue3';
 import { computed, ref } from 'vue';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { CardContent } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
     DropdownMenu,
@@ -95,13 +95,6 @@ const canBulkSendEmailSelected = computed(() => selectedMergedCount.value > 0 &&
 </script>
 
 <template>
-    <CardHeader class="space-y-1">
-        <CardTitle class="text-xl">Merge table</CardTitle>
-        <CardDescription>
-            Review merged outputs and failed results inside this batch.
-        </CardDescription>
-    </CardHeader>
-
     <CardContent class="space-y-4">
         <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div class="relative flex-1">
