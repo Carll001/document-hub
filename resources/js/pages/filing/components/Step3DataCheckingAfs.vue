@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import {
     ArrowLeft,
-    ArrowUpFromLine,
     BadgeInfo,
     BriefcaseBusiness,
     Building2,
     Calculator,
+    FileText,
     FileSpreadsheet,
 } from 'lucide-vue-next'
 import { computed, ref } from 'vue'
@@ -15,8 +15,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 
 const emit = defineEmits<{
-    backToImport: []
     backToFilingType: []
+    generateFiling: []
 }>()
 const props = defineProps<{
     selectedCompanies: Array<{
@@ -30,6 +30,38 @@ const props = defineProps<{
 const activeCompanyId = ref<number | null>(props.selectedCompanies[0]?.id ?? null)
 const activeCompany = computed(() =>
     props.selectedCompanies.find((company) => company.id === activeCompanyId.value) ?? null,
+)
+
+function hasNonEmpty(value: string | null | undefined): boolean {
+    return (value ?? '').trim() !== ''
+}
+
+const canGenerate = computed(() =>
+    props.selectedCompanies.every((company) => {
+        const requiredValues = [
+            company.name,
+            company.tin,
+            company.address,
+            pickDataValue(company, ['president_name', 'president', 'presidentname', 'presidentsname']),
+            pickDataValue(company, ['sec_registration_date', 'sec_date', 'registration_date', 'secregistrationdate']),
+            pickDataValue(company, ['net_sales', 'netsales']),
+            pickDataValue(company, ['cogs']),
+            pickDataValue(company, ['gross_profit', 'grossprofit']),
+            pickDataValue(company, ['opex']),
+            pickDataValue(company, ['net_income', 'netincome']),
+            pickDataValue(company, ['cash']),
+            pickDataValue(company, ['trade_receivables', 'tradereceivables']),
+            pickDataValue(company, ['inventory']),
+            pickDataValue(company, ['total_current_assets', 'totalcurrentassets']),
+            pickDataValue(company, ['operating_cash', 'operatingcash']),
+            pickDataValue(company, ['cashflows', 'cash_flows']),
+            pickDataValue(company, ['cash_end', 'cashend']),
+            pickDataValue(company, ['pt_payable', 'ptpayable']),
+            pickDataValue(company, ['payable_to_suppliers', 'payabletosuppliers']),
+        ]
+
+        return requiredValues.every((value) => hasNonEmpty(value))
+    }),
 )
 
 function pickDataValue(company: { data: Record<string, string> }, aliases: string[]): string {
@@ -214,11 +246,8 @@ function pickDataValue(company: { data: Record<string, string> }, aliases: strin
                 </Button>
 
                 <div class="flex items-center gap-2">
-                    <Button variant="outline" class="gap-2" @click="emit('backToImport')">
-                        <ArrowUpFromLine class="size-4" />
-                        Go Back to Import
-                    </Button>
-                    <Button class="gap-2 bg-[#2563EB] hover:bg-[#1D4ED8]">
+                    <Button class="gap-2 bg-[#2563EB] hover:bg-[#1D4ED8]" :disabled="!canGenerate" @click="emit('generateFiling')">
+                        <FileText class="size-4" />
                         Generate Filing
                     </Button>
                 </div>

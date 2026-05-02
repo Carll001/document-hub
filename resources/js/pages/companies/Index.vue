@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Head, router, useForm } from '@inertiajs/vue3';
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
-import { Building2, Download, FileSpreadsheet, Plus, Upload } from 'lucide-vue-next';
+import { ArrowRight, Building2, Download, Files, FileSpreadsheet, Plus, Upload } from 'lucide-vue-next';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { DataTable } from '@/components/ui/data-table';
@@ -89,8 +89,10 @@ const columns = createCompanyColumns({
 
 const importForm = useForm<{
     spreadsheet: File | null;
+    overwrite_existing: boolean;
 }>({
     spreadsheet: null,
+    overwrite_existing: false,
 });
 
 function formatDate(value: string): string {
@@ -135,8 +137,9 @@ function sortChange(column: string, direction: 'asc' | 'desc'): void {
     }
 }
 
-function submitImport(file: File | null): void {
-    importForm.spreadsheet = file;
+function submitImport(payload: { file: File | null; overwriteExisting: boolean }): void {
+    importForm.spreadsheet = payload.file;
+    importForm.overwrite_existing = payload.overwriteExisting;
     importForm.post(props.routes.import, {
         preserveScroll: true,
         onSuccess: () => {
@@ -182,6 +185,10 @@ onBeforeUnmount(() => {
                     </p>
                 </div>
                 <div class="flex flex-wrap items-center gap-2">
+                    <Button variant="outline" @click="router.visit('/filing')">
+                        <Files class="mr-2 size-4" />
+                        Generate Filing
+                    </Button>
                     <Button variant="outline" @click="importDialogOpen = true">
                         <Upload class="mr-2 size-4" />
                         Import Companies
@@ -266,9 +273,6 @@ onBeforeUnmount(() => {
                             <Button variant="outline">
                                 <Download class="mr-2 size-4" />
                                 Export
-                            </Button>
-                            <Button class="bg-[#2563EB] hover:bg-[#1D4ED8]">
-                                Generate Filing
                             </Button>
                         </div>
                     </div>

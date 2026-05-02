@@ -35,6 +35,14 @@ Route::middleware(['auth', 'verified'])->group(function () {
         ->name('filing.')
         ->group(function () {
             Route::get('/', 'index')->name('index');
+            Route::get('my-filings', 'myFilings')->name('my-filings');
+            Route::get('outputs', 'outputs')->name('outputs.index');
+            Route::post('afs/generate', 'generateAfs')->name('afs.generate');
+            Route::get('afs/outputs', 'afsOutputs')->name('afs.outputs.index');
+            Route::get('afs/outputs/{item}/preview', 'afsOutputPreview')->name('afs.outputs.preview');
+            Route::get('afs/outputs/{item}/download', 'afsOutputDownload')->name('afs.outputs.download');
+            Route::post('afs/outputs/{item}/regenerate', 'afsOutputRegenerate')->name('afs.outputs.regenerate');
+            Route::delete('afs/outputs/{item}', 'afsOutputDelete')->name('afs.outputs.delete');
         });
     Route::prefix('template')
         ->controller(TemplateController::class)

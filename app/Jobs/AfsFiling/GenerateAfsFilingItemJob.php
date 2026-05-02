@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Jobs\AfsFiling;
 
 use App\Models\AfsFilingItem;
+use App\Models\FilingOutput;
 use App\Services\AfsFiling\AfsFilingItemGenerationService;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
@@ -50,6 +51,17 @@ class GenerateAfsFilingItemJob implements ShouldQueue
         $item->error_message = mb_substr($this->toUserFriendlyError($exception), 0, 2000);
         $item->completed_at = now();
         $item->save();
+
+        $rowData = is_array($item->row_data) ? $item->row_data : [];
+        $filingOutputId = (int) ($rowData['__filing_output_id'] ?? 0);
+        if ($filingOutputId > 0) {
+            $filingOutput = FilingOutput::query()->find($filingOutputId);
+            if ($filingOutput instanceof FilingOutput) {
+                $filingOutput->status = 'failed';
+                $filingOutput->error_message = $item->error_message;
+                $filingOutput->save();
+            }
+        }
     }
 
     private function toUserFriendlyError(Throwable $exception): string

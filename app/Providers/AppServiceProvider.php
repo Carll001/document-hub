@@ -4,7 +4,9 @@ namespace App\Providers;
 
 use App\Contracts\Services\DocumentBatchItemGenerationService as DocumentBatchItemGenerationServiceContract;
 use App\Contracts\Repositories\AfsFilingItemRepository as AfsFilingItemRepositoryContract;
+use App\Contracts\Repositories\CompanyRepository as CompanyRepositoryContract;
 use App\Repositories\Eloquent\AfsFilingItemRepository;
+use App\Repositories\Eloquent\CompanyRepository;
 use App\Services\DocumentBatchItemGenerationService;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Date;
@@ -26,6 +28,10 @@ class AppServiceProvider extends ServiceProvider
         $this->app->bind(
             AfsFilingItemRepositoryContract::class,
             AfsFilingItemRepository::class,
+        );
+        $this->app->bind(
+            CompanyRepositoryContract::class,
+            CompanyRepository::class,
         );
     }
 

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services\Companies;
 
+use App\Contracts\Repositories\CompanyRepository as CompanyRepositoryContract;
 use App\Models\Company;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
@@ -12,6 +13,10 @@ use PhpOffice\PhpSpreadsheet\IOFactory;
 
 class CompanyService
 {
+    public function __construct(
+        private readonly CompanyRepositoryContract $companyRepository,
+    ) {}
+
     /**
      * @var array<string, list<string>>
      */
@@ -25,19 +30,22 @@ class CompanyService
      * @return array{
      *   inserted: int,
      *   updated: int,
+     *   kept_existing: int,
      *   skipped: int,
      *   skipped_missing_name: int,
      *   skipped_missing_tin: int,
      *   skipped_invalid_tin: int
      * }
      */
-    public function importCompanies(UploadedFile $spreadsheet, int $userId): array
+    public function importCompanies(UploadedFile $spreadsheet, int $userId, bool $overwriteExisting = false): array
     {
         $extension = Str::lower($spreadsheet->getClientOriginalExtension() ?: $spreadsheet->extension() ?: '');
-        $rows = $this->importRowsFromFile($spreadsheet->getRealPath() ?: $spreadsheet->getPathname(), $extension);
+        $path = $spreadsheet->getRealPath() ?: $spreadsheet->getPathname();
+        $rows = $this->importRowsFromFile($path, $extension);
 
         $inserted = 0;
         $updated = 0;
+        $keptExisting = 0;
         $skipped = 0;
         $skippedMissingName = 0;
         $skippedMissingTin = 0;
@@ -46,8 +54,10 @@ class CompanyService
         DB::transaction(function () use (
             $rows,
             $userId,
+            $overwriteExisting,
             &$inserted,
             &$updated,
+            &$keptExisting,
             &$skipped,
             &$skippedMissingName,
             &$skippedMissingTin,
@@ -79,28 +89,33 @@ class CompanyService
                     continue;
                 }
 
-                $existing = Company::query()
-                    ->where('name_normalized', $normalizedName)
-                    ->where('tin_normalized', $normalizedTin)
-                    ->first();
+                $existing = $this->companyRepository->findByNormalizedNameAndTin(
+                    $normalizedName,
+                    $normalizedTin,
+                );
 
                 if ($existing instanceof Company) {
+                    if (! $overwriteExisting) {
+                        $keptExisting++;
+                        continue;
+                    }
+
                     $existingData = is_array($existing->data) ? $existing->data : [];
                     $mergedData = array_replace($existingData, $data);
 
-                    $existing->forceFill([
+                    $this->companyRepository->update($existing, [
                         'name' => $name,
                         'tin' => $tin,
                         'address' => $address !== '' ? $address : $existing->address,
                         'data' => $mergedData !== [] ? $mergedData : null,
                         'imported_via_excel' => true,
-                    ])->save();
+                    ]);
 
                     $updated++;
                     continue;
                 }
 
-                Company::query()->create([
+                $this->companyRepository->create([
                     'user_id' => $userId,
                     'client_id' => null,
                     'name' => $name,
@@ -119,6 +134,7 @@ class CompanyService
         return [
             'inserted' => $inserted,
             'updated' => $updated,
+            'kept_existing' => $keptExisting,
             'skipped' => $skipped,
             'skipped_missing_name' => $skippedMissingName,
             'skipped_missing_tin' => $skippedMissingTin,
@@ -223,13 +239,14 @@ class CompanyService
 
         foreach ($record as $header => $value) {
             $trimmedHeader = trim((string) $header);
+            $normalizedHeader = $this->normalizeImportHeader($trimmedHeader);
             $trimmedValue = trim((string) $value);
 
-            if ($trimmedHeader === '' || $trimmedValue === '') {
+            if ($normalizedHeader === '') {
                 continue;
             }
 
-            $data[$trimmedHeader] = $trimmedValue;
+            $data[$normalizedHeader] = $trimmedValue;
         }
 
         return [
@@ -247,7 +264,12 @@ class CompanyService
     private function firstImportFieldValue(array $normalizedRecord, array $aliases): string
     {
         foreach ($aliases as $alias) {
-            $value = trim((string) ($normalizedRecord[$alias] ?? ''));
+            $normalizedAlias = $this->normalizeImportHeader($alias);
+            if ($normalizedAlias === '') {
+                continue;
+            }
+
+            $value = trim((string) ($normalizedRecord[$normalizedAlias] ?? ''));
             if ($value !== '') {
                 return $value;
             }

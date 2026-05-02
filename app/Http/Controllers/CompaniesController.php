@@ -4,47 +4,39 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
+use App\Contracts\Repositories\CompanyRepository as CompanyRepositoryContract;
+use App\Http\Controllers\Concerns\BasePagination;
+use App\Http\Requests\Companies\CompaniesImportRequest;
+use App\Http\Requests\Companies\CompaniesIndexRequest;
+use App\Http\Requests\Companies\CompanyStoreRequest;
+use App\Http\Requests\Companies\CompanyUpdateRequest;
+use App\Http\Resources\Companies\CompanyDataResource;
+use App\Http\Resources\Companies\CompanyIndexResource;
 use App\Models\Company;
 use App\Services\Companies\CompanyService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
-use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Inertia\Response;
 
 class CompaniesController extends Controller
 {
+    use BasePagination;
+
     public function __construct(
         private readonly CompanyService $companyService,
+        private readonly CompanyRepositoryContract $companyRepository,
     ) {}
 
-    public function index(Request $request): Response
+    public function index(CompaniesIndexRequest $request): Response
     {
-        $validated = $request->validate([
-            'page' => ['nullable', 'integer', 'min:1'],
-            'search' => ['nullable', 'string', 'max:120'],
-            'sort' => ['nullable', 'string', 'in:name,tin,created_at'],
-            'direction' => ['nullable', 'string', 'in:asc,desc'],
-            'perPage' => ['nullable', 'integer', 'in:10,25,50,100'],
-        ]);
+        $validated = $request->validated();
 
         $search = isset($validated['search']) ? trim((string) $validated['search']) : '';
         $sort = (string) ($validated['sort'] ?? 'created_at');
         $direction = (string) ($validated['direction'] ?? 'desc');
         $page = (int) ($validated['page'] ?? 1);
         $perPage = (int) ($validated['perPage'] ?? 10);
-
-        $query = Company::query();
-
-        if ($search !== '') {
-            $query->where(function ($searchQuery) use ($search): void {
-                $like = '%'.$search.'%';
-                $searchQuery
-                    ->where('name', 'like', $like)
-                    ->orWhere('tin', 'like', $like)
-                    ->orWhere('address', 'like', $like);
-            });
-        }
 
         $sortColumn = match ($sort) {
             'name' => 'name',
@@ -53,15 +45,18 @@ class CompaniesController extends Controller
         };
         $sortDirection = $direction === 'asc' ? 'asc' : 'desc';
 
-        $pageResult = $query
-            ->orderBy($sortColumn, $sortDirection)
-            ->orderByDesc('id')
-            ->paginate($perPage, ['*'], 'page', $page)
-            ->withQueryString();
+        $pageResult = $this->companyRepository->paginateForIndex(
+            $search,
+            $sortColumn,
+            $sortDirection,
+            $perPage,
+            $page,
+        );
 
         $now = now();
         $startOfMonth = $now->copy()->startOfMonth();
         $recentThreshold = $now->copy()->subDays(30);
+        $stats = $this->companyRepository->stats($recentThreshold, $startOfMonth);
 
         return Inertia::render('companies/Index', [
             'flash' => [
@@ -75,24 +70,8 @@ class CompaniesController extends Controller
                 'store' => route('companies.store'),
             ],
             'companies' => [
-                'data' => collect($pageResult->items())
-                    ->map(fn (Company $company): array => [
-                        'id' => $company->id,
-                        'name' => $company->name,
-                        'tin' => $company->tin,
-                        'address' => (string) ($company->address ?? ''),
-                        'created_at' => $company->created_at?->toDateString(),
-                    ])
-                    ->values()
-                    ->all(),
-                'pagination' => [
-                    'current_page' => $pageResult->currentPage(),
-                    'last_page' => $pageResult->lastPage(),
-                    'per_page' => $pageResult->perPage(),
-                    'total' => $pageResult->total(),
-                    'from' => $pageResult->firstItem() ?? 0,
-                    'to' => $pageResult->lastItem() ?? 0,
-                ],
+                'data' => CompanyIndexResource::collection(collect($pageResult->items()))->resolve(),
+                'pagination' => $this->basePagination($pageResult),
             ],
             'filters' => [
                 'search' => $search,
@@ -100,12 +79,7 @@ class CompaniesController extends Controller
                 'direction' => $sortDirection,
                 'perPage' => $perPage,
             ],
-            'stats' => [
-                'totalCompanies' => Company::query()->count(),
-                'recentlyAdded' => Company::query()->where('created_at', '>=', $recentThreshold)->count(),
-                'addedThisMonth' => Company::query()->where('created_at', '>=', $startOfMonth)->count(),
-                'importedCompanies' => Company::query()->where('imported_via_excel', true)->count(),
-            ],
+            'stats' => $stats,
         ]);
     }
 
@@ -114,15 +88,11 @@ class CompaniesController extends Controller
         return Inertia::render('companies/Create');
     }
 
-    public function store(Request $request): RedirectResponse
+    public function store(CompanyStoreRequest $request): RedirectResponse
     {
-        $validated = $request->validate([
-            'name' => ['required', 'string', 'max:255'],
-            'tin' => ['required', 'string', 'max:64'],
-            'address' => ['nullable', 'string', 'max:500'],
-        ]);
+        $validated = $request->validated();
 
-        Company::query()->create([
+        $this->companyRepository->create([
             'user_id' => (int) $request->user()->getKey(),
             'client_id' => null,
             'name' => trim((string) $validated['name']),
@@ -151,31 +121,25 @@ class CompaniesController extends Controller
 
     public function data(Company $company): JsonResponse
     {
-        return response()->json([
-            'id' => (int) $company->id,
-            'name' => (string) $company->name,
-            'tin' => (string) $company->tin,
-            'address' => (string) ($company->address ?? ''),
-            'imported_via_excel' => (bool) $company->imported_via_excel,
-            'data' => is_array($company->data) ? $company->data : [],
-        ], 200, [], JSON_PRETTY_PRINT);
+        return response()->json(
+            (new CompanyDataResource($company))->resolve(),
+            200,
+            [],
+            JSON_PRETTY_PRINT,
+        );
     }
 
-    public function update(Request $request, Company $company): RedirectResponse
+    public function update(CompanyUpdateRequest $request, Company $company): RedirectResponse
     {
-        $validated = $request->validate([
-            'name' => ['required', 'string', 'max:255'],
-            'tin' => ['required', 'string', 'max:64'],
-            'address' => ['nullable', 'string', 'max:500'],
-        ]);
+        $validated = $request->validated();
 
-        $company->forceFill([
+        $this->companyRepository->update($company, [
             'name' => trim((string) $validated['name']),
             'name_normalized' => $this->normalizeName((string) $validated['name']),
             'tin' => trim((string) $validated['tin']),
             'tin_normalized' => $this->normalizeTin((string) $validated['tin']),
             'address' => $this->normalizeOptionalText($validated['address'] ?? null),
-        ])->save();
+        ]);
 
         return to_route('companies.index')
             ->with('success', 'Company updated.');
@@ -183,21 +147,20 @@ class CompaniesController extends Controller
 
     public function destroy(Company $company): RedirectResponse
     {
-        $company->delete();
+        $this->companyRepository->delete($company);
 
         return to_route('companies.index')
             ->with('success', 'Company deleted.');
     }
 
-    public function import(Request $request): RedirectResponse
+    public function import(CompaniesImportRequest $request): RedirectResponse
     {
-        $validated = $request->validate([
-            'spreadsheet' => ['required', 'file', 'mimes:xlsx,csv,txt', 'max:15360'],
-        ]);
+        $validated = $request->validated();
 
         $result = $this->companyService->importCompanies(
             $validated['spreadsheet'],
             (int) $request->user()->getKey(),
+            (bool) ($validated['overwrite_existing'] ?? false),
         );
 
         if ($result['inserted'] === 0 && $result['updated'] === 0 && $result['skipped'] > 0) {
@@ -208,7 +171,7 @@ class CompaniesController extends Controller
         }
 
         return to_route('companies.index')
-            ->with('success', "Company import complete. Inserted {$result['inserted']}, updated {$result['updated']}, skipped {$result['skipped']}.");
+            ->with('success', "Company import complete. Inserted {$result['inserted']}, updated {$result['updated']}, kept existing {$result['kept_existing']}, skipped {$result['skipped']}.");
     }
 
     private function normalizeName(string $value): string

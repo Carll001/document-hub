@@ -111,7 +111,7 @@ const filingNavItems = computed<NavItem[]>(() => {
         },
         {
             title: 'My Filings',
-            href: form1702ex.index(),
+            href: '/filing/my-filings',
             icon: Files,
         },
         {

@@ -20,14 +20,18 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-    submit: [file: File | null];
+    submit: [payload: { file: File | null; overwriteExisting: boolean }];
     'update:open': [open: boolean];
 }>();
 
 const selectedFile = ref<File | null>(null);
+const overwriteExisting = ref(false);
 
 function handleSubmit(): void {
-    emit('submit', selectedFile.value);
+    emit('submit', {
+        file: selectedFile.value,
+        overwriteExisting: overwriteExisting.value,
+    });
 }
 
 function handleFileChange(event: Event): void {
@@ -44,7 +48,8 @@ function handleFileChange(event: Event): void {
                 <DialogDescription>
                     Upload Excel/CSV with name and tin headers (aliases like company name, registered name,
                     company tin are accepted). Address is optional, rows missing name/tin are skipped, and
-                    other columns are saved under company data.
+                    other columns are saved under company data. If duplicates exist, choose whether to overwrite
+                    existing company rows.
                 </DialogDescription>
             </DialogHeader>
 
@@ -58,6 +63,28 @@ function handleFileChange(event: Event): void {
                         @change="handleFileChange"
                     />
                     <InputError :message="props.error" />
+                </div>
+
+                <div class="space-y-2">
+                    <p class="text-sm font-medium text-slate-700">If company already exists</p>
+                    <label class="flex items-center gap-2 text-sm text-slate-700">
+                        <input
+                            v-model="overwriteExisting"
+                            type="radio"
+                            class="accent-[#2563EB]"
+                            :value="false"
+                        />
+                        Keep existing row and import only new companies
+                    </label>
+                    <label class="flex items-center gap-2 text-sm text-slate-700">
+                        <input
+                            v-model="overwriteExisting"
+                            type="radio"
+                            class="accent-[#2563EB]"
+                            :value="true"
+                        />
+                        Overwrite existing row with spreadsheet data
+                    </label>
                 </div>
 
                 <DialogFooter class="gap-2">

@@ -62,6 +62,7 @@ class CompaniesPageTest extends TestCase
         $this->actingAs($secondUser)
             ->post(route('companies.import'), [
                 'spreadsheet' => $file,
+                'overwrite_existing' => true,
             ])
             ->assertRedirect(route('companies.index'));
 
@@ -104,6 +105,7 @@ class CompaniesPageTest extends TestCase
         $this->actingAs($secondUser)
             ->post(route('companies.import'), [
                 'spreadsheet' => $file,
+                'overwrite_existing' => true,
             ])
             ->assertRedirect(route('companies.index'));
 
@@ -143,6 +145,7 @@ class CompaniesPageTest extends TestCase
         $this->actingAs($user)
             ->post(route('companies.import'), [
                 'spreadsheet' => $file,
+                'overwrite_existing' => true,
             ])
             ->assertRedirect(route('companies.index'));
 
@@ -154,6 +157,49 @@ class CompaniesPageTest extends TestCase
         $this->assertSame('Valid Co', $company->name);
         $this->assertSame('111222333444', $company->tin_normalized);
         $this->assertSame(['stakeholder' => 'Carol'], $company->data);
+    }
+
+    public function test_staff_can_import_companies_and_keep_existing_when_overwrite_is_disabled(): void
+    {
+        $firstUser = User::factory()->create(['role' => 'staff']);
+        $secondUser = User::factory()->create(['role' => 'staff']);
+
+        $existing = Company::query()->create([
+            'user_id' => $firstUser->id,
+            'client_id' => null,
+            'name' => 'ACME Corp',
+            'name_normalized' => 'acme corp',
+            'tin' => '123-456-789-000',
+            'tin_normalized' => '123456789000',
+            'address' => 'Old address',
+            'data' => ['legacyfield' => 'legacy value'],
+            'imported_via_excel' => false,
+        ]);
+
+        $file = $this->makeCompanyImportFile([
+            ['name', 'tin', 'address', 'Stakeholder'],
+            ['ACME Corp', '123-456-789-000', 'New address', 'Alice'],
+            ['New Global Co', '987-654-321-000', 'Pasig City', 'Bob'],
+        ]);
+
+        $this->actingAs($secondUser)
+            ->post(route('companies.import'), [
+                'spreadsheet' => $file,
+                'overwrite_existing' => false,
+            ])
+            ->assertRedirect(route('companies.index'));
+
+        $existing->refresh();
+
+        $this->assertSame('Old address', $existing->address);
+        $this->assertSame(['legacyfield' => 'legacy value'], $existing->data);
+        $this->assertFalse((bool) $existing->imported_via_excel);
+
+        $this->assertDatabaseHas('companies', [
+            'name_normalized' => 'new global co',
+            'tin_normalized' => '987654321000',
+            'address' => 'Pasig City',
+        ]);
     }
 
     /**

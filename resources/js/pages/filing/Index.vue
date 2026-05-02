@@ -23,6 +23,7 @@ import { createCompanySelectColumns, type CompanyOptionRow } from '@/pages/filin
 import Step2SelectFilingType from '@/pages/filing/components/Step2SelectFilingType.vue'
 import Step3DataCheckingAfs from '@/pages/filing/components/Step3DataCheckingAfs.vue'
 import Step3DataChecking1702Ex from '@/pages/filing/components/Step3DataChecking1702Ex.vue'
+import Step4ReviewingOutput from '@/pages/filing/components/Step4ReviewingOutput.vue'
 import filing from '@/routes/filing'
 
 type PaginationMeta = {
@@ -44,6 +45,8 @@ type SelectedCompany = {
 const props = defineProps<{
     routes: {
         index: string
+        afsGenerate: string
+        afsOutputs: string
     }
     companies: {
         data: CompanyOptionRow[]
@@ -160,20 +163,50 @@ function goToStep3(filingType: 'afs' | '1702ex') {
     )
 }
 
-function goToStep3FromImport() {
-    router.get(
-        props.routes.index,
-        {
-            step: 3,
+function goToStep4() {
+    if (props.selectedFilingType !== 'afs') {
+        router.get(
+            props.routes.index,
+            {
+                step: 4,
+                companyId: selectedCompanyIds.value,
+                filingType: props.selectedFilingType,
+            },
+            {
+                preserveScroll: true,
+                preserveState: false,
+                replace: true,
+            },
+        )
+        return
+    }
+
+    fetch(props.routes.afsGenerate, {
+        method: 'POST',
+        headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+            'X-CSRF-TOKEN': (document.querySelector('meta[name=\"csrf-token\"]') as HTMLMetaElement | null)?.content ?? '',
+        },
+        body: JSON.stringify({
+            filingType: 'afs',
             companyId: selectedCompanyIds.value,
-            filingType: props.selectedFilingType,
-        },
-        {
-            preserveScroll: true,
-            preserveState: false,
-            replace: true,
-        },
-    )
+        }),
+    }).finally(() => {
+        router.get(
+            props.routes.index,
+            {
+                step: 4,
+                companyId: selectedCompanyIds.value,
+                filingType: props.selectedFilingType,
+            },
+            {
+                preserveScroll: true,
+                preserveState: false,
+                replace: true,
+            },
+        )
+    })
 }
 
 const breadcrumbs: BreadcrumbItem[] = [
@@ -201,8 +234,8 @@ const steps = [
     },
     {
         step: 4,
-        title: 'Generate Filing',
-        description: 'Create output',
+        title: 'Reviewing Output',
+        description: 'Review generated output',
     },
 ]
 </script>
@@ -275,6 +308,7 @@ const steps = [
             <Step2SelectFilingType
                 v-else-if="currentStep === 2"
                 :selected-company-ids="selectedCompanyIds"
+                :selected-companies="props.selectedCompanies"
                 :initial-filing-type="props.selectedFilingType"
                 :filing-type-availability="props.filingTypeAvailability"
                 @back="goToStep1"
@@ -285,13 +319,21 @@ const steps = [
                 v-else-if="currentStep === 3 && props.selectedFilingType === 'afs'"
                 :selected-companies="props.selectedCompanies"
                 @back-to-filing-type="goToStep2"
-                @back-to-import="goToStep3FromImport"
+                @generate-filing="goToStep4"
             />
 
             <Step3DataChecking1702Ex
                 v-else-if="currentStep === 3 && props.selectedFilingType === '1702ex'"
                 :selected-companies="props.selectedCompanies"
                 @back-to-filing-type="goToStep2"
+                @generate-filing="goToStep4"
+            />
+
+            <Step4ReviewingOutput
+                v-else-if="currentStep === 4"
+                :selected-company-ids="selectedCompanyIds"
+                :filing-type="props.selectedFilingType"
+                :routes="{ afsOutputs: props.routes.afsOutputs }"
             />
 
             <div class="flex justify-end gap-2">

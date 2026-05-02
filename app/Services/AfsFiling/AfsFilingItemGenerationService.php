@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services\AfsFiling;
 
 use App\Models\AfsFilingItem;
+use App\Models\FilingOutput;
 use App\Models\DocumentGeneratorTemplate;
 use App\Services\DocxTemplateService;
 use App\Services\PdfConversionService;
@@ -40,6 +41,10 @@ class AfsFilingItemGenerationService
         $item->status = 'processing';
         $item->started_at = $item->started_at ?? now();
         $item->save();
+        $this->syncFilingOutput($item, [
+            'status' => 'processing',
+            'error_message' => null,
+        ]);
 
         $baseDir = "afs_filing/{$item->user_id}/items/{$item->id}";
         $fileBaseName = $this->itemFileBaseName($item);
@@ -68,6 +73,10 @@ class AfsFilingItemGenerationService
                 $item->error_details = $validation;
                 $item->completed_at = now();
                 $item->save();
+                $this->syncFilingOutput($item, [
+                    'status' => 'failed',
+                    'error_message' => $item->error_message,
+                ]);
 
                 return;
             }
@@ -81,6 +90,9 @@ class AfsFilingItemGenerationService
             $item->refresh();
             if ((string) $item->status === 'deleting') {
                 DocumentStorage::disk()->delete(array_filter([$docxRelativePath, $pdfRelativePath]));
+                $this->syncFilingOutput($item, [
+                    'status' => 'deleting',
+                ]);
                 return;
             }
 
@@ -91,11 +103,21 @@ class AfsFilingItemGenerationService
             $item->error_details = null;
             $item->completed_at = now();
             $item->save();
+            $this->syncFilingOutput($item, [
+                'status' => 'generated',
+                'file_path' => $pdfRelativePath,
+                'file_name' => basename($pdfRelativePath),
+                'error_message' => null,
+            ]);
         } catch (\Throwable $exception) {
             $item->status = 'failed';
             $item->error_message = mb_substr($exception->getMessage(), 0, 2000);
             $item->completed_at = now();
             $item->save();
+            $this->syncFilingOutput($item, [
+                'status' => 'failed',
+                'error_message' => $item->error_message,
+            ]);
         } finally {
             if (is_string($templatePath) && is_file($templatePath)) {
                 @unlink($templatePath);
@@ -107,6 +129,25 @@ class AfsFilingItemGenerationService
                 @unlink($pdfPath);
             }
         }
+    }
+
+    /**
+     * @param  array<string, mixed>  $attributes
+     */
+    private function syncFilingOutput(AfsFilingItem $item, array $attributes): void
+    {
+        $rowData = is_array($item->row_data) ? $item->row_data : [];
+        $filingOutputId = (int) ($rowData['__filing_output_id'] ?? 0);
+        if ($filingOutputId <= 0) {
+            return;
+        }
+
+        $filingOutput = FilingOutput::query()->find($filingOutputId);
+        if (! $filingOutput instanceof FilingOutput) {
+            return;
+        }
+
+        $filingOutput->forceFill($attributes)->save();
     }
 
     /**
