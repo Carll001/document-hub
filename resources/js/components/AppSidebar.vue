@@ -12,7 +12,6 @@ import {
 import { computed } from 'vue';
 import AppLogo from '@/components/AppLogo.vue';
 import NavFooter from '@/components/NavFooter.vue';
-import NavForms from '@/components/NavForms.vue';
 import NavMain from '@/components/NavMain.vue';
 import NavUser from '@/components/NavUser.vue';
 import {
@@ -24,21 +23,25 @@ import {
     SidebarMenuButton,
     SidebarMenuItem,
 } from '@/components/ui/sidebar';
-import { dashboard } from '@/routes';
+import { companyName, dashboard } from '@/routes';
+import aliases from '@/routes/aliases';
 import documentGenerator from '@/routes/afs-filing';
-import docMerge from '@/routes/doc-merge';
-import emailSync from '@/routes/email-sync';
-import forms from '@/routes/forms';
+import client from '@/routes/client';
+import companies from '@/routes/companies';
+import form1702ex from '@/routes/forms/form1702ex';
+import mailboxAccounts from '@/routes/mailbox-accounts';
+import template from '@/routes/template';
+import users from '@/routes/users';
 import type { Auth, NavItem } from '@/types';
+import filing from '@/routes/filing';
 
 const page = usePage<{ auth: Auth }>();
 const auth = computed(() => page.props.auth);
-const isStaff = computed(() => auth.value.user?.role === 'staff');
 const homeHref = computed(() =>
     auth.value.user?.canAccessUserManagement
-        ? '/users'
+        ? users.index()
         : auth.value.user?.canAccessClientPortal
-            ? '/client/files'
+            ? client.files()
             : dashboard(),
 );
 const mainNavItems = computed<NavItem[]>(() => {
@@ -46,17 +49,17 @@ const mainNavItems = computed<NavItem[]>(() => {
         return [
             {
                 title: 'Users',
-                href: '/users',
+                href: users.index(),
                 icon: Users,
             },
             {
                 title: 'Mailbox Accounts',
-                href: '/mailbox-accounts',
+                href: mailboxAccounts.index(),
                 icon: Mail,
             },
             {
                 title: 'Aliases',
-                href: '/settings/aliases',
+                href: aliases.edit(),
                 icon: FileStack,
             },
         ];
@@ -66,7 +69,7 @@ const mainNavItems = computed<NavItem[]>(() => {
         return [
             {
                 title: 'My Files',
-                href: '/client/files',
+                href: client.files(),
                 icon: FileSpreadsheet,
             },
         ];
@@ -78,34 +81,65 @@ const mainNavItems = computed<NavItem[]>(() => {
             href: dashboard(),
             icon: LayoutGrid,
         },
+    ];
+});
+
+const companyNavItems = computed<NavItem[]>(() => {
+    if (auth.value.user?.canAccessUserManagement || auth.value.user?.canAccessClientPortal) {
+        return [];
+    }
+
+    return [
         {
-            title: 'Email Sync',
-            href: emailSync.index(),
-            icon: Mail,
-        },
-        {
-            title: 'Clients',
-            href: '/clients',
+            title: 'Companies',
+            href: companies.index(),
             icon: BriefcaseBusiness,
-        },
-        {
-            title: 'Doc Merge',
-            href: docMerge.index(),
-            icon: Files,
         },
     ];
 });
 
-const formNavItems = computed<NavItem[]>(() => [
-    {
-        title: '1702EX',
-        href: forms.form1702ex.index(),
-    },
-    {
-        title: 'AFS',
-        href: documentGenerator.index(),
-    },
-]);
+const filingNavItems = computed<NavItem[]>(() => {
+    if (auth.value.user?.canAccessUserManagement || auth.value.user?.canAccessClientPortal) {
+        return [];
+    }
+
+    return [
+        {
+            title: 'Generate Filing',
+            href: filing.index(),
+            icon: FileSpreadsheet,
+        },
+        {
+            title: 'My Filings',
+            href: form1702ex.index(),
+            icon: Files,
+        },
+        {
+            title: 'Templates',
+            href: template.index(),
+            icon: FileStack,
+        },
+    ];
+});
+
+const documentHubNavItems = computed<NavItem[]>(() => {
+    if (auth.value.user?.canAccessUserManagement || auth.value.user?.canAccessClientPortal) {
+        return [];
+    }
+
+    return [
+        {
+            title: 'AFS',
+            href: documentGenerator.index(),
+            icon: FileStack,
+        },
+        {
+            title: '1702',
+            href: form1702ex.index(),
+            icon: FileSpreadsheet,
+        },
+    ];
+});
 
 const footerNavItems: NavItem[] = [
     
@@ -127,8 +161,10 @@ const footerNavItems: NavItem[] = [
         </SidebarHeader>
 
         <SidebarContent>
-            <NavMain :items="mainNavItems" />
-            <NavForms v-if="isStaff" :items="formNavItems" />
+            <NavMain :items="mainNavItems" :label="auth.user?.canAccessUserManagement ? 'Admin' : 'Dashboard'" />
+            <NavMain v-if="companyNavItems.length > 0" :items="companyNavItems" label="Company" />
+            <NavMain v-if="filingNavItems.length > 0" :items="filingNavItems" label="Filing" />
+            <NavMain v-if="documentHubNavItems.length > 0" :items="documentHubNavItems" label="Document Hub" />
         </SidebarContent>
 
         <SidebarFooter>

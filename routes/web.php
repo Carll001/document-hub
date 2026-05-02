@@ -1,21 +1,24 @@
 <?php
 
-use App\Http\Controllers\DashboardController;
-use App\Http\Controllers\ClientController;
-use App\Http\Controllers\ClientPortalController;
 use App\Http\Controllers\AfsFiling\AfsFilingExportController;
 use App\Http\Controllers\AfsFiling\AfsFilingItemController;
 use App\Http\Controllers\AfsFiling\AfsFilingPageController;
 use App\Http\Controllers\AfsFiling\AfsFilingSignatureController;
+use App\Http\Controllers\ClientController;
+use App\Http\Controllers\ClientPortalController;
+use App\Http\Controllers\CompaniesController;
+use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\DocMerge\DocMergeBatchController;
 use App\Http\Controllers\DocMerge\DocMergeController;
 use App\Http\Controllers\EmailSyncAccountManagementController;
 use App\Http\Controllers\EmailSyncController;
+use App\Http\Controllers\FilingController;
 use App\Http\Controllers\Form1702ExController;
 use App\Http\Controllers\Form1702ExPage1TemplateController;
 use App\Http\Controllers\Form1702ExPage2TemplateController;
 use App\Http\Controllers\Form1702ExPage3TemplateController;
 use App\Http\Controllers\Form1702ExReceiptTemplateController;
+use App\Http\Controllers\TemplateController;
 use App\Http\Controllers\UserManagementController;
 use Illuminate\Support\Facades\Route;
 use Laravel\Fortify\Features;
@@ -27,6 +30,23 @@ Route::inertia('/', 'Welcome', [
 
 Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('dashboard', DashboardController::class)->name('dashboard');
+    Route::prefix('filing')
+        ->controller(FilingController::class)
+        ->name('filing.')
+        ->group(function () {
+            Route::get('/', 'index')->name('index');
+        });
+    Route::prefix('template')
+        ->controller(TemplateController::class)
+        ->name('template.')
+        ->group(function () {
+            Route::get('/', 'index')->name('index');
+            Route::post('/', 'store')->name('store');
+            Route::delete('/', 'destroyMany')->name('destroy-many');
+            Route::get('{template}/data', 'data')->name('data');
+            Route::delete('{template}', 'destroy')->name('destroy');
+        });
+    Route::redirect('company-name', 'filing/generate')->name('company-name');
     Route::middleware('client')
         ->controller(ClientPortalController::class)
         ->group(function () {
@@ -35,6 +55,19 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::get('client/files/{form1702ExBatchRow}/download', 'download')->name('client.files.download');
         });
     Route::middleware('staff')->group(function () {
+        Route::controller(CompaniesController::class)
+            ->prefix('companies')
+            ->name('companies.')
+            ->group(function () {
+                Route::get('/', 'index')->name('index');
+                Route::get('create', 'create')->name('create');
+                Route::post('/', 'store')->name('store');
+                Route::post('import', 'import')->name('import');
+                Route::get('{company}/data', 'data')->name('data');
+                Route::get('{company}/edit', 'edit')->name('edit');
+                Route::put('{company}', 'update')->name('update');
+                Route::delete('{company}', 'destroy')->name('destroy');
+            });
         Route::controller(ClientController::class)
             ->prefix('clients')
             ->name('clients.')
@@ -261,4 +294,4 @@ Route::middleware(['auth', 'verified'])->group(function () {
         });
 });
 
-require __DIR__ . '/settings.php';
+require __DIR__.'/settings.php';

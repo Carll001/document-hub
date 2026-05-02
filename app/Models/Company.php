@@ -18,9 +18,23 @@ use Illuminate\Support\Str;
     'name_normalized',
     'tin',
     'tin_normalized',
+    'address',
+    'data',
+    'imported_via_excel',
 ])]
 class Company extends Model
 {
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return [
+            'data' => 'array',
+            'imported_via_excel' => 'boolean',
+        ];
+    }
+
     protected static function booted(): void
     {
         static::creating(function (self $company): void {
