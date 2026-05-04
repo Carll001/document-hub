@@ -136,11 +136,9 @@ class AfsFilingItemController extends Controller
         }
 
         $uploadedSignature = $request->file('president_signature_file');
-        if (! $uploadedSignature) {
-            return response()->json(['message' => 'President signature image is required.'], 422);
-        }
-
-        $signaturePath = $uploadedSignature->store("afs_filing/{$user->id}/signatures/queued", DocumentStorage::diskName());
+        $signaturePath = $uploadedSignature
+            ? $uploadedSignature->store("afs_filing/{$user->id}/signatures/queued", DocumentStorage::diskName())
+            : '';
 
         $item->status = 'signing';
         $item->error_message = null;
@@ -166,7 +164,7 @@ class AfsFilingItemController extends Controller
         $items = AfsFilingItem::query()
             ->where('user_id', (int) $user->getKey())
             ->whereIn('id', $validated['item_ids'])
-            ->where('status', 'pdf_done')
+            ->where('status', 'generated')
             ->whereNull('signature_applied_at')
             ->get();
 

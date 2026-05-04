@@ -59,7 +59,8 @@ const emit = defineEmits<{
                             <SelectItem value="queued">Queued</SelectItem>
                             <SelectItem value="processing">Processing</SelectItem>
                             <SelectItem value="docx_done">DOCX Done</SelectItem>
-                            <SelectItem value="pdf_done">Generated</SelectItem>
+                            <SelectItem value="generated">Generated</SelectItem>
+                            <SelectItem value="signed">Signed</SelectItem>
                             <SelectItem value="signing">Signing</SelectItem>
                             <SelectItem value="deleting">Deleting</SelectItem>
                         </SelectContent>

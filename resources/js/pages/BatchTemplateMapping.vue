@@ -495,7 +495,7 @@ const onExistingTemplateFileChange = (template: EditableYearTemplate, event: Eve
 
                         <Button :disabled="defaultTemplateSaving" @click="updateDefaultTemplate">
                             <Spinner v-if="defaultTemplateSaving" class="size-4" />
-                            Save Default
+                            {{ defaultTemplateSaving ? 'Saving...' : 'Save Default' }}
                         </Button>
                     </div>
                 </CardContent>

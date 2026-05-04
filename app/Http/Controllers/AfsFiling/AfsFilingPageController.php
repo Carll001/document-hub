@@ -145,7 +145,7 @@ class AfsFilingPageController extends Controller
         }
 
         if (($filters['completed_only'] ?? false) === true) {
-            $query->where('status', 'pdf_done')->whereNotNull('signature_applied_at');
+            $query->where('status', 'signed')->whereNotNull('signature_applied_at');
         }
 
         $statusFilter = is_string($filters['status'] ?? null) ? trim((string) $filters['status']) : '';
@@ -171,7 +171,8 @@ class AfsFilingPageController extends Controller
                     WHEN 'processing' THEN 3
                     WHEN 'docx_done' THEN 4
                     WHEN 'queued' THEN 5
-                    WHEN 'pdf_done' THEN 6
+                    WHEN 'generated' THEN 6
+                    WHEN 'signed' THEN 7
                     ELSE 99
                 END ASC
             ");

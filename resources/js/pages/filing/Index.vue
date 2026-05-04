@@ -7,6 +7,16 @@ import type { BreadcrumbItem } from '@/types'
 
 import { Button } from '@/components/ui/button'
 import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
+import {
     Stepper,
     StepperDescription,
     StepperItem,
@@ -14,12 +24,13 @@ import {
     StepperTitle,
     StepperTrigger,
 } from '@/components/ui/stepper'
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { router } from '@inertiajs/vue3'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { DataTable } from '@/components/ui/data-table'
 import { createCompanySelectColumns, type CompanyOptionRow } from '@/pages/filing/columns'
+import { toast } from 'vue-sonner'
 import Step2SelectFilingType from '@/pages/filing/components/Step2SelectFilingType.vue'
 import Step3DataCheckingAfs from '@/pages/filing/components/Step3DataCheckingAfs.vue'
 import Step3DataChecking1702Ex from '@/pages/filing/components/Step3DataChecking1702Ex.vue'
@@ -46,6 +57,8 @@ const props = defineProps<{
     routes: {
         index: string
         afsGenerate: string
+        afsGetorPreview: string
+        afsPresidentPreview: string
         afsOutputs: string
     }
     companies: {
@@ -74,7 +87,16 @@ const props = defineProps<{
 
 const search = ref(props.filters.search ?? '')
 const selectedCompanyIds = ref<number[]>(props.selectedCompanyIds ?? [])
+const presidentSignatures = ref<Record<number, File | null>>({})
+const getorSignature = ref<File | null>(null)
 const currentStep = computed(() => props.currentStep ?? 1)
+const overwriteDialogOpen = ref(false)
+const overwriteConflicts = ref<Array<{ company_name: string }>>([])
+const missingPresidentWarningOpen = ref(false)
+const missingGetorWarningOpen = ref(false)
+const hasGlobalGetorSignature = ref<boolean | null>(null)
+const persistedPresidentSignatureAvailability = ref<Record<number, boolean>>({})
+const isGenerating = ref(false)
 
 const rows = computed(() => props.companies.data)
 const tableMeta = computed(() => props.companies.pagination)
@@ -82,6 +104,7 @@ const tableMeta = computed(() => props.companies.pagination)
 const columns = createCompanySelectColumns({
     selectedCompanyIds,
 })
+const GENERATE_STARTED_TOAST_KEY = 'filing:show-generate-started-toast'
 
 function refreshTable(overrides: Partial<{ page: number; search: string; perPage: number }>) {
     router.get(
@@ -163,7 +186,212 @@ function goToStep3(filingType: 'afs' | '1702ex') {
     )
 }
 
-function goToStep4() {
+function onRemoveMissingCompanies(remainingCompanyIds: number[]) {
+    const nextStep = remainingCompanyIds.length > 0 ? 2 : 1
+    router.get(
+        props.routes.index,
+        {
+            step: nextStep,
+            companyId: remainingCompanyIds,
+            filingType: remainingCompanyIds.length > 0 ? props.selectedFilingType : undefined,
+            search: search.value,
+        },
+        {
+            preserveScroll: true,
+            preserveState: false,
+            replace: true,
+        },
+    )
+}
+
+function queueGenerateStartedToast(message: string): void {
+    try {
+        window.sessionStorage.setItem(
+            GENERATE_STARTED_TOAST_KEY,
+            JSON.stringify({ message, at: Date.now() }),
+        )
+    } catch {
+        // no-op: storage unavailable
+    }
+}
+
+function showQueuedGenerateStartedToastIfNeeded(): void {
+    if (currentStep.value !== 4) {
+        return
+    }
+
+    try {
+        const raw = window.sessionStorage.getItem(GENERATE_STARTED_TOAST_KEY)
+        if (!raw) {
+            return
+        }
+        window.sessionStorage.removeItem(GENERATE_STARTED_TOAST_KEY)
+        const payload = JSON.parse(raw) as { message?: string; at?: number }
+        const queuedAt = typeof payload.at === 'number' ? payload.at : 0
+        if (Date.now() - queuedAt > 15000) {
+            return
+        }
+
+        toast.success(payload.message ?? 'Generating started')
+    } catch {
+        // ignore malformed storage payload
+    }
+}
+
+onMounted(() => {
+    showQueuedGenerateStartedToastIfNeeded()
+})
+
+watch(
+    () => currentStep.value,
+    (step) => {
+        if (step === 4) {
+            showQueuedGenerateStartedToastIfNeeded()
+        }
+    },
+)
+
+async function submitAfsGenerate(overwriteExisting = false): Promise<boolean> {
+    const formData = new FormData()
+    formData.append('filingType', 'afs')
+    if (overwriteExisting) {
+        formData.append('overwriteExisting', '1')
+    }
+    selectedCompanyIds.value.forEach((id) => {
+        formData.append('companyId[]', String(id))
+        const signature = presidentSignatures.value[id]
+        if (signature instanceof File) {
+            formData.append(`presidentSignature[${id}]`, signature)
+        }
+    })
+    if (getorSignature.value instanceof File) {
+        formData.append('getorSignature', getorSignature.value)
+    }
+
+    const response = await fetch(props.routes.afsGenerate, {
+        method: 'POST',
+        headers: {
+            Accept: 'application/json',
+            'X-CSRF-TOKEN': (document.querySelector('meta[name=\"csrf-token\"]') as HTMLMetaElement | null)?.content ?? '',
+        },
+        body: formData,
+    })
+
+    if (response.status === 409) {
+        const payload = (await response.json()) as {
+            conflicts?: Array<{ company_name?: string }>
+        }
+        overwriteConflicts.value = (payload.conflicts ?? []).map((item) => ({
+            company_name: String(item.company_name ?? ''),
+        }))
+        overwriteDialogOpen.value = true
+        return false
+    }
+
+    return response.ok
+}
+
+async function loadGlobalGetorSignatureStatus(): Promise<boolean> {
+    if (hasGlobalGetorSignature.value !== null) {
+        return hasGlobalGetorSignature.value
+    }
+
+    try {
+        const response = await fetch('/afs-filing/signature', {
+            method: 'GET',
+            headers: {
+                Accept: 'application/json',
+                'X-Requested-With': 'XMLHttpRequest',
+            },
+        })
+
+        if (!response.ok) {
+            hasGlobalGetorSignature.value = false
+            return false
+        }
+
+        const payload = (await response.json()) as {
+            signature?: { getor?: { preview_url?: string } } | null
+        }
+        const hasGetor = Boolean(payload.signature?.getor?.preview_url)
+        hasGlobalGetorSignature.value = hasGetor
+
+        return hasGetor
+    } catch {
+        hasGlobalGetorSignature.value = false
+        return false
+    }
+}
+
+async function hasPersistedPresidentSignature(companyId: number): Promise<boolean> {
+    if (typeof persistedPresidentSignatureAvailability.value[companyId] === 'boolean') {
+        return persistedPresidentSignatureAvailability.value[companyId]
+    }
+
+    const baseUrl = props.routes.afsPresidentPreview
+    const url = `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}companyId=${companyId}`
+
+    try {
+        const response = await fetch(url, {
+            method: 'GET',
+            headers: {
+                Accept: 'image/*',
+                'X-Requested-With': 'XMLHttpRequest',
+            },
+        })
+        const hasSignature = response.ok
+        persistedPresidentSignatureAvailability.value[companyId] = hasSignature
+        return hasSignature
+    } catch {
+        persistedPresidentSignatureAvailability.value[companyId] = false
+        return false
+    }
+}
+
+async function hasMissingPresidentSignatureForSelection(): Promise<boolean> {
+    for (const companyId of selectedCompanyIds.value) {
+        const uploaded = presidentSignatures.value[companyId]
+        if (uploaded instanceof File) {
+            continue
+        }
+
+        const hasPersisted = await hasPersistedPresidentSignature(companyId)
+        if (!hasPersisted) {
+            return true
+        }
+    }
+
+    return false
+}
+
+async function proceedGenerateAfterWarnings() {
+    isGenerating.value = true
+    try {
+        const queued = await submitAfsGenerate(false)
+        if (!queued) return
+
+        queueGenerateStartedToast('Your filing generation has been queued.')
+        router.get(
+            props.routes.index,
+            {
+                step: 4,
+                companyId: selectedCompanyIds.value,
+                filingType: props.selectedFilingType,
+            },
+            {
+                preserveScroll: true,
+                preserveState: false,
+                replace: true,
+            },
+        )
+    } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Unable to start generation.')
+    } finally {
+        isGenerating.value = false
+    }
+}
+
+async function goToStep4() {
     if (props.selectedFilingType !== 'afs') {
         router.get(
             props.routes.index,
@@ -181,18 +409,39 @@ function goToStep4() {
         return
     }
 
-    fetch(props.routes.afsGenerate, {
-        method: 'POST',
-        headers: {
-            Accept: 'application/json',
-            'Content-Type': 'application/json',
-            'X-CSRF-TOKEN': (document.querySelector('meta[name=\"csrf-token\"]') as HTMLMetaElement | null)?.content ?? '',
-        },
-        body: JSON.stringify({
-            filingType: 'afs',
-            companyId: selectedCompanyIds.value,
-        }),
-    }).finally(() => {
+    const missingPresident = await hasMissingPresidentSignatureForSelection()
+    const hasGetor = await loadGlobalGetorSignatureStatus()
+    const missingGetor = !hasGetor && !(getorSignature.value instanceof File)
+
+    if (missingPresident) {
+        missingPresidentWarningOpen.value = true
+        return
+    }
+
+    if (missingGetor) {
+        missingGetorWarningOpen.value = true
+        return
+    }
+
+    await proceedGenerateAfterWarnings()
+}
+
+function onPresidentSignatureChanged(payload: { companyId: number; file: File | null }) {
+    presidentSignatures.value[payload.companyId] = payload.file
+}
+
+function onGetorSignatureChanged(file: File | null) {
+    getorSignature.value = file
+}
+
+async function confirmOverwriteAndGenerate() {
+    overwriteDialogOpen.value = false
+    isGenerating.value = true
+    try {
+        const queued = await submitAfsGenerate(true)
+        if (!queued) return
+
+        queueGenerateStartedToast('Overwrite confirmed. Filing generation has been queued.')
         router.get(
             props.routes.index,
             {
@@ -206,7 +455,35 @@ function goToStep4() {
                 replace: true,
             },
         )
-    })
+    } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Unable to start generation.')
+    } finally {
+        isGenerating.value = false
+    }
+}
+
+function cancelMissingPresidentWarning() {
+    missingPresidentWarningOpen.value = false
+}
+
+async function continueMissingPresidentWarning() {
+    missingPresidentWarningOpen.value = false
+    const hasGetor = await loadGlobalGetorSignatureStatus()
+    if (!hasGetor && !(getorSignature.value instanceof File)) {
+        missingGetorWarningOpen.value = true
+        return
+    }
+
+    await proceedGenerateAfterWarnings()
+}
+
+function cancelMissingGetorWarning() {
+    missingGetorWarningOpen.value = false
+}
+
+async function continueMissingGetorWarning() {
+    missingGetorWarningOpen.value = false
+    await proceedGenerateAfterWarnings()
 }
 
 const breadcrumbs: BreadcrumbItem[] = [
@@ -245,6 +522,51 @@ const steps = [
     <Head title="Generate Filing" />
 
     <AppLayout :breadcrumbs="breadcrumbs">
+        <AlertDialog v-model:open="overwriteDialogOpen">
+            <AlertDialogContent>
+                <AlertDialogHeader>
+                    <AlertDialogTitle>Existing generated output found</AlertDialogTitle>
+                    <AlertDialogDescription>
+                        Generated output already exists for:
+                        {{ overwriteConflicts.map((x) => x.company_name).filter((x) => x !== '').join(', ') }}.
+                        Overwrite existing outputs?
+                    </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction @click="confirmOverwriteAndGenerate">Overwrite</AlertDialogAction>
+                </AlertDialogFooter>
+            </AlertDialogContent>
+        </AlertDialog>
+        <AlertDialog v-model:open="missingPresidentWarningOpen">
+            <AlertDialogContent>
+                <AlertDialogHeader>
+                    <AlertDialogTitle>President signature missing</AlertDialogTitle>
+                    <AlertDialogDescription>
+                        One or more selected companies have no President signature image. Signatures will not be attached for those companies. Continue?
+                    </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                    <AlertDialogCancel @click="cancelMissingPresidentWarning">Cancel</AlertDialogCancel>
+                    <AlertDialogAction @click="continueMissingPresidentWarning">Continue</AlertDialogAction>
+                </AlertDialogFooter>
+            </AlertDialogContent>
+        </AlertDialog>
+        <AlertDialog v-model:open="missingGetorWarningOpen">
+            <AlertDialogContent>
+                <AlertDialogHeader>
+                    <AlertDialogTitle>GETOR signature missing</AlertDialogTitle>
+                    <AlertDialogDescription>
+                        Global GETOR signature is not configured. GETOR signature will not be attached. Continue?
+                    </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                    <AlertDialogCancel @click="cancelMissingGetorWarning">Cancel</AlertDialogCancel>
+                    <AlertDialogAction @click="continueMissingGetorWarning">Continue</AlertDialogAction>
+                </AlertDialogFooter>
+            </AlertDialogContent>
+        </AlertDialog>
+
         <div class="flex flex-1 flex-col gap-6 p-4 md:p-6">
             <div>
                 <h1 class="text-2xl font-bold tracking-tight">
@@ -313,13 +635,19 @@ const steps = [
                 :filing-type-availability="props.filingTypeAvailability"
                 @back="goToStep1"
                 @next="goToStep3"
+                @remove-missing-companies="onRemoveMissingCompanies"
             />
 
             <Step3DataCheckingAfs
                 v-else-if="currentStep === 3 && props.selectedFilingType === 'afs'"
                 :selected-companies="props.selectedCompanies"
+                :persisted-getor-preview-url="props.routes.afsGetorPreview"
+                :persisted-president-preview-url="props.routes.afsPresidentPreview"
+                :is-generating="isGenerating"
                 @back-to-filing-type="goToStep2"
                 @generate-filing="goToStep4"
+                @president-signature-changed="onPresidentSignatureChanged"
+                @getor-signature-changed="onGetorSignatureChanged"
             />
 
             <Step3DataChecking1702Ex

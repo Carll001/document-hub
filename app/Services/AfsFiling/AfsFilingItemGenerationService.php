@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services\AfsFiling;
 
+use App\Jobs\AfsFiling\ApplyAfsFilingItemSignatureJob;
 use App\Models\AfsFilingItem;
 use App\Models\FilingOutput;
 use App\Models\DocumentGeneratorTemplate;
@@ -12,6 +13,7 @@ use App\Services\PdfConversionService;
 use App\Support\DocumentStorage;
 use App\Support\FormFieldAliasResolver;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use RuntimeException;
 
@@ -29,7 +31,7 @@ class AfsFilingItemGenerationService
             return;
         }
 
-        if (in_array((string) $item->status, ['pdf_done', 'failed', 'deleting'], true)) {
+        if (in_array((string) $item->status, ['generated', 'signed', 'failed', 'deleting'], true)) {
             return;
         }
 
@@ -96,7 +98,7 @@ class AfsFilingItemGenerationService
                 return;
             }
 
-            $item->status = 'pdf_done';
+            $item->status = 'generated';
             $item->docx_path = $docxRelativePath;
             $item->pdf_path = $pdfRelativePath;
             $item->error_message = null;
@@ -109,6 +111,31 @@ class AfsFilingItemGenerationService
                 'file_name' => basename($pdfRelativePath),
                 'error_message' => null,
             ]);
+
+            $signaturePath = $this->resolvePresidentSignaturePath($item);
+            $getorPath = $this->resolveGetorSignaturePath($item);
+            Log::info('AFS auto-sign precheck.', [
+                'item_id' => (int) $item->id,
+                'user_id' => (int) $item->user_id,
+                'president_signature_path' => $signaturePath,
+                'president_signature_exists' => is_string($signaturePath) && $signaturePath !== '' ? DocumentStorage::disk()->exists($signaturePath) : false,
+                'getor_signature_path' => $getorPath,
+                'getor_signature_exists' => is_string($getorPath) && $getorPath !== '' ? DocumentStorage::disk()->exists($getorPath) : false,
+            ]);
+            if (is_string($signaturePath) && $signaturePath !== '' && DocumentStorage::disk()->exists($signaturePath)) {
+                $item->status = 'signing';
+                $item->save();
+                $this->syncFilingOutput($item, [
+                    'status' => 'signing',
+                    'error_message' => null,
+                ]);
+
+                ApplyAfsFilingItemSignatureJob::dispatch((int) $item->user_id, (int) $item->id, $signaturePath);
+                Log::info('AFS auto-sign queued.', [
+                    'item_id' => (int) $item->id,
+                    'user_id' => (int) $item->user_id,
+                ]);
+            }
         } catch (\Throwable $exception) {
             $item->status = 'failed';
             $item->error_message = mb_substr($exception->getMessage(), 0, 2000);
@@ -294,5 +321,39 @@ class AfsFilingItemGenerationService
         }
 
         return "{$normalized}-AFS";
+    }
+
+    private function resolvePresidentSignaturePath(AfsFilingItem $item): ?string
+    {
+        $rowData = is_array($item->row_data) ? $item->row_data : [];
+        $fromRow = $rowData['__president_signature_path'] ?? null;
+        if (is_string($fromRow) && trim($fromRow) !== '') {
+            return trim($fromRow);
+        }
+
+        $filingOutputId = (int) ($rowData['__filing_output_id'] ?? 0);
+        if ($filingOutputId <= 0) {
+            return null;
+        }
+
+        $output = FilingOutput::query()->find($filingOutputId);
+        if (! $output instanceof FilingOutput) {
+            return null;
+        }
+
+        return is_string($output->president_signature_path) && trim($output->president_signature_path) !== ''
+            ? trim($output->president_signature_path)
+            : null;
+    }
+
+    private function resolveGetorSignaturePath(AfsFilingItem $item): ?string
+    {
+        $rowData = is_array($item->row_data) ? $item->row_data : [];
+        $fromRow = $rowData['__getor_signature_path'] ?? null;
+        if (is_string($fromRow) && trim($fromRow) !== '') {
+            return trim($fromRow);
+        }
+
+        return null;
     }
 }

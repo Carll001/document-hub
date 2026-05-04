@@ -177,8 +177,9 @@ export function createCompanyReviewColumns(options: ReviewOptions): ColumnDef<Co
                 const status = (row.original.status || 'pending').toLowerCase()
                 const isFailed = status === 'failed'
                 const isGenerated = status === 'generated'
+                const isSigned = status === 'signed'
 
-                const statusClass = isGenerated
+                const statusClass = (isGenerated || isSigned)
                     ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
                     : isFailed
                         ? 'border-red-200 bg-red-50 text-red-700'
@@ -215,7 +216,7 @@ export function createCompanyReviewColumns(options: ReviewOptions): ColumnDef<Co
                         h(
                             DropdownMenuItem,
                             {
-                                disabled: !row.original.pdf_available || row.original.status !== 'generated',
+                                disabled: !row.original.pdf_available || !['generated', 'signed'].includes(row.original.status),
                                 onSelect: () => options.onPreview(row.original),
                             },
                             () => [
@@ -267,7 +268,7 @@ export function createCompanyReviewColumns(options: ReviewOptions): ColumnDef<Co
                         h(
                             DropdownMenuItem,
                             {
-                                disabled: !row.original.pdf_available || row.original.status !== 'generated',
+                                disabled: !row.original.pdf_available || !['generated', 'signed'].includes(row.original.status),
                                 onSelect: () => options.onDownload(row.original),
                             },
                             () => [

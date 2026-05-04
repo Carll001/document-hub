@@ -16,8 +16,7 @@ class AfsFilingItemSignRequest extends BaseFormRequest
     public function rules(): array
     {
         return [
-            'president_signature_file' => ['required', 'file', 'mimes:png,jpg,jpeg,webp', 'max:5120'],
+            'president_signature_file' => ['nullable', 'file', 'mimes:png,jpg,jpeg,webp', 'max:5120'],
         ];
     }
 }
-

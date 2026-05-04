@@ -19,6 +19,19 @@ class SignatureImageService
         throw new RuntimeException('No supported image extension found for signature processing.');
     }
 
+    public function overlayOnTop(string $basePngPath, string $overlayPngPath): string
+    {
+        if (extension_loaded('imagick')) {
+            return $this->overlayWithImagick($basePngPath, $overlayPngPath);
+        }
+
+        if (function_exists('imagecreatefrompng')) {
+            return $this->overlayWithGd($basePngPath, $overlayPngPath);
+        }
+
+        throw new RuntimeException('No supported image extension found for signature overlay.');
+    }
+
     private function processWithImagick(string $sourcePath): string
     {
         $image = new \Imagick($sourcePath);
@@ -118,5 +131,86 @@ class SignatureImageService
 
         return $tmp.$extension;
     }
-}
 
+    private function overlayWithImagick(string $basePngPath, string $overlayPngPath): string
+    {
+        $base = new \Imagick($basePngPath);
+        $overlay = new \Imagick($overlayPngPath);
+
+        $base->setImageFormat('png');
+        $overlay->setImageFormat('png');
+        $base->setImageAlphaChannel(\Imagick::ALPHACHANNEL_ACTIVATE);
+        $overlay->setImageAlphaChannel(\Imagick::ALPHACHANNEL_ACTIVATE);
+
+        $baseW = max(1, $base->getImageWidth());
+        $baseH = max(1, $base->getImageHeight());
+        $overlayW = max(1, $overlay->getImageWidth());
+        $overlayH = max(1, $overlay->getImageHeight());
+        $ratio = min($baseW / $overlayW, $baseH / $overlayH);
+        $targetW = max(1, (int) round($overlayW * $ratio));
+        $targetH = max(1, (int) round($overlayH * $ratio));
+        $overlay->resizeImage($targetW, $targetH, \Imagick::FILTER_LANCZOS, 1.0);
+
+        $x = (int) floor(($baseW - $targetW) / 2);
+        $y = (int) floor(($baseH - $targetH) / 2);
+        $base->compositeImage($overlay, \Imagick::COMPOSITE_OVER, $x, $y);
+
+        $targetPath = $this->tempPath('signature-overlay-', '.png');
+        if (! $base->writeImage($targetPath)) {
+            throw new RuntimeException('Unable to write composited signature image.');
+        }
+
+        $base->clear();
+        $base->destroy();
+        $overlay->clear();
+        $overlay->destroy();
+
+        return $targetPath;
+    }
+
+    private function overlayWithGd(string $basePngPath, string $overlayPngPath): string
+    {
+        $base = imagecreatefrompng($basePngPath);
+        $overlay = imagecreatefrompng($overlayPngPath);
+        if (! ($base instanceof \GdImage) || ! ($overlay instanceof \GdImage)) {
+            throw new RuntimeException('Unable to open PNG images for signature overlay.');
+        }
+
+        imagealphablending($base, true);
+        imagesavealpha($base, true);
+        imagealphablending($overlay, true);
+        imagesavealpha($overlay, true);
+
+        $baseW = imagesx($base);
+        $baseH = imagesy($base);
+        $overlayW = imagesx($overlay);
+        $overlayH = imagesy($overlay);
+        $ratio = min($baseW / max(1, $overlayW), $baseH / max(1, $overlayH));
+        $targetW = max(1, (int) round($overlayW * $ratio));
+        $targetH = max(1, (int) round($overlayH * $ratio));
+        $resizedOverlay = imagescale($overlay, $targetW, $targetH, IMG_BICUBIC_FIXED);
+        if (! ($resizedOverlay instanceof \GdImage)) {
+            imagedestroy($base);
+            imagedestroy($overlay);
+            throw new RuntimeException('Unable to resize overlay signature image.');
+        }
+
+        $x = (int) floor(($baseW - $targetW) / 2);
+        $y = (int) floor(($baseH - $targetH) / 2);
+        imagecopy($base, $resizedOverlay, $x, $y, 0, 0, $targetW, $targetH);
+
+        $targetPath = $this->tempPath('signature-overlay-', '.png');
+        if (! imagepng($base, $targetPath)) {
+            imagedestroy($base);
+            imagedestroy($overlay);
+            imagedestroy($resizedOverlay);
+            throw new RuntimeException('Unable to write composited signature image.');
+        }
+
+        imagedestroy($base);
+        imagedestroy($overlay);
+        imagedestroy($resizedOverlay);
+
+        return $targetPath;
+    }
+}

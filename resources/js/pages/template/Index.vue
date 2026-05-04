@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Head, router, useForm } from '@inertiajs/vue3'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { Plus, Search } from 'lucide-vue-next'
 
 import AppLayout from '@/layouts/AppLayout.vue'
@@ -12,6 +12,7 @@ import type { BreadcrumbItem } from '@/types'
 import template from '@/routes/template'
 import CreateTemplateDialog from '@/pages/template/Create.vue'
 import { createTemplateColumns, type TemplateRow } from '@/pages/template/columns'
+import { createToast, showToast } from '@/lib/toast'
 
 type PaginationMeta = {
     current_page: number
@@ -54,6 +55,7 @@ const form = useForm({
     filing_type: 'afs',
     template_file: null as File | null,
 })
+const lastShownFlash = ref<{ success: string; error: string }>({ success: '', error: '' })
 
 const breadcrumbs: BreadcrumbItem[] = [
     {
@@ -84,6 +86,25 @@ const columns = createTemplateColumns({
         })
     },
 })
+
+watch(
+    () => props.flash,
+    (flash) => {
+        const success = (flash?.success ?? '').trim()
+        const error = (flash?.error ?? '').trim()
+
+        if (success !== '' && success !== lastShownFlash.value.success) {
+            showToast(createToast('success', 'Success', success))
+            lastShownFlash.value.success = success
+        }
+
+        if (error !== '' && error !== lastShownFlash.value.error) {
+            showToast(createToast('error', 'Error', error))
+            lastShownFlash.value.error = error
+        }
+    },
+    { immediate: true, deep: true },
+)
 
 function submit(payload: { name: string; filing_type: 'afs' | '1702ex'; template_file: File | null }) {
     form.name = payload.name
@@ -182,13 +203,6 @@ function formatDate(value: string | null): string {
                     <Plus class="size-4" />
                     {{ showCreate ? 'Close' : 'New Template' }}
                 </Button>
-            </div>
-
-            <div v-if="props.flash?.success" class="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-700">
-                {{ props.flash.success }}
-            </div>
-            <div v-if="props.flash?.error" class="rounded-md border border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-700">
-                {{ props.flash.error }}
             </div>
 
             <CreateTemplateDialog

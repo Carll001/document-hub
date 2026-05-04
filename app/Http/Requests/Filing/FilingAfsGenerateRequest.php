@@ -14,7 +14,10 @@ class FilingAfsGenerateRequest extends BaseFormRequest
             'filingType' => ['required', 'string', 'in:afs'],
             'companyId' => ['required', 'array', 'min:1'],
             'companyId.*' => ['integer', 'exists:companies,id'],
+            'overwriteExisting' => ['nullable', 'boolean'],
+            'presidentSignature' => ['nullable', 'array'],
+            'presidentSignature.*' => ['nullable', 'file', 'mimes:png,jpg,jpeg,webp', 'max:5120'],
+            'getorSignature' => ['nullable', 'file', 'mimes:png,jpg,jpeg,webp', 'max:5120'],
         ];
     }
 }
-

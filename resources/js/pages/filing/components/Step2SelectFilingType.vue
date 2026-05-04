@@ -8,6 +8,7 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area'
 import {
     AlertDialog,
     AlertDialogAction,
+    AlertDialogCancel,
     AlertDialogContent,
     AlertDialogDescription,
     AlertDialogFooter,
@@ -42,6 +43,7 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
     back: []
     next: [filingType: 'afs' | '1702ex']
+    removeMissingCompanies: [remainingCompanyIds: number[]]
 }>()
 
 const selectedType = ref<'afs' | '1702ex'>(props.initialFilingType ?? 'afs')
@@ -184,6 +186,13 @@ function selectType(type: 'afs' | '1702ex') {
     selectedType.value = type
 }
 
+function removeInvalidCompaniesFromSelection() {
+    const invalidIds = new Set(selectedMissingCompanies.value.map((company) => company.id))
+    const remaining = props.selectedCompanyIds.filter((id) => !invalidIds.has(id))
+    showMissingDialog.value = false
+    emit('removeMissingCompanies', remaining)
+}
+
 const canProceed = computed(() => {
     const option = options.value.find((item) => item.id === selectedType.value)
 
@@ -218,8 +227,9 @@ if (!canProceed.value) {
             </div>
 
             <AlertDialogFooter>
-                <AlertDialogAction @click="showMissingDialog = false">
-                    OK
+                <AlertDialogCancel @click="showMissingDialog = false">Cancel</AlertDialogCancel>
+                <AlertDialogAction @click="removeInvalidCompaniesFromSelection">
+                    Remove
                 </AlertDialogAction>
             </AlertDialogFooter>
         </AlertDialogContent>

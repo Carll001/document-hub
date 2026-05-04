@@ -41,7 +41,7 @@ class AfsFilingExportController extends Controller
 
         $query = AfsFilingItem::query()
             ->where('user_id', $userId)
-            ->where('status', 'pdf_done')
+            ->where('status', 'signed')
             ->whereNotNull('signature_applied_at');
 
         if (is_string($validated['company_search'] ?? null) && trim((string) $validated['company_search']) !== '') {
@@ -116,7 +116,7 @@ class AfsFilingExportController extends Controller
         $resolvedIds = AfsFilingItem::query()
             ->where('user_id', (int) $user->getKey())
             ->whereIn('id', $itemIds->all())
-            ->where('status', 'pdf_done')
+            ->where('status', 'signed')
             ->whereNotNull('signature_applied_at')
             ->pluck('id')
             ->map(static fn (mixed $id): int => (int) $id)

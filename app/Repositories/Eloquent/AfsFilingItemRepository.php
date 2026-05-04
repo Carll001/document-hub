@@ -30,7 +30,7 @@ class AfsFilingItemRepository implements AfsFilingItemRepositoryContract
 
         $completedOnly = filter_var($filters['completed_only'] ?? false, FILTER_VALIDATE_BOOLEAN);
         if ($completedOnly) {
-            $query->where('status', 'pdf_done')->whereNotNull('signature_applied_at');
+            $query->where('status', 'signed')->whereNotNull('signature_applied_at');
         }
 
         if (is_string($filters['company_search'] ?? null) && trim($filters['company_search']) !== '') {
@@ -54,7 +54,8 @@ class AfsFilingItemRepository implements AfsFilingItemRepositoryContract
                     WHEN 'processing' THEN 3
                     WHEN 'docx_done' THEN 4
                     WHEN 'queued' THEN 5
-                    WHEN 'pdf_done' THEN 6
+                    WHEN 'generated' THEN 6
+                    WHEN 'signed' THEN 7
                     ELSE 99
                 END ASC
             ");

@@ -18,6 +18,8 @@ class FilingOutput extends Model
         'file_name',
         'status',
         'error_message',
+        'president_signature_path',
+        'filing_signature',
     ];
 
     protected function casts(): array
@@ -33,4 +35,3 @@ class FilingOutput extends Model
         return $this->belongsTo(Company::class);
     }
 }
-

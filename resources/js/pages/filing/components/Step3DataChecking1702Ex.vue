@@ -53,6 +53,18 @@ function pickDataValue(company: CompanyData, aliases: string[]): string {
 
     return ''
 }
+
+function switchPage(page: 1 | 2 | 3): void {
+    if (page === currentPage.value) {
+        return
+    }
+
+    currentPage.value = page
+    window.scrollTo({
+        top: 350,
+        behavior: 'smooth',
+    })
+}
 </script>
 
 <template>
@@ -122,9 +134,9 @@ function pickDataValue(company: CompanyData, aliases: string[]): string {
                     Back
                 </Button>
                 <div class="flex items-center gap-2">
-                    <Button variant="outline" size="sm" :class="currentPage === 1 && 'border-[#2563EB] text-[#2563EB]'" @click="currentPage = 1">Page 1</Button>
-                    <Button variant="outline" size="sm" :class="currentPage === 2 && 'border-[#2563EB] text-[#2563EB]'" @click="currentPage = 2">Page 2</Button>
-                    <Button variant="outline" size="sm" :class="currentPage === 3 && 'border-[#2563EB] text-[#2563EB]'" @click="currentPage = 3">Page 3</Button>
+                    <Button variant="outline" size="sm" :class="currentPage === 1 && 'border-[#2563EB] text-[#2563EB]'" @click="switchPage(1)">Page 1</Button>
+                    <Button variant="outline" size="sm" :class="currentPage === 2 && 'border-[#2563EB] text-[#2563EB]'" @click="switchPage(2)">Page 2</Button>
+                    <Button variant="outline" size="sm" :class="currentPage === 3 && 'border-[#2563EB] text-[#2563EB]'" @click="switchPage(3)">Page 3</Button>
                     <Button variant="outline">Save as Draft</Button>
                     <Button class="gap-2 bg-[#2563EB] hover:bg-[#1D4ED8]" @click="emit('generateFiling')">
                         <FileText class="size-4" />

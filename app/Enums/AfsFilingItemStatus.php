@@ -9,6 +9,7 @@ enum AfsFilingItemStatus: string
     case Queued = 'queued';
     case Processing = 'processing';
     case DocxDone = 'docx_done';
-    case PdfDone = 'pdf_done';
+    case Generated = 'generated';
+    case Signed = 'signed';
     case Failed = 'failed';
 }

@@ -43,7 +43,7 @@ class GenerateAfsFilingItemJob implements ShouldQueue
             return;
         }
 
-        if (in_array((string) $item->status, ['pdf_done', 'failed'], true)) {
+        if (in_array((string) $item->status, ['generated', 'signed', 'failed'], true)) {
             return;
         }
 

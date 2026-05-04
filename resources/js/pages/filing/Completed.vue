@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { Head, router } from '@inertiajs/vue3'
+import { Head, Link } from '@inertiajs/vue3'
 import { computed, onMounted, ref } from 'vue'
-import { CheckCircle, RefreshCw } from 'lucide-vue-next'
+import { RefreshCw } from 'lucide-vue-next'
 import AppLayout from '@/layouts/AppLayout.vue'
 import type { BreadcrumbItem } from '@/types'
 import { Button } from '@/components/ui/button'
@@ -22,7 +22,7 @@ import { createCompanyReviewColumns, type CompanyReviewRow } from '@/pages/filin
 const props = defineProps<{
     routes: {
         index: string
-        completed: string
+        myFilings: string
         outputs: string
     }
 }>()
@@ -35,7 +35,7 @@ const failedDialogRow = ref<CompanyReviewRow | null>(null)
 
 const breadcrumbs: BreadcrumbItem[] = [
     {
-        title: 'My Filings',
+        title: 'Completed Files',
         href: props.routes.index,
     },
 ]
@@ -45,6 +45,8 @@ async function refreshRows(): Promise<void> {
 
     try {
         const query = new URLSearchParams()
+        query.set('formType', 'afs')
+        query.set('status', 'signed')
         if (search.value.trim() !== '') {
             query.set('search', search.value.trim())
         }
@@ -56,7 +58,7 @@ async function refreshRows(): Promise<void> {
         })
 
         if (!response.ok) {
-            throw new Error(`Failed to load filings (${response.status}).`)
+            throw new Error(`Failed to load completed files (${response.status}).`)
         }
 
         const payload = (await response.json()) as { data?: CompanyReviewRow[] }
@@ -67,27 +69,14 @@ async function refreshRows(): Promise<void> {
 }
 
 function previewRow(row: CompanyReviewRow): void {
-    if (row.form_type !== 'afs') {
-        window.alert('Preview is currently available for AFS outputs only.')
-        return
-    }
     window.open(`/filing/afs/outputs/${row.id}/preview`, '_blank', 'noopener,noreferrer')
 }
 
 function downloadRow(row: CompanyReviewRow): void {
-    if (row.form_type !== 'afs') {
-        window.alert('Download is currently available for AFS outputs only.')
-        return
-    }
     window.open(`/filing/afs/outputs/${row.id}/download`, '_blank', 'noopener,noreferrer')
 }
 
 async function deleteRow(row: CompanyReviewRow): Promise<void> {
-    if (row.form_type !== 'afs') {
-        window.alert('Delete is currently available for AFS outputs only.')
-        return
-    }
-
     await fetch(`/filing/afs/outputs/${row.id}`, {
         method: 'DELETE',
         headers: {
@@ -100,11 +89,6 @@ async function deleteRow(row: CompanyReviewRow): Promise<void> {
 }
 
 async function regenerateRow(row: CompanyReviewRow): Promise<void> {
-    if (row.form_type !== 'afs') {
-        window.alert('Regenerate is currently available for AFS outputs only.')
-        return
-    }
-
     await fetch(`/filing/afs/outputs/${row.id}/regenerate`, {
         method: 'POST',
         headers: {
@@ -116,13 +100,9 @@ async function regenerateRow(row: CompanyReviewRow): Promise<void> {
     void refreshRows()
 }
 
-function signRow(row: CompanyReviewRow): void {
-    window.alert(`Sign action is available for AFS row ${row.id}. Wiring to signature flow is next.`)
-}
+function signRow(_row: CompanyReviewRow): void {}
 
-function addTemporaryReceiptRow(row: CompanyReviewRow): void {
-    window.alert(`Add temporary receipt is available for 1702EX row ${row.id}. Wiring is next.`)
-}
+function addTemporaryReceiptRow(_row: CompanyReviewRow): void {}
 
 function openFailedStatusDialog(row: CompanyReviewRow): void {
     if (row.status.toLowerCase() !== 'failed') return
@@ -154,18 +134,13 @@ const meta = computed(() => {
     }
 })
 
-function goToCompletedFiles(): void {
-    router.get(props.routes.completed)
-}
-
 onMounted(() => {
     void refreshRows()
 })
 </script>
 
 <template>
-
-    <Head title="My Filings" />
+    <Head title="Completed Files" />
 
     <AppLayout :breadcrumbs="breadcrumbs">
         <AlertDialog :open="showFailedDialog" @update:open="showFailedDialog = $event">
@@ -183,9 +158,6 @@ onMounted(() => {
                     </p>
                     <p>{{ failedDialogRow?.error_message || 'No detailed error message was saved.' }}</p>
                 </div>
-                <div class="rounded-md border border-blue-200 bg-blue-50 p-3 text-xs text-blue-800">
-                    Note: You can add or complete required data using spreadsheet import or manual entry, then regenerate.
-                </div>
 
                 <AlertDialogFooter>
                     <AlertDialogAction @click="showFailedDialog = false">
@@ -199,19 +171,14 @@ onMounted(() => {
             <Card class="rounded-3xl border border-slate-200 bg-white shadow-sm">
                 <CardHeader class="flex flex-row items-center justify-between gap-3">
                     <div>
-                        <CardTitle>My Filings</CardTitle>
+                        <CardTitle>Completed Files</CardTitle>
                         <p class="text-sm text-muted-foreground">
-                            All generated filings with live status from the unified output registry.
+                            Signed AFS files ready for preview and download.
                         </p>
                     </div>
-                    <div>
-                        <Button
-                            class="gap-2"
-                            variant="outline"
-                            @click="goToCompletedFiles"
-                        >
-                            <CheckCircle class="size-4" />
-                            Completed Files
+                    <div class="flex items-center gap-2">
+                        <Button variant="outline" as-child>
+                            <Link :href="props.routes.myFilings">Back to My Filings</Link>
                         </Button>
                         <Button variant="outline" :disabled="loading" @click="refreshRows">
                             <RefreshCw class="size-4" :class="{ 'animate-spin': loading }" />
@@ -220,14 +187,17 @@ onMounted(() => {
                 </CardHeader>
 
                 <CardContent class="space-y-4">
-                    <Input v-model="search" placeholder="Search company, tin, status, or form type"
-                        @keyup.enter="refreshRows" />
+                    <Input
+                        v-model="search"
+                        placeholder="Search company or TIN"
+                        @keyup.enter="refreshRows"
+                    />
 
                     <DataTable
                         :columns="columns"
                         :data="rows"
                         :meta="meta"
-                        empty-message="No filings yet."
+                        empty-message="No signed AFS files yet."
                     />
                 </CardContent>
             </Card>

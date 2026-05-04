@@ -36,8 +36,11 @@ Route::middleware(['auth', 'verified'])->group(function () {
         ->group(function () {
             Route::get('/', 'index')->name('index');
             Route::get('my-filings', 'myFilings')->name('my-filings');
+            Route::get('completed', 'completedFilings')->name('completed');
             Route::get('outputs', 'outputs')->name('outputs.index');
             Route::post('afs/generate', 'generateAfs')->name('afs.generate');
+            Route::get('afs/getor-signature/preview', 'afsGetorSignaturePreview')->name('afs.getor.preview');
+            Route::get('afs/president-signature/preview', 'afsPresidentSignaturePreview')->name('afs.president.preview');
             Route::get('afs/outputs', 'afsOutputs')->name('afs.outputs.index');
             Route::get('afs/outputs/{item}/preview', 'afsOutputPreview')->name('afs.outputs.preview');
             Route::get('afs/outputs/{item}/download', 'afsOutputDownload')->name('afs.outputs.download');

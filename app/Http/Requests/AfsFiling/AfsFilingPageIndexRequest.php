@@ -21,9 +21,8 @@ class AfsFilingPageIndexRequest extends BaseFormRequest
             'search' => ['nullable', 'string', 'max:255'],
             'sort' => ['nullable', 'in:uploadedAt,generatedAt,pdfStatus,sourceRowNumber,created_at,updated_at,status,row_number'],
             'direction' => ['nullable', 'in:asc,desc'],
-            'status' => ['nullable', 'in:queued,processing,signing,deleting,docx_done,pdf_done,failed'],
+            'status' => ['nullable', 'in:queued,processing,signing,deleting,docx_done,generated,signed,failed'],
             'open_settings' => ['nullable', 'boolean'],
         ];
     }
 }
-

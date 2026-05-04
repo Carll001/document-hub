@@ -82,7 +82,7 @@ export function useAfsCompletedColumns(params: UseAfsCompletedColumnsParams) {
                         variant: statusBadgeVariant(row.original.status),
                         class: statusBadgeClass(row.original.status),
                     },
-                    () => (row.original.signature_applied ? 'Signed' : row.original.status === 'pdf_done' ? 'Generated' : row.original.status),
+                    () => (row.original.signature_applied ? 'Signed' : row.original.status === 'generated' ? 'Generated' : row.original.status),
                 ),
         },
         {
@@ -128,4 +128,3 @@ export function useAfsCompletedColumns(params: UseAfsCompletedColumnsParams) {
         },
     ]);
 }
-

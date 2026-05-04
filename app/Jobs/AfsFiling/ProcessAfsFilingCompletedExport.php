@@ -51,7 +51,7 @@ class ProcessAfsFilingCompletedExport implements ShouldQueue
             $items = AfsFilingItem::query()
                 ->where('user_id', (int) $user->getKey())
                 ->whereIn('id', $this->itemIds)
-                ->where('status', 'pdf_done')
+                ->where('status', 'signed')
                 ->whereNotNull('signature_applied_at')
                 ->get();
 

@@ -5,7 +5,7 @@ export const statusBadgeVariant = (status: string): 'default' | 'secondary' | 'd
         return 'destructive';
     }
 
-    if (status === 'pdf_done' || status === 'completed') {
+    if (status === 'generated' || status === 'signed' || status === 'completed') {
         return 'default';
     }
 
@@ -25,7 +25,7 @@ export const statusBadgeClass = (status: string): string | undefined => {
         return 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-300';
     }
 
-    if (status === 'pdf_done' || status === 'completed') {
+    if (status === 'generated' || status === 'signed' || status === 'completed') {
         return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300';
     }
 

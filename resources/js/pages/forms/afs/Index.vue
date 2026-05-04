@@ -146,7 +146,8 @@ const allStatusOrder: Record<string, number> = {
     processing: 4,
     docx_done: 5,
     queued: 6,
-    pdf_done: 7,
+    generated: 7,
+    signed: 8,
 };
 const itemsForTable = computed<UnifiedItem[]>(() => {
     const rows = [...itemsData.value.data];
@@ -177,7 +178,7 @@ const canBulkSignSelected = computed(() => {
     const selectedSet = new Set(selectedItemIds.value);
     return itemsData.value.data.some((item) =>
         selectedSet.has(item.id)
-        && item.status === 'pdf_done'
+        && item.status === 'generated'
         && item.pdf_available
         && !item.signature_applied
         && item.status !== 'deleting'
@@ -527,8 +528,10 @@ const isQueuedForSigning = (item: UnifiedItem): boolean =>
 const displayStatus = (item: UnifiedItem): string =>
     isPreparingSignature(item.id)
         ? 'Preparing for signing'
-        : item.status === 'pdf_done' && !item.signature_applied
+        : item.status === 'generated' && !item.signature_applied
           ? 'Generated'
+        : item.status === 'signed' || item.signature_applied
+          ? 'Signed'
         : isQueuedForSigning(item)
           ? 'Queued for signing'
         : item.status === 'deleting'
@@ -709,7 +712,7 @@ const applySignatureToSelectedItems = () => {
     const eligibleIds = itemsData.value.data
         .filter((item) =>
             selectedSet.has(item.id)
-            && item.status === 'pdf_done'
+            && item.status === 'generated'
             && item.pdf_available
             && !item.signature_applied
             && item.status !== 'deleting'

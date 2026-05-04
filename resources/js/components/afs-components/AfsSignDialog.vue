@@ -98,7 +98,7 @@ const submit = async () => {
         return;
     }
 
-    if (!presidentSignatureFile.value) {
+    if (props.mode === 'bulk' && !presidentSignatureFile.value) {
         error.value = 'President signature image is required.';
         return;
     }
@@ -133,7 +133,9 @@ const submit = async () => {
             });
         } else if (props.target) {
             const formData = new FormData();
-            formData.append('president_signature_file', presidentSignatureFile.value);
+            if (presidentSignatureFile.value) {
+                formData.append('president_signature_file', presidentSignatureFile.value);
+            }
 
             await sendPostFormData<{
                 message: string;
@@ -173,7 +175,7 @@ const submit = async () => {
                         Upload President signature image to apply to {{ bulkItemIds?.length ?? 0 }} selected items.
                     </template>
                     <template v-else>
-                        Upload President signature image for this signing action. Getor default signature will be applied automatically.
+                        Upload President signature image for this signing action, or continue to use the row's saved signature if available.
                     </template>
                 </DialogDescription>
             </DialogHeader>
