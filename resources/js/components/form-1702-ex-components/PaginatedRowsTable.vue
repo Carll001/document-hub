@@ -65,6 +65,8 @@ const props = withDefaults(
 
 const emit = defineEmits<{
     openRecipientEditor: [row: Form1702ExBatchRow];
+    openSignature: [row: Form1702ExBatchRow];
+    openSignaturePreview: [row: Form1702ExBatchRow];
     openReceipt: [row: Form1702ExBatchRow];
     openRemoveReceipt: [row: Form1702ExBatchRow];
     openTemporaryReceipt: [row: Form1702ExBatchRow];
@@ -376,6 +378,7 @@ function autoReceiptLabel(row: Form1702ExBatchRow): string | null {
                                 <ArrowUpDown class="ml-2 size-4 text-muted-foreground" />
                             </Button>
                         </TableHead>
+                        <TableHead>Signature</TableHead>
                         <TableHead class="w-[1%] text-right">Actions</TableHead>
                     </TableRow>
                 </TableHeader>
@@ -466,6 +469,18 @@ function autoReceiptLabel(row: Form1702ExBatchRow): string | null {
                                 </div>
                             </TableCell>
                             <TableCell>
+                                <Button
+                                    v-if="row.signatureApplied && row.signaturePreviewUrl"
+                                    type="button"
+                                    variant="link"
+                                    class="h-auto p-0 text-emerald-700"
+                                    @click="emit('openSignaturePreview', row)"
+                                >
+                                    Applied
+                                </Button>
+                                <span v-else class="text-sm text-muted-foreground">Not applied</span>
+                            </TableCell>
+                            <TableCell>
                                 <div class="flex justify-end">
                                     <DropdownMenu>
                                         <DropdownMenuTrigger as-child>
@@ -506,6 +521,12 @@ function autoReceiptLabel(row: Form1702ExBatchRow): string | null {
                                             >
                                                 <Pencil class="size-4" />
                                                 {{ row.recipientEmail ? 'Edit recipient' : 'Add recipient' }}
+                                            </DropdownMenuItem>
+                                            <DropdownMenuItem
+                                                @select="emit('openSignature', row)"
+                                            >
+                                                <Upload class="size-4" />
+                                                Add signature
                                             </DropdownMenuItem>
                                             <DropdownMenuItem
                                                 v-if="!row.hasReceipt"
@@ -551,7 +572,7 @@ function autoReceiptLabel(row: Form1702ExBatchRow): string | null {
                         </TableRow>
                     </template>
 
-                    <TableEmpty v-else :colspan="9">
+                    <TableEmpty v-else :colspan="10">
                         {{
                             props.pagination.total === 0
                                 ? 'No imported rows yet.'

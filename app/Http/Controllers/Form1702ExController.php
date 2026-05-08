@@ -17,12 +17,15 @@ use App\Services\Form1702ExBatchService;
 use App\Services\Form1702ExCompletedExportService;
 use App\Services\Form1702ExCompletedEmailService;
 use App\Services\Form1702ExImportService;
+use App\Services\SignatureImageService;
 use App\Services\Form1702ExRowReceiptService;
 use App\Services\Form1702ExRowsExportService;
 use App\Services\Form1702ExService;
 use App\Support\DocumentStorage;
 use App\Support\Form1702ExRecipientEmailNormalizer;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Http\File;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
@@ -78,6 +81,7 @@ class Form1702ExController extends Controller
             'bulkDeleteUrl' => route('forms.form1702ex.rows.destroy'),
             'rowsExportUrl' => route('forms.form1702ex.rows.export', $this->indexRouteParameters($request)),
             'settingsUpdateUrl' => route('forms.form1702ex.settings.update'),
+            'signatureUploadUrl' => route('forms.form1702ex.signature.upload'),
             'templateSpreadsheetUrl' => asset('form-assets/1702-ex/1702-ex-import-template.xlsx'),
             'receiptTemplateUrl' => route('forms.form1702ex.receipt-template.show'),
             'receiptTemplate' => [
@@ -156,6 +160,97 @@ class Form1702ExController extends Controller
                 'direction' => isset($validated['direction']) ? (string) $validated['direction'] : 'desc',
             ],
             'exportState' => $this->completedExportState($user),
+        ]);
+    }
+
+    public function uploadSignature(
+        Request $request,
+        SignatureImageService $signatureImageService,
+    ): JsonResponse {
+        $validated = $request->validate([
+            'signature_file' => ['required', 'file', 'image', 'mimes:png,jpg,jpeg,webp', 'max:5120'],
+        ]);
+
+        /** @var UploadedFile $signatureFile */
+        $signatureFile = $validated['signature_file'];
+        $processedTempPath = $signatureImageService->processToTransparentPng($signatureFile->getPathname());
+        $directory = sprintf('forms/%d/%s/signatures', (int) $request->user()->id, Form1702ExService::FORM_KEY);
+        $fileName = 'signature-'.Str::uuid().'.png';
+
+        try {
+            DocumentStorage::disk()->putFileAs(
+                $directory,
+                new File($processedTempPath),
+                $fileName,
+            );
+        } finally {
+            @unlink($processedTempPath);
+        }
+
+        $signaturePath = $directory.'/'.$fileName;
+
+        return response()->json([
+            'message' => 'Signature uploaded.',
+            'signaturePath' => $signaturePath,
+            'signatureUrl' => DocumentStorage::disk()->url($signaturePath),
+        ]);
+    }
+
+    public function uploadRowSignature(
+        Request $request,
+        Form1702ExBatchRow $form1702ExBatchRow,
+        SignatureImageService $signatureImageService,
+    ): JsonResponse {
+        $this->ensureAccessibleStandaloneRow($request, $form1702ExBatchRow);
+
+        if ($form1702ExBatchRow->isProcessing() || $form1702ExBatchRow->receiptJobIsBusy()) {
+            return response()->json([
+                'message' => 'This row is currently busy. Wait for it to finish before uploading a signature.',
+            ], 422);
+        }
+
+        $validated = $request->validate([
+            'signature_file' => ['required', 'file', 'image', 'mimes:png,jpg,jpeg,webp', 'max:5120'],
+        ]);
+
+        /** @var UploadedFile $signatureFile */
+        $signatureFile = $validated['signature_file'];
+        $processedTempPath = $signatureImageService->processToTransparentPng($signatureFile->getPathname());
+        $directory = sprintf('forms/%d/%s/signatures', (int) $request->user()->id, Form1702ExService::FORM_KEY);
+        $fileName = 'signature-'.Str::uuid().'.png';
+
+        try {
+            DocumentStorage::disk()->putFileAs(
+                $directory,
+                new File($processedTempPath),
+                $fileName,
+            );
+        } finally {
+            @unlink($processedTempPath);
+        }
+
+        $signaturePath = $directory.'/'.$fileName;
+        /** @var array<string, mixed> $payload */
+        $payload = is_array($form1702ExBatchRow->payload) ? $form1702ExBatchRow->payload : [];
+        $payload['signature'] = $signaturePath;
+
+        $form1702ExBatchRow->forceFill([
+            'payload' => $payload,
+            'pdf_status' => Form1702ExBatchRow::PDF_STATUS_QUEUED,
+            'pdf_error' => null,
+            'generated_pdf_file_name' => null,
+            'generated_pdf_storage_path' => null,
+            'generated_pdf_file_size' => null,
+            'generated_at' => null,
+        ])->save();
+
+        ProcessForm1702ExBatchRows::dispatch([(int) $form1702ExBatchRow->getKey()]);
+
+        return response()->json([
+            'message' => 'Signature uploaded and row regeneration queued.',
+            'signaturePath' => $signaturePath,
+            'signatureUrl' => DocumentStorage::disk()->url($signaturePath),
+            'rowId' => $form1702ExBatchRow->uuid,
         ]);
     }
 
@@ -1862,6 +1957,7 @@ class Form1702ExController extends Controller
      *     autoReceiptError: string|null,
      *     recipientEmail: string|null,
      *     updateRecipientUrl: string,
+     *     signatureUploadUrl: string,
      *     sendEmailUrl: string|null,
      *     footerSourcePath: string,
      *     footerPrintedDate: string
@@ -1872,6 +1968,13 @@ class Form1702ExController extends Controller
         /** @var array<string, mixed> $payload */
         $payload = is_array($row->payload) ? $row->payload : [];
         $footerFallbackDate = $row->uploaded_at instanceof Carbon ? $row->uploaded_at : null;
+        $signaturePath = is_scalar($payload['signature'] ?? null)
+            ? trim((string) $payload['signature'])
+            : '';
+        $signatureApplied = $signaturePath !== '';
+        $signaturePreviewUrl = $signatureApplied
+            ? DocumentStorage::disk()->url($signaturePath)
+            : null;
         $previewUrl = null;
         $downloadUrl = null;
         $hasReceipt = filled($row->receipt_file_name) && filled($row->receipt_storage_path);
@@ -1982,6 +2085,11 @@ class Form1702ExController extends Controller
             'updateRecipientUrl' => route('forms.form1702ex.rows.recipient.update', [
                 'form1702ExBatchRow' => $row,
             ]),
+            'signatureUploadUrl' => route('forms.form1702ex.rows.signature.upload', [
+                'form1702ExBatchRow' => $row,
+            ]),
+            'signatureApplied' => $signatureApplied,
+            'signaturePreviewUrl' => $signaturePreviewUrl,
             'sendEmailUrl' => $this->form1702ExCompletedEmailService->isCompleted($row)
                 ? route('forms.form1702ex.completed.send', [
                     'form1702ExBatchRow' => $row,

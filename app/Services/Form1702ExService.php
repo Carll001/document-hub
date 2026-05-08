@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Models\Form1702ExBatchRow;
+use App\Support\DocumentStorage;
 use App\Support\Form1702ExFieldValueFormatter;
 use App\Support\FormPdfFpdi;
 use Illuminate\Filesystem\FilesystemAdapter;
@@ -25,6 +26,7 @@ class Form1702ExService
 
     public function __construct(
         private readonly Form1702ExFieldValueFormatter $fieldValueFormatter,
+        private readonly SignatureImageService $signatureImageService,
     ) {
     }
 
@@ -189,6 +191,12 @@ class Form1702ExService
 
             if ($type === 'split-box') {
                 $field['previewCharacters'] = $this->fieldValueFormatter->splitCharacters($field, $payload);
+
+                return $field;
+            }
+
+            if ($type === 'image') {
+                $field['previewText'] = '[SIGNATURE]';
 
                 return $field;
             }
@@ -890,16 +898,27 @@ class Form1702ExService
             self::PDF_MARKER_FILL_BLUE,
         );
 
-        foreach ($schema['fields'] as $field) {
-            $this->renderField(
-                $pdf,
-                $field,
-                $payload,
-                $pageWidth,
-                $pageHeight,
-                $fontFamily,
-                $fontStyle,
-            );
+        $preparedSignature = $this->prepareSignatureImage($payload);
+
+        try {
+            foreach ($schema['fields'] as $field) {
+                $this->renderField(
+                    $pdf,
+                    $field,
+                    $payload,
+                    $pageWidth,
+                    $pageHeight,
+                    $fontFamily,
+                    $fontStyle,
+                    $preparedSignature['path'],
+                );
+            }
+        } finally {
+            foreach ($preparedSignature['cleanupPaths'] as $cleanupPath) {
+                if (is_string($cleanupPath) && $cleanupPath !== '' && is_file($cleanupPath)) {
+                    @unlink($cleanupPath);
+                }
+            }
         }
     }
 
@@ -924,6 +943,7 @@ class Form1702ExService
         float $pageHeight,
         string $fontFamily,
         string $fontStyle,
+        ?string $signatureImagePath = null,
     ): void {
         $x = (float) ($field['x'] ?? 0) * $pageWidth;
         $y = (float) ($field['y'] ?? 0) * $pageHeight;
@@ -986,6 +1006,23 @@ class Form1702ExService
             return;
         }
 
+        if ($type === 'image') {
+            if (! is_string($signatureImagePath) || $signatureImagePath === '' || ! is_file($signatureImagePath)) {
+                return;
+            }
+
+            $pdf->Image(
+                $signatureImagePath,
+                $x,
+                $y,
+                $width,
+                $height,
+                'PNG',
+            );
+
+            return;
+        }
+
         $pdf->SetFont($resolvedFontFamily, $resolvedFontStyle, max(1.0, $fontSize));
         $pdf->SetXY($x, $y);
         $pdf->Cell(
@@ -996,6 +1033,113 @@ class Form1702ExService
             0,
             $align,
         );
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     * @return array{path: string|null, cleanupPaths: list<string>}
+     */
+    private function prepareSignatureImage(array $payload): array
+    {
+        $signatureValue = $payload['signature'] ?? null;
+
+        if (! is_scalar($signatureValue) && $signatureValue !== null) {
+            return ['path' => null, 'cleanupPaths' => []];
+        }
+
+        $rawPath = trim((string) ($signatureValue ?? ''));
+
+        if ($rawPath === '') {
+            return ['path' => null, 'cleanupPaths' => []];
+        }
+
+        $normalizedToken = strtoupper($rawPath);
+        if (in_array($normalizedToken, ['#VALUE', '#VALUE!', '#N/A', '#NAME?', '#DIV/0!', '#REF!', '#NULL!', '#NUM!'], true)) {
+            return ['path' => null, 'cleanupPaths' => []];
+        }
+
+        $cleanupPaths = [];
+        $sourcePath = null;
+
+        if (preg_match('/^data:image\/(png|jpeg|jpg|webp);base64,/i', $rawPath) === 1) {
+            $decoded = base64_decode((string) preg_replace('/^data:image\/(?:png|jpeg|jpg|webp);base64,/i', '', $rawPath), true);
+
+            if (is_string($decoded) && $decoded !== '') {
+                $extension = str_contains(strtolower($rawPath), 'image/png') ? '.png'
+                    : (str_contains(strtolower($rawPath), 'image/webp') ? '.webp' : '.jpg');
+                $tmpPath = $this->temporaryPath('form-1702-signature-inline-', $extension);
+
+                if (@file_put_contents($tmpPath, $decoded) !== false) {
+                    $sourcePath = $tmpPath;
+                    $cleanupPaths[] = $tmpPath;
+                } else {
+                    @unlink($tmpPath);
+                }
+            }
+        } elseif (is_file($rawPath)) {
+            $sourcePath = $rawPath;
+        } elseif (str_starts_with($rawPath, 'file://')) {
+            $fileUriPath = urldecode((string) parse_url($rawPath, PHP_URL_PATH));
+
+            if ($fileUriPath !== '' && is_file($fileUriPath)) {
+                $sourcePath = $fileUriPath;
+            }
+        } elseif (DocumentStorage::isValidPath($rawPath) && DocumentStorage::disk()->exists($rawPath)) {
+            $extension = strtolower((string) pathinfo($rawPath, PATHINFO_EXTENSION));
+            $tmpPath = $this->temporaryPath('form-1702-signature-source-', $extension !== '' ? ".{$extension}" : '.bin');
+            $stream = DocumentStorage::disk()->readStream($rawPath);
+
+            if (is_resource($stream)) {
+                $target = @fopen($tmpPath, 'wb');
+
+                if (is_resource($target)) {
+                    stream_copy_to_stream($stream, $target);
+                    fclose($target);
+                    fclose($stream);
+                    $sourcePath = $tmpPath;
+                    $cleanupPaths[] = $tmpPath;
+                } else {
+                    fclose($stream);
+                    @unlink($tmpPath);
+                }
+            } else {
+                @unlink($tmpPath);
+            }
+        }
+
+        if (! is_string($sourcePath) || ! is_file($sourcePath)) {
+            return ['path' => null, 'cleanupPaths' => $cleanupPaths];
+        }
+
+        try {
+            $processedPath = $this->signatureImageService->processToTransparentPng($sourcePath);
+            $cleanupPaths[] = $processedPath;
+        } catch (\Throwable $exception) {
+            report($exception);
+
+            return [
+                'path' => null,
+                'cleanupPaths' => $cleanupPaths,
+            ];
+        }
+
+        return [
+            'path' => $processedPath,
+            'cleanupPaths' => $cleanupPaths,
+        ];
+    }
+
+    private function temporaryPath(string $prefix, string $extension): string
+    {
+        $tmp = tempnam(sys_get_temp_dir(), $prefix);
+
+        if ($tmp === false) {
+            throw new RuntimeException('Unable to allocate temporary file path.');
+        }
+
+        @unlink($tmp);
+
+        return $tmp.$extension;
     }
 
     private function encodedPdfText(string $value): string

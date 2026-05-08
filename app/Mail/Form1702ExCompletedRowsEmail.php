@@ -25,6 +25,7 @@ class Form1702ExCompletedRowsEmail extends Mailable implements ShouldQueue
         public readonly ?string $subjectLine = null,
         public readonly ?string $messageBody = null,
     ) {
+        $this->onQueue('filing-1702');
     }
 
     public function envelope(): Envelope

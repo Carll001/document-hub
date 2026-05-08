@@ -147,7 +147,7 @@
       "width": 0.236,
       "height": 0.021,
       "fontSize": 8,
-      "align": "center",
+      "align": "left",
       "formatter": "tin_groups_4",
       "boxCount": 4,
       "boxGap": 7
@@ -412,6 +412,32 @@
       "fontSize": 7,
       "align": "center",
       "formatter": "digits_only"
+    },
+    {
+      "section": "Signatory Details",
+      "key": "president_name",
+      "label": "President Name",
+      "type": "text",
+      "x": 0.121,
+      "y": 0.704,
+      "width": 0.330,
+      "height": 0.018,
+      "fontSize": 6.8,
+      "align": "center",
+      "formatter": "uppercase"
+    },
+    {
+      "section": "Signatory Details",
+      "key": "signature",
+      "label": "Signature Image",
+      "type": "image",
+      "x": 0.230,
+      "y": 0.690,
+      "width": 0.130,
+      "height": 0.025,
+      "fontSize": 6.8,
+      "align": "left",
+      "formatter": null
     }
   ]
 }

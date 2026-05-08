@@ -1,1 +1,1 @@
-sail artisan queue:work --queue=afs-filing,document-merger,default
+sail artisan queue:work --queue=afs-filing,filing-1702,email-sync,document-merger,default

@@ -28,6 +28,7 @@ class ProcessForm1702ExRowsExport implements ShouldQueue
         public readonly string $sort,
         public readonly string $direction,
     ) {
+        $this->onQueue('filing-1702');
     }
 
     public function handle(Form1702ExRowsExportService $rowsExportService): void

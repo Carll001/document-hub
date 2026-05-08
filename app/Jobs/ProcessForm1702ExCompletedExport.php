@@ -32,6 +32,7 @@ class ProcessForm1702ExCompletedExport implements ShouldQueue
         public readonly string $direction,
         public readonly array $rowUuids = [],
     ) {
+        $this->onQueue('filing-1702');
     }
 
     public function handle(Form1702ExCompletedExportService $completedExportService): void

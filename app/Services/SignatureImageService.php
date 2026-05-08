@@ -24,13 +24,15 @@ class SignatureImageService
         $image = new \Imagick($sourcePath);
         $image->setImageColorspace(\Imagick::COLORSPACE_SRGB);
         $image->setImageAlphaChannel(\Imagick::ALPHACHANNEL_SET);
-        $image->mergeImageLayers(\Imagick::LAYERMETHOD_FLATTEN);
+        $image = $image->mergeImageLayers(\Imagick::LAYERMETHOD_MERGE);
         $image->setImageAlphaChannel(\Imagick::ALPHACHANNEL_ACTIVATE);
 
         $width = $image->getImageWidth();
         $height = $image->getImageHeight();
         $corner = $image->getImagePixelColor(max(0, $width - 1), 0);
-        $image->transparentPaintImage($corner, 0.0, 0.18 * \Imagick::getQuantum(), false);
+        // Remove common white-paper backgrounds, then also remove corner-matched background.
+        $image->transparentPaintImage(new \ImagickPixel('white'), 0.0, 0.22 * \Imagick::getQuantum(), false);
+        $image->transparentPaintImage($corner, 0.0, 0.20 * \Imagick::getQuantum(), false);
 
         $image->setImageFormat('png');
         $image->trimImage(0.0);
@@ -84,14 +86,18 @@ class SignatureImageService
                 $r = ($rgb >> 16) & 0xFF;
                 $g = ($rgb >> 8) & 0xFF;
                 $b = $rgb & 0xFF;
+                $a = ($rgb >> 24) & 0x7F;
 
                 $distance = abs($r - $bgR) + abs($g - $bgG) + abs($b - $bgB);
-                if ($distance < 72) {
+                $isNearWhite = $r >= 235 && $g >= 235 && $b >= 235;
+                $isBackgroundLike = $distance < 84 || $isNearWhite;
+
+                if ($isBackgroundLike || $a >= 120) {
                     imagesetpixel($processed, $x, $y, $transparent);
                     continue;
                 }
 
-                $color = imagecolorallocatealpha($processed, $r, $g, $b, 0);
+                $color = imagecolorallocatealpha($processed, $r, $g, $b, $a);
                 imagesetpixel($processed, $x, $y, $color);
             }
         }
@@ -119,4 +125,3 @@ class SignatureImageService
         return $tmp.$extension;
     }
 }
-

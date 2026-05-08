@@ -28,6 +28,7 @@ class ProcessForm1702ExBatchRows implements ShouldQueue
     public function __construct(
         public readonly array $rowIds,
     ) {
+        $this->onQueue('filing-1702');
     }
 
     public function handle(

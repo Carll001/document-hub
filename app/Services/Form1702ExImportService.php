@@ -238,15 +238,62 @@ class Form1702ExImportService
 
             $headerRow = array_shift($parsedRows);
             $headers = $this->headersFromWorksheetRow($headerRow['values']);
+            $signatureColumnIndex = $this->signatureHeaderColumnIndex($headers);
+            $embeddedSignatureByRow = $this->parseWorksheetEmbeddedSignatures(
+                $zip,
+                $worksheetPath,
+                $worksheetXml,
+                $signatureColumnIndex,
+            );
+            logger()->info('1702EX XLSX signature extraction summary', [
+                'worksheet_path' => $worksheetPath,
+                'header_count' => count($headers),
+                'signature_column_index' => $signatureColumnIndex,
+                'signature_header' => is_int($signatureColumnIndex) ? ($headers[$signatureColumnIndex - 1] ?? null) : null,
+                'embedded_signature_row_count' => count($embeddedSignatureByRow),
+                'embedded_signature_rows_sample' => array_slice(array_keys($embeddedSignatureByRow), 0, 20),
+            ]);
             $rows = [];
 
             foreach ($parsedRows as $row) {
+                $values = $this->combineWorksheetRowWithHeaders(
+                    $headers,
+                    $row['values'],
+                );
+                $rowNumber = (int) ($row['rowNumber'] ?? 0);
+                $signatureHeader = is_int($signatureColumnIndex) ? ($headers[$signatureColumnIndex - 1] ?? null) : null;
+                $signatureCellValue = is_string($signatureHeader) ? $this->cleanCellText((string) ($values[$signatureHeader] ?? '')) : '';
+                $signatureWasErrorToken = $this->isSpreadsheetErrorToken($signatureCellValue);
+                $embeddedSignatureFound = is_int($rowNumber) && isset($embeddedSignatureByRow[$rowNumber]);
+                $signatureWasPatchedFromEmbedded = false;
+
+                if ($signatureColumnIndex !== null && isset($embeddedSignatureByRow[$row['rowNumber']])) {
+                    $signatureHeader = $headers[$signatureColumnIndex - 1] ?? null;
+
+                    if (is_string($signatureHeader) && trim($signatureHeader) !== '') {
+                        $currentValue = $this->cleanCellText((string) ($values[$signatureHeader] ?? ''));
+
+                        if ($currentValue === '' || $this->isSpreadsheetErrorToken($currentValue)) {
+                            $values[$signatureHeader] = $embeddedSignatureByRow[$row['rowNumber']];
+                            $signatureWasPatchedFromEmbedded = true;
+                        }
+                    }
+                }
+
+                if ($signatureColumnIndex !== null) {
+                    logger()->info('1702EX XLSX row signature debug', [
+                        'row_number' => $rowNumber,
+                        'signature_header' => $signatureHeader,
+                        'signature_cell_value_preview' => $signatureCellValue !== '' ? Str::limit($signatureCellValue, 80) : '',
+                        'signature_cell_is_error_token' => $signatureWasErrorToken,
+                        'embedded_signature_found' => $embeddedSignatureFound,
+                        'signature_patched_from_embedded' => $signatureWasPatchedFromEmbedded,
+                    ]);
+                }
+
                 $rows[] = [
-                    'rowNumber' => $row['rowNumber'],
-                    'values' => $this->combineWorksheetRowWithHeaders(
-                        $headers,
-                        $row['values'],
-                    ),
+                    'rowNumber' => $rowNumber,
+                    'values' => $values,
                 ];
             }
 
@@ -474,6 +521,29 @@ class Form1702ExImportService
             $this->firstFilled($normalizedRow, ['datesigned']),
             (string) ($payload['date_signed'] ?? ''),
         );
+        $payload['president_name'] = $this->firstFilled($normalizedRow, [
+            'presidentname',
+            'nameofpresident',
+            'president',
+        ]) ?: (string) ($payload['president_name'] ?? '');
+        $signature = $this->firstFilled($normalizedRow, [
+            'signature',
+            'presidentsignature',
+            'signatureimage',
+            'signaturefile',
+            'signaturepath',
+        ]);
+        $payload['signature'] = $this->isSpreadsheetErrorToken($signature)
+            ? ''
+            : ($signature !== '' ? $signature : (string) ($payload['signature'] ?? ''));
+        logger()->info('1702EX payload signature mapped', [
+            'signature_source_value_preview' => $signature !== '' ? Str::limit($signature, 80) : '',
+            'signature_is_error_token' => $this->isSpreadsheetErrorToken($signature),
+            'payload_signature_present' => (string) ($payload['signature'] ?? '') !== '',
+            'payload_signature_preview' => (string) ($payload['signature'] ?? '') !== ''
+                ? Str::limit((string) $payload['signature'], 80)
+                : '',
+        ]);
 
         $payload['tax_due'] = $this->normalizeMoney(
             $this->firstFilled($normalizedRow, ['taxdue']),
@@ -547,6 +617,8 @@ class Form1702ExImportService
             'representative_tin',
             'signatory_title',
             'date_signed',
+            'president_name',
+            'signature',
             'tax_due',
             'tax_credits',
             'overpayment',
@@ -803,6 +875,212 @@ class Form1702ExImportService
             ->trim();
     }
 
+    /**
+     * @param  list<string>  $headers
+     */
+    private function signatureHeaderColumnIndex(array $headers): ?int
+    {
+        foreach ($headers as $index => $header) {
+            $normalized = $this->normalizeHeader($header);
+
+            if (in_array($normalized, ['signature', 'presidentsignature', 'signatureimage', 'signaturefile', 'signaturepath'], true)) {
+                return $index + 1;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function parseWorksheetEmbeddedSignatures(
+        ZipArchive $zip,
+        string $worksheetPath,
+        string $worksheetXml,
+        ?int $signatureColumnIndex,
+    ): array {
+        if ($signatureColumnIndex === null) {
+            return [];
+        }
+
+        $drawingRelationshipId = $this->matchAttributeFromTag($worksheetXml, 'drawing', 'r:id');
+
+        if (! is_string($drawingRelationshipId) || $drawingRelationshipId === '') {
+            return [];
+        }
+
+        $worksheetRelsPath = $this->relationshipPathFor($worksheetPath);
+        $worksheetRelsXml = $this->zipEntryContents($zip, $worksheetRelsPath);
+
+        if (! is_string($worksheetRelsXml) || $worksheetRelsXml === '') {
+            return [];
+        }
+
+        $drawingTarget = $this->relationshipTargetById($worksheetRelsXml, $drawingRelationshipId);
+
+        if (! is_string($drawingTarget) || $drawingTarget === '') {
+            return [];
+        }
+
+        $drawingPath = $this->resolveZipTargetPath($worksheetPath, $drawingTarget);
+        $drawingXml = $this->zipEntryContents($zip, $drawingPath);
+
+        if (! is_string($drawingXml) || $drawingXml === '') {
+            return [];
+        }
+
+        $drawingRelsPath = $this->relationshipPathFor($drawingPath);
+        $drawingRelsXml = $this->zipEntryContents($zip, $drawingRelsPath);
+
+        if (! is_string($drawingRelsXml) || $drawingRelsXml === '') {
+            return [];
+        }
+
+        preg_match_all('/<xdr:(?:twoCellAnchor|oneCellAnchor)\b[^>]*>(.*?)<\/xdr:(?:twoCellAnchor|oneCellAnchor)>/s', $drawingXml, $anchors, PREG_SET_ORDER);
+
+        $signaturesByRow = [];
+
+        foreach ($anchors as $anchorMatch) {
+            $anchorXml = $anchorMatch[1] ?? '';
+
+            if (! is_string($anchorXml) || $anchorXml === '') {
+                continue;
+            }
+
+            if (preg_match('/<xdr:from>\s*<xdr:col>(\d+)<\/xdr:col>\s*<xdr:row>(\d+)<\/xdr:row>/s', $anchorXml, $fromMatch) !== 1) {
+                continue;
+            }
+
+            $columnIndex = ((int) $fromMatch[1]) + 1;
+            $rowNumber = ((int) $fromMatch[2]) + 1;
+
+            if ($columnIndex !== $signatureColumnIndex || $rowNumber < 2) {
+                continue;
+            }
+
+            if (preg_match('/<a:blip\b[^>]*r:embed="([^"]+)"/', $anchorXml, $embedMatch) !== 1) {
+                continue;
+            }
+
+            $embedId = $embedMatch[1];
+            $imageTarget = $this->relationshipTargetById($drawingRelsXml, $embedId);
+
+            if (! is_string($imageTarget) || $imageTarget === '') {
+                continue;
+            }
+
+            $imagePath = $this->resolveZipTargetPath($drawingPath, $imageTarget);
+            $imageContents = $zip->getFromName($imagePath);
+
+            if (! is_string($imageContents) || $imageContents === '') {
+                continue;
+            }
+
+            $storedSignaturePath = $this->embeddedSignatureDataUri($imagePath, $imageContents);
+
+            if ($storedSignaturePath === null) {
+                continue;
+            }
+
+            $signaturesByRow[$rowNumber] = $storedSignaturePath;
+        }
+
+        return $signaturesByRow;
+    }
+
+    private function relationshipPathFor(string $sourcePath): string
+    {
+        $sourcePath = str_replace('\\', '/', $sourcePath);
+        $directory = trim((string) dirname($sourcePath), '.');
+        $baseName = basename($sourcePath);
+
+        if ($directory === '') {
+            return '_rels/'.$baseName.'.rels';
+        }
+
+        return $directory.'/_rels/'.$baseName.'.rels';
+    }
+
+    private function matchAttributeFromTag(string $xml, string $tag, string $attribute): ?string
+    {
+        $pattern = '/<'.preg_quote($tag, '/').'\b[^>]*'.preg_quote($attribute, '/').'="([^"]+)"/';
+
+        if (preg_match($pattern, $xml, $matches) !== 1) {
+            return null;
+        }
+
+        return $matches[1] ?? null;
+    }
+
+    private function relationshipTargetById(string $relationshipsXml, string $relationshipId): ?string
+    {
+        $pattern = '/<Relationship\b[^>]*Id="'.preg_quote($relationshipId, '/').'"[^>]*Target="([^"]+)"/';
+
+        if (preg_match($pattern, $relationshipsXml, $match) !== 1) {
+            return null;
+        }
+
+        return $match[1] ?? null;
+    }
+
+    private function resolveZipTargetPath(string $basePath, string $target): string
+    {
+        $basePath = str_replace('\\', '/', $basePath);
+        $target = str_replace('\\', '/', $target);
+
+        if (str_starts_with($target, '/')) {
+            return ltrim($target, '/');
+        }
+
+        $baseDir = dirname($basePath);
+
+        if ($baseDir === '.' || $baseDir === '') {
+            return ltrim($target, '/');
+        }
+
+        $segments = explode('/', $baseDir.'/'.$target);
+        $resolved = [];
+
+        foreach ($segments as $segment) {
+            if ($segment === '' || $segment === '.') {
+                continue;
+            }
+
+            if ($segment === '..') {
+                array_pop($resolved);
+                continue;
+            }
+
+            $resolved[] = $segment;
+        }
+
+        return implode('/', $resolved);
+    }
+
+    private function embeddedSignatureDataUri(string $sourcePath, string $contents): ?string
+    {
+        $extension = strtolower((string) pathinfo($sourcePath, PATHINFO_EXTENSION));
+        $allowed = ['png', 'jpg', 'jpeg', 'webp'];
+
+        if (! in_array($extension, $allowed, true)) {
+            return null;
+        }
+
+        $mime = match ($extension) {
+            'png' => 'image/png',
+            'jpg', 'jpeg' => 'image/jpeg',
+            'webp' => 'image/webp',
+            default => null,
+        };
+
+        if (! is_string($mime)) {
+            return null;
+        }
+
+        return 'data:'.$mime.';base64,'.base64_encode($contents);
+    }
+
     private function cleanCellText(string $value): string
     {
         $normalized = str_replace(["\u{00A0}", "\r", "\n", "\t"], ' ', trim($value));
@@ -915,6 +1193,10 @@ class Form1702ExImportService
         $trimmedYearValue = $this->cleanCellText($yearValue);
 
         if ($trimmedYearValue !== '') {
+            if (preg_match('/\b(19|20)\d{2}\b/', $trimmedYearValue, $matches) === 1) {
+                return $matches[0];
+            }
+
             if (is_numeric($trimmedYearValue) && strlen($trimmedYearValue) > 4) {
                 $excelDate = $this->excelSerialDateToCarbon((float) $trimmedYearValue);
 
@@ -932,7 +1214,7 @@ class Form1702ExImportService
         $yearDigits = preg_replace('/\D+/', '', $trimmedYearValue) ?? '';
 
         if (strlen($yearDigits) >= 4) {
-            return substr($yearDigits, 0, 4);
+            return substr($yearDigits, -4);
         }
 
         $shortYearDigits = preg_replace('/\D+/', '', $twoDigitYearValue) ?? '';
@@ -1096,6 +1378,22 @@ class Form1702ExImportService
         } catch (\Throwable) {
             return $fallback;
         }
+    }
+
+    private function isSpreadsheetErrorToken(string $value): bool
+    {
+        $trimmed = strtoupper($this->cleanCellText($value));
+
+        return in_array($trimmed, [
+            '#VALUE',
+            '#VALUE!',
+            '#N/A',
+            '#NAME?',
+            '#DIV/0!',
+            '#REF!',
+            '#NULL!',
+            '#NUM!',
+        ], true);
     }
 
     private function excelSerialDateToCarbon(float $serial): ?Carbon

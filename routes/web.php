@@ -156,6 +156,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
                     ->group(function () {
                         Route::get('/', 'index')->name('index');
                         Route::get('alignment', 'alignment')->name('alignment');
+                        Route::post('signature-upload', 'uploadSignature')->name('signature.upload');
                         Route::post('settings', 'updateSettings')->name('settings.update');
                         Route::post('import', 'storeImportDirect')->name('import.store');
                         Route::delete('rows', 'destroyRowsDirect')->name('rows.destroy');
@@ -164,6 +165,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
                         Route::get('rows/{form1702ExBatchRow}/preview', 'previewRowDirect')->name('rows.preview');
                         Route::get('rows/{form1702ExBatchRow}/download', 'downloadRowDirect')->name('rows.download');
                         Route::patch('rows/{form1702ExBatchRow}/recipient', 'updateRecipient')->name('rows.recipient.update');
+                        Route::post('rows/{form1702ExBatchRow}/signature', 'uploadRowSignature')->name('rows.signature.upload');
                         Route::post('rows/{form1702ExBatchRow}/receipt', 'storeReceiptDirect')->name('rows.receipt.store');
                         Route::post('rows/{form1702ExBatchRow}/receipt/temporary', 'storeTemporaryReceiptDirect')->name('rows.receipt.temporary.store');
                         Route::delete('rows/{form1702ExBatchRow}/receipt', 'destroyReceiptDirect')->name('rows.receipt.destroy');

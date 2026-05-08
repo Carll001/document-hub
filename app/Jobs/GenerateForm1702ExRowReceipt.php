@@ -32,6 +32,7 @@ class GenerateForm1702ExRowReceipt implements ShouldQueue
         public readonly array $values,
         public readonly ?int $syncedEmailId = null,
     ) {
+        $this->onQueue('filing-1702');
     }
 
     public function handle(
