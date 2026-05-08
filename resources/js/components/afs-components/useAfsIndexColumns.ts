@@ -50,6 +50,24 @@ type UseAfsIndexColumnsParams = {
 };
 
 export function useAfsIndexColumns(params: UseAfsIndexColumnsParams) {
+    const normalizeKey = (value: string): string =>
+        value.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+    const fieldValue = (row: UnifiedItem, aliases: string[]): string => {
+        const normalizedAliases = aliases.map(normalizeKey);
+        const entry = Object.entries(row.row_data ?? {}).find(([key]) =>
+            normalizedAliases.includes(normalizeKey(key)),
+        );
+        const raw = entry?.[1];
+
+        if (typeof raw !== 'string') {
+            return '-';
+        }
+
+        const trimmed = raw.trim();
+        return trimmed === '' ? '-' : trimmed;
+    };
+
     return computed<ColumnDef<UnifiedItem>[]>(() => [
         {
             id: 'selection',
@@ -88,6 +106,48 @@ export function useAfsIndexColumns(params: UseAfsIndexColumnsParams) {
             header: 'Company',
             enableSorting: false,
             cell: ({ row }) => row.original.company || '-',
+        },
+        {
+            id: 'total_current_assets',
+            header: 'Total Current Assets',
+            enableSorting: false,
+            cell: ({ row }) => fieldValue(row.original, ['total_current_assets', 'total current assets', 'total_assets', 'total assets']),
+        },
+        {
+            id: 'inventory',
+            header: 'Inventory',
+            enableSorting: false,
+            cell: ({ row }) => fieldValue(row.original, ['inventory']),
+        },
+        {
+            id: 'gross_profit',
+            header: 'Gross Profit',
+            enableSorting: false,
+            cell: ({ row }) => fieldValue(row.original, ['gross_profit', 'gross profit']),
+        },
+        {
+            id: 'cogs',
+            header: 'COGS',
+            enableSorting: false,
+            cell: ({ row }) => fieldValue(row.original, ['cogs', 'cost_of_goods_sold', 'cost of goods sold']),
+        },
+        {
+            id: 'net_income',
+            header: 'Net Income',
+            enableSorting: false,
+            cell: ({ row }) => fieldValue(row.original, ['net_income', 'net income']),
+        },
+        {
+            id: 'cash',
+            header: 'Cash',
+            enableSorting: false,
+            cell: ({ row }) => fieldValue(row.original, ['cash', 'cash_on_hand', 'cash on hand']),
+        },
+        {
+            id: 'pt_payable',
+            header: 'PT Payable',
+            enableSorting: false,
+            cell: ({ row }) => fieldValue(row.original, ['pt_payable', 'pt payable', 'payables', 'accounts_payable', 'accounts payable']),
         },
         {
             id: 'created_at',
@@ -245,4 +305,3 @@ export function useAfsIndexColumns(params: UseAfsIndexColumnsParams) {
         },
     ]);
 }
-
