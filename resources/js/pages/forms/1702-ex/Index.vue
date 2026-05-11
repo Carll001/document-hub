@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Head, router, useForm } from '@inertiajs/vue3';
-import { LoaderCircle, Settings2, Upload } from 'lucide-vue-next';
-import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { Copy, LoaderCircle, Settings2, Upload } from 'lucide-vue-next';
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { toast } from 'vue-sonner';
 import InputError from '@/components/InputError.vue';
 import Form1702ExRecipientDialog from '@/components/form-1702-ex-components/Form1702ExRecipientDialog.vue';
@@ -102,6 +102,8 @@ const temporaryReceiptForm = useForm<{
 });
 const isUploadDialogOpen = ref(false);
 const isSettingsDialogOpen = ref(false);
+const isSignatureDialogOpen = ref(false);
+const isSignaturePreviewDialogOpen = ref(false);
 const isDeleteDialogOpen = ref(false);
 const isRegenerateDialogOpen = ref(false);
 const isReceiptDialogOpen = ref(false);
@@ -114,8 +116,16 @@ const pendingRegenerateRow = ref<Form1702ExBatchRow | null>(null);
 const pendingReceiptRow = ref<Form1702ExBatchRow | null>(null);
 const pendingReceiptRemovalRow = ref<Form1702ExBatchRow | null>(null);
 const pendingTemporaryReceiptRow = ref<Form1702ExBatchRow | null>(null);
+const pendingSignatureRow = ref<Form1702ExBatchRow | null>(null);
+const pendingSignaturePreviewRow = ref<Form1702ExBatchRow | null>(null);
 const pollTimeoutId = ref<number | null>(null);
 const spreadsheetInput = ref<HTMLInputElement | null>(null);
+const signatureUploadInput = ref<HTMLInputElement | null>(null);
+const signatureUploadFile = ref<File | null>(null);
+const signatureUploadProcessing = ref(false);
+const signatureUploadError = ref<string | null>(null);
+const uploadedSignaturePath = ref<string | null>(null);
+const uploadedSignatureUrl = ref<string | null>(null);
 
 const canSubmitImport = computed(
     () => importForm.spreadsheet instanceof File && !importForm.processing,
@@ -310,6 +320,134 @@ function handleSpreadsheetSelected(event: Event): void {
 
 function openSpreadsheetPicker(): void {
     spreadsheetInput.value?.click();
+}
+
+function openSignatureDialog(): void {
+    signatureUploadFile.value = null;
+    signatureUploadError.value = null;
+    uploadedSignaturePath.value = null;
+    uploadedSignatureUrl.value = null;
+    pendingSignatureRow.value = null;
+    void nextTick(() => {
+        isSignatureDialogOpen.value = true;
+    });
+}
+
+function openSignatureDialogForRow(row: Form1702ExBatchRow): void {
+    signatureUploadFile.value = null;
+    signatureUploadError.value = null;
+    uploadedSignaturePath.value = null;
+    uploadedSignatureUrl.value = null;
+    pendingSignatureRow.value = row;
+    void nextTick(() => {
+        isSignatureDialogOpen.value = true;
+    });
+}
+
+function openSignaturePreviewDialogForRow(row: Form1702ExBatchRow): void {
+    if (!row.signatureApplied || !row.signaturePreviewUrl) {
+        return;
+    }
+
+    pendingSignaturePreviewRow.value = row;
+    isSignaturePreviewDialogOpen.value = true;
+}
+
+function openSignatureUploadPicker(): void {
+    signatureUploadInput.value?.click();
+}
+
+function handleSignatureSelected(event: Event): void {
+    const input = event.target as HTMLInputElement | null;
+    signatureUploadFile.value = input?.files?.[0] ?? null;
+    signatureUploadError.value = null;
+
+    if (input) {
+        input.value = '';
+    }
+}
+
+function csrfTokenFromCookie(): string {
+    const xsrfCookie = document.cookie
+        .split('; ')
+        .find((value) => value.startsWith('XSRF-TOKEN='));
+
+    if (!xsrfCookie) {
+        return '';
+    }
+
+    return decodeURIComponent(xsrfCookie.split('=')[1] ?? '');
+}
+
+async function submitSignatureUpload(): Promise<void> {
+    if (!(signatureUploadFile.value instanceof File)) {
+        signatureUploadError.value = 'Choose a PNG, JPG, or WEBP signature image first.';
+        return;
+    }
+
+    const csrf = csrfTokenFromCookie()
+        || document.querySelector('meta[name=\"csrf-token\"]')?.getAttribute('content')
+        || '';
+
+    signatureUploadProcessing.value = true;
+    signatureUploadError.value = null;
+
+    try {
+        const formData = new FormData();
+        formData.append('signature_file', signatureUploadFile.value);
+
+        const uploadUrl = pendingSignatureRow.value?.signatureUploadUrl ?? props.signatureUploadUrl;
+        const response = await fetch(uploadUrl, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+                Accept: 'application/json',
+                'X-Requested-With': 'XMLHttpRequest',
+                ...(csrf !== '' ? { 'X-XSRF-TOKEN': csrf, 'X-CSRF-TOKEN': csrf } : {}),
+            },
+            body: formData,
+        });
+
+        const payload = (await response.json()) as {
+            message?: string;
+            signaturePath?: string;
+            signatureUrl?: string;
+            errors?: Record<string, string[]>;
+        };
+
+        if (!response.ok) {
+            signatureUploadError.value =
+                payload.errors?.signature_file?.[0]
+                ?? payload.message
+                ?? 'Unable to upload signature.';
+            return;
+        }
+
+        uploadedSignaturePath.value = payload.signaturePath ?? null;
+        uploadedSignatureUrl.value = payload.signatureUrl ?? null;
+        toast.success(payload.message ?? 'Signature uploaded.');
+        router.reload({
+            only: ['rows', 'pagination', 'filters', 'hasActiveJobs', 'flash'],
+            preserveState: true,
+        });
+    } catch {
+        signatureUploadError.value = 'Unable to upload signature right now.';
+    } finally {
+        signatureUploadProcessing.value = false;
+    }
+}
+
+async function copySignaturePath(): Promise<void> {
+    if (!uploadedSignaturePath.value) {
+        return;
+    }
+
+    try {
+        await navigator.clipboard.writeText(uploadedSignaturePath.value);
+        toast.success('Signature key copied. Paste it into Excel signature column.');
+    } catch {
+        toast.error('Clipboard copy failed. Copy the signature key manually.');
+    }
 }
 
 function submitImport(): void {
@@ -630,6 +768,94 @@ function submitRemoveReceipt(): void {
             </DialogContent>
         </Dialog>
 
+        <Dialog :open="isSignatureDialogOpen" @update:open="isSignatureDialogOpen = $event">
+            <DialogContent class="sm:max-w-xl">
+                <DialogHeader class="space-y-1">
+                    <DialogTitle>Add signature</DialogTitle>
+                    <DialogDescription>
+                        Upload a signature image for
+                        <span class="font-medium text-foreground">
+                            {{ pendingSignatureRow?.taxpayerName ?? 'this row' }}
+                        </span>.
+                        This updates only the selected row and queues PDF regeneration.
+                    </DialogDescription>
+                </DialogHeader>
+
+                <div class="space-y-4">
+                    <input
+                        ref="signatureUploadInput"
+                        type="file"
+                        class="hidden"
+                        accept=".png,.jpg,.jpeg,.webp"
+                        @change="handleSignatureSelected"
+                    />
+
+                    <Button type="button" variant="outline" class="w-full justify-start gap-2" @click="openSignatureUploadPicker">
+                        <Upload class="size-4" />
+                        Choose signature image
+                    </Button>
+
+                    <p v-if="signatureUploadFile" class="text-sm text-muted-foreground">
+                        {{ signatureUploadFile.name }} ({{ formatFileSize(signatureUploadFile.size) }})
+                    </p>
+
+                    <p v-if="signatureUploadError" class="text-sm text-destructive">
+                        {{ signatureUploadError }}
+                    </p>
+
+                    <div v-if="uploadedSignaturePath" class="rounded-lg border bg-muted/30 p-3 text-sm">
+                        <p class="font-medium text-foreground">Signature key</p>
+                        <p class="mt-1 break-all text-muted-foreground">{{ uploadedSignaturePath }}</p>
+                        <div class="mt-3 flex flex-wrap gap-2">
+                            <Button type="button" size="sm" variant="secondary" @click="copySignaturePath">
+                                <Copy class="mr-2 size-4" />
+                                Copy key
+                            </Button>
+                            <Button v-if="uploadedSignatureUrl" as-child type="button" size="sm" variant="outline">
+                                <a :href="uploadedSignatureUrl" target="_blank" rel="noreferrer">Open image</a>
+                            </Button>
+                        </div>
+                    </div>
+                </div>
+
+                <DialogFooter class="gap-2">
+                    <Button type="button" variant="secondary" :disabled="signatureUploadProcessing" @click="isSignatureDialogOpen = false">
+                        Close
+                    </Button>
+                    <Button type="button" :disabled="signatureUploadProcessing || signatureUploadFile === null" @click="submitSignatureUpload">
+                        <LoaderCircle v-if="signatureUploadProcessing" class="mr-2 size-4 animate-spin" />
+                        <Upload v-else class="mr-2 size-4" />
+                        {{ signatureUploadProcessing ? 'Uploading...' : 'Upload signature' }}
+                    </Button>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
+        <Dialog :open="isSignaturePreviewDialogOpen" @update:open="isSignaturePreviewDialogOpen = $event">
+            <DialogContent class="sm:max-w-2xl">
+                <DialogHeader class="space-y-1">
+                    <DialogTitle>Signature preview</DialogTitle>
+                    <DialogDescription>
+                        {{ pendingSignaturePreviewRow?.taxpayerName ?? 'Selected row' }}
+                    </DialogDescription>
+                </DialogHeader>
+
+                <div class="rounded-lg border bg-muted/20 p-3">
+                    <img
+                        v-if="pendingSignaturePreviewRow?.signaturePreviewUrl"
+                        :src="pendingSignaturePreviewRow.signaturePreviewUrl"
+                        alt="Row signature preview"
+                        class="max-h-[360px] w-full object-contain"
+                    />
+                </div>
+
+                <DialogFooter class="gap-2">
+                    <Button type="button" variant="secondary" @click="isSignaturePreviewDialogOpen = false">
+                        Close
+                    </Button>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
+
         <AlertDialog :open="isDeleteDialogOpen" @update:open="isDeleteDialogOpen = $event">
             <AlertDialogContent>
                 <AlertDialogHeader>
@@ -820,6 +1046,8 @@ function submitRemoveReceipt(): void {
                         :is-busy="props.hasActiveJobs" :is-delete-processing="deleteRowsForm.processing"
                         :page-url="props.indexUrl" :pagination="props.pagination" :rows="props.rows"
                         :rows-export-state="props.rowsExportState" @open-recipient-editor="openRecipientEditor"
+                        @open-signature="openSignatureDialogForRow"
+                        @open-signature-preview="openSignaturePreviewDialogForRow"
                         @open-receipt="openReceiptDialog" @open-remove-receipt="openRemoveReceiptDialog"
                         @open-temporary-receipt="openTemporaryReceiptDialog" @regenerate="regenerateRow"
                         @request-delete="requestDelete" />

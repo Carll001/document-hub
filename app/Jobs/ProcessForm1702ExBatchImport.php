@@ -28,6 +28,7 @@ class ProcessForm1702ExBatchImport implements ShouldQueue
     public function __construct(
         public readonly int $batchId,
     ) {
+        $this->onQueue('filing-1702');
     }
 
     public function handle(

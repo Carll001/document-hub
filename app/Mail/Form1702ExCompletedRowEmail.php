@@ -26,6 +26,7 @@ class Form1702ExCompletedRowEmail extends Mailable implements ShouldQueue
         public readonly ?string $extraAttachmentFileName = null,
         public readonly ?string $extraAttachmentMimeType = null,
     ) {
+        $this->onQueue('filing-1702');
     }
 
     public function envelope(): Envelope

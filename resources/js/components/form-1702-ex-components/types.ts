@@ -52,6 +52,9 @@ export type Form1702ExBatchRow = {
     autoReceiptError: string | null;
     recipientEmail: string | null;
     updateRecipientUrl: string;
+    signatureUploadUrl: string;
+    signatureApplied: boolean;
+    signaturePreviewUrl: string | null;
     sendEmailUrl: string | null;
     cancelUrl: string | null;
     footerSourcePath: string;
@@ -94,6 +97,7 @@ export type Form1702ExIndexPageProps = {
     bulkDeleteUrl: string;
     rowsExportUrl: string;
     settingsUpdateUrl: string;
+    signatureUploadUrl: string;
     templateSpreadsheetUrl: string;
     receiptTemplateUrl: string;
     receiptTemplate: Form1702ExReceiptTemplateState;
