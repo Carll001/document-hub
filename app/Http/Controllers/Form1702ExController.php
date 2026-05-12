@@ -318,7 +318,7 @@ class Form1702ExController extends Controller
             $state['status'] === Form1702ExCompletedExportService::STATUS_READY
                 && is_array($cached)
                 && is_string($cached['storagePath'] ?? null)
-                && DocumentStorage::disk()->exists($cached['storagePath']),
+                && DocumentStorage::exists((string) $cached['storagePath']),
             404,
         );
 
@@ -387,7 +387,7 @@ class Form1702ExController extends Controller
             $state['status'] === Form1702ExRowsExportService::STATUS_READY
                 && is_array($cached)
                 && is_string($cached['storagePath'] ?? null)
-                && DocumentStorage::disk()->exists($cached['storagePath']),
+                && DocumentStorage::exists((string) $cached['storagePath']),
             404,
         );
 

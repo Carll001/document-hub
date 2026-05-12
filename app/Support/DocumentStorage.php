@@ -31,4 +31,16 @@ final class DocumentStorage
 
         return $normalized !== '' && $normalized !== '0';
     }
+
+    /**
+     * Safely check if a path exists on the configured disk.
+     */
+    public static function exists(string $path): bool
+    {
+        try {
+            return self::disk()->exists($path);
+        } catch (\Throwable) {
+            return false;
+        }
+    }
 }

@@ -50,7 +50,7 @@ class Form1702ExRowsExportService
         if ($status === self::STATUS_READY) {
             $storagePath = is_string($state['storagePath'] ?? null) ? $state['storagePath'] : null;
 
-            if ($storagePath === null || ! \App\Support\DocumentStorage::disk()->exists($storagePath)) {
+            if ($storagePath === null || ! \App\Support\DocumentStorage::exists($storagePath)) {
                 $this->forgetState($userId);
 
                 return $this->emptyState();

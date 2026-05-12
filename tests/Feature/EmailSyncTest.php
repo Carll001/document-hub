@@ -374,9 +374,9 @@ class EmailSyncTest extends TestCase
         ]);
 
         $runner = \Mockery::mock(EmailSyncRunner::class);
-        $runner->shouldReceive('sync')
+        $runner->shouldReceive('syncSingleBatch')
             ->once()
-            ->with([$account->id], \Mockery::type('callable'))
+            ->with([$account->id], \Mockery::type('callable'), null)
             ->andReturn([
                 'results' => [[
                     'accountId' => $account->id,
@@ -384,11 +384,14 @@ class EmailSyncTest extends TestCase
                     'fetched' => 5,
                     'created' => 3,
                     'updated' => 2,
+                    'filtered' => 0,
                     'mailbox' => $account->mailbox,
                     'skipped' => false,
                     'emailIds' => [],
                 ]],
                 'busyAccounts' => [],
+                'remainingUidsByAccount' => [],
+                'hasMore' => false,
             ]);
 
         $job = new ProcessEmailSyncAccounts([$account->id], 'Sync', 'run-123');
@@ -419,12 +422,13 @@ class EmailSyncTest extends TestCase
         ]);
 
         $runner = \Mockery::mock(EmailSyncRunner::class);
-        $runner->shouldReceive('backfill')
+        $runner->shouldReceive('backfillSingleBatch')
             ->once()
             ->with(
                 \Mockery::on(fn (mixed $candidate): bool => $candidate instanceof CarbonImmutable && $candidate->format('Y-m-d') === '2026-01-01'),
                 [$account->id],
                 \Mockery::type('callable'),
+                null,
             )
             ->andReturn([
                 'results' => [[
@@ -433,11 +437,14 @@ class EmailSyncTest extends TestCase
                     'fetched' => 8,
                     'created' => 8,
                     'updated' => 0,
+                    'filtered' => 0,
                     'mailbox' => $account->mailbox,
                     'skipped' => false,
                     'emailIds' => [],
                 ]],
                 'busyAccounts' => [],
+                'remainingUidsByAccount' => [],
+                'hasMore' => false,
             ]);
 
         $job = new ProcessEmailSyncAccounts([$account->id], 'Import older', 'run-backfill', '2026-01-01');
@@ -460,9 +467,9 @@ class EmailSyncTest extends TestCase
         ]);
 
         $runner = \Mockery::mock(EmailSyncRunner::class);
-        $runner->shouldReceive('sync')
+        $runner->shouldReceive('syncSingleBatch')
             ->once()
-            ->with([$account->id], \Mockery::type('callable'))
+            ->with([$account->id], \Mockery::type('callable'), null)
             ->andThrow(new \RuntimeException('Mailbox connection timed out.'));
 
         $job = new ProcessEmailSyncAccounts([$account->id], 'Sync', 'run-failed');

@@ -16,6 +16,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response as HttpResponse;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Inertia\Inertia;
@@ -226,6 +227,12 @@ class EmailSyncController extends Controller
                 'processing_started_at' => $startedAt,
             ]);
 
+        Cache::put($this->runMetaCacheKey($runUuid), [
+            'actionLabel' => 'Sync',
+            'startDate' => null,
+            'queuedAt' => $startedAt->toIso8601String(),
+        ], now()->addHour());
+
         ProcessEmailSyncAccounts::dispatch($accounts->modelKeys(), 'Sync', $runUuid);
 
         return back()->with('success', 'Email sync queued. Results will refresh automatically.');
@@ -272,6 +279,12 @@ class EmailSyncController extends Controller
                 'processing_started_at' => $startedAt,
             ]);
 
+        Cache::put($this->runMetaCacheKey($runUuid), [
+            'actionLabel' => 'Import older',
+            'startDate' => (string) $validated['startDate'],
+            'queuedAt' => $startedAt->toIso8601String(),
+        ], now()->addHour());
+
         ProcessEmailSyncAccounts::dispatch(
             $accounts->modelKeys(),
             'Import older',
@@ -284,6 +297,17 @@ class EmailSyncController extends Controller
 
     public function cancel(): RedirectResponse
     {
+        $runUuids = EmailSyncAccount::query()
+            ->whereIn('processing_status', [
+                EmailSyncAccount::PROCESSING_STATUS_QUEUED,
+                EmailSyncAccount::PROCESSING_STATUS_PROCESSING,
+            ])
+            ->whereNotNull('processing_run_uuid')
+            ->pluck('processing_run_uuid')
+            ->filter(fn (mixed $uuid): bool => is_string($uuid) && trim($uuid) !== '')
+            ->values()
+            ->all();
+
         $cancelled = EmailSyncAccount::query()
             ->whereIn('processing_status', [
                 EmailSyncAccount::PROCESSING_STATUS_QUEUED,
@@ -296,6 +320,12 @@ class EmailSyncController extends Controller
                 'processing_error' => null,
                 'processing_started_at' => null,
             ]);
+
+        foreach ($runUuids as $runUuid) {
+            Cache::forget($this->runMetaCacheKey((string) $runUuid));
+            Cache::forget("email-sync:run:{$runUuid}:aggregate");
+            Cache::forget("email-sync:run:{$runUuid}:remaining-uids");
+        }
 
         if ($cancelled === 0) {
             return back()->with('error', 'There is no active email sync to cancel.');
@@ -478,6 +508,8 @@ class EmailSyncController extends Controller
      *     status: 'queued'|'processing'|'failed'|null,
      *     actionLabel: string|null,
      *     accountLabels: list<string>,
+     *     fetchStartDate: string|null,
+     *     fetchDateLabel: string|null,
      *     error: string|null,
      *     resultDetails: array{
      *         actionLabel: string,
@@ -508,11 +540,20 @@ class EmailSyncController extends Controller
             $status = $runningAccounts->contains(
                 fn (EmailSyncAccount $account): bool => $account->processing_status === EmailSyncAccount::PROCESSING_STATUS_PROCESSING,
             ) ? EmailSyncAccount::PROCESSING_STATUS_PROCESSING : EmailSyncAccount::PROCESSING_STATUS_QUEUED;
+            $runUuid = trim((string) ($runningAccounts->first()?->processing_run_uuid ?? ''));
+            $meta = $runUuid !== '' ? Cache::get($this->runMetaCacheKey($runUuid)) : null;
+            $startDate = is_array($meta) && isset($meta['startDate']) && is_string($meta['startDate'])
+                ? trim($meta['startDate'])
+                : null;
 
             return [
                 'status' => $status,
                 'actionLabel' => $runningAccounts->first()?->processing_action ?? 'Sync',
                 'accountLabels' => $runningAccounts->map(fn (EmailSyncAccount $account): string => $account->label())->values()->all(),
+                'fetchStartDate' => ($startDate !== null && $startDate !== '') ? $startDate : null,
+                'fetchDateLabel' => ($startDate !== null && $startDate !== '')
+                    ? "Fetching emails on/after {$startDate}"
+                    : 'Fetching newest emails',
                 'error' => null,
                 'resultDetails' => null,
             ];
@@ -531,6 +572,8 @@ class EmailSyncController extends Controller
                 'status' => EmailSyncAccount::PROCESSING_STATUS_FAILED,
                 'actionLabel' => $failedAccounts->first()?->processing_action,
                 'accountLabels' => $failedAccounts->map(fn (EmailSyncAccount $account): string => $account->label())->values()->all(),
+                'fetchStartDate' => null,
+                'fetchDateLabel' => null,
                 'error' => $failedAccounts->pluck('processing_error')->filter()->implode(' '),
                 'resultDetails' => null,
             ];
@@ -547,6 +590,8 @@ class EmailSyncController extends Controller
                 'status' => null,
                 'actionLabel' => null,
                 'accountLabels' => [],
+                'fetchStartDate' => null,
+                'fetchDateLabel' => null,
                 'error' => null,
                 'resultDetails' => null,
             ];
@@ -563,6 +608,8 @@ class EmailSyncController extends Controller
             'status' => null,
             'actionLabel' => null,
             'accountLabels' => [],
+            'fetchStartDate' => null,
+            'fetchDateLabel' => null,
             'error' => null,
             'resultDetails' => [
                 'actionLabel' => $latestRunAccounts->first()?->last_sync_action ?? 'Sync',
@@ -579,6 +626,11 @@ class EmailSyncController extends Controller
                     ->all(),
             ],
         ];
+    }
+
+    private function runMetaCacheKey(string $runUuid): string
+    {
+        return "email-sync:run:{$runUuid}:meta";
     }
 
     private function legacyEmailPagePayload(LengthAwarePaginator $emailPage): array

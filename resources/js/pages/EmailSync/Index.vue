@@ -63,9 +63,7 @@ const toolbarRunningActionLabel = computed(() => props.syncState.actionLabel ?? 
 const toolbarRunningAccountLabels = computed(() =>
     props.syncState.accountLabels.length > 0 ? props.syncState.accountLabels : runningAccountLabels.value,
 );
-const toolbarFlashError = computed(() =>
-    props.syncState.status === 'failed' ? props.syncState.error : props.flash.error,
-);
+const toolbarFlashError = computed(() => props.flash.error);
 const toolbarResultDetails = computed(() => props.syncState.resultDetails ?? props.flash.syncResultDetails);
 const toolbarSyncProcessing = computed(() =>
     isSyncQueuedOrRunning.value && toolbarRunningActionLabel.value !== 'Import older',

@@ -2,153 +2,139 @@
 
 namespace Tests\Unit;
 
+use App\Models\EmailSyncAccount;
 use App\Models\SyncedEmail;
-use App\Models\SyncedEmailAttachment;
 use App\Services\EmailSync\BirReceiptAutoMatchService;
+use App\Services\EmailSync\BirReceiptEmailParser;
 use App\Services\EmailSync\EmailSyncClient;
 use App\Services\EmailSync\EmailSyncService;
 use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 class EmailSyncServiceTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_first_sync_imports_the_newest_twenty_five_emails()
+    public function test_sync_account_persists_only_supported_confirmation_emails(): void
     {
-        Storage::fake('local');
-
+        $account = $this->createAccount();
         $client = new FakeEmailSyncClient(
-            latestUids: [9001, 9002],
+            latestUids: [101, 102, 103],
             messages: [
-                9001 => $this->messagePayload(9001, [
-                    'attachments' => [[
-                        'file_name' => 'brief.txt',
-                        'content_type' => 'text/plain',
-                        'content' => 'Quarterly brief',
-                        'size' => 15,
-                    ]],
+                101 => $this->messagePayload(101, [
+                    'from_email' => 'ebirforms-noreply@bir.gov.ph',
+                    'body_text' => $this->confirmationBody('010860961000-1702EXv2018C-122025.xml'),
                 ]),
-                9002 => $this->messagePayload(9002),
+                102 => $this->messagePayload(102, [
+                    'from_email' => 'other@bir.gov.ph',
+                    'body_text' => $this->confirmationBody('010860961000-1702EXv2018C-122025.xml'),
+                ]),
+                103 => $this->messagePayload(103, [
+                    'from_email' => 'ebirforms-noreply@bir.gov.ph',
+                    'body_text' => 'Random body without receipt markers',
+                ]),
             ],
         );
 
-        $service = $this->makeServiceWithClient($client);
+        $service = $this->makeServiceWithClient($client, $autoMatchCalls);
+        $result = $service->syncAccount($account);
 
-        $result = $service->sync();
-
-        $this->assertSame([['connect'], ['selectMailbox', 'INBOX'], ['latestUids', 25], ['fetchMessage', 9001], ['fetchMessage', 9002], ['disconnect']], $client->calls);
-        $this->assertSame([
-            'fetched' => 2,
-            'created' => 2,
-            'updated' => 0,
-            'mailbox' => 'INBOX',
-        ], $result);
-        $this->assertDatabaseCount('synced_emails', 2);
+        $this->assertSame(3, $result['fetched']);
+        $this->assertSame(1, $result['created']);
+        $this->assertSame(0, $result['updated']);
+        $this->assertSame(2, $result['filtered']);
+        $this->assertSame(1, $autoMatchCalls);
+        $this->assertDatabaseCount('synced_emails', 1);
         $this->assertDatabaseHas('synced_emails', [
-            'imap_uid' => '9001',
-            'subject' => 'Message 9001',
-            'body_html' => '<p>Body 9001</p>',
+            'email_sync_account_id' => $account->id,
+            'imap_uid' => '101',
         ]);
-        $this->assertDatabaseHas('synced_email_attachments', [
-            'file_name' => 'brief.txt',
-            'content_type' => 'text/plain',
-        ]);
-
-        $attachment = SyncedEmailAttachment::query()->firstOrFail();
-
-        Storage::disk('s3')->assertExists($attachment->storage_path);
     }
 
-    public function test_incremental_sync_only_fetches_uids_newer_than_the_latest_saved_email()
+    public function test_sync_account_matches_sender_case_insensitively(): void
     {
+        $account = $this->createAccount();
+        $client = new FakeEmailSyncClient(
+            latestUids: [201],
+            messages: [
+                201 => $this->messagePayload(201, [
+                    'from_email' => 'EBIRFORMS-NOREPLY@BIR.GOV.PH',
+                    'body_text' => $this->confirmationBody('010860961000-1702EXv2018C-122025.xml'),
+                ]),
+            ],
+        );
+
+        $service = $this->makeServiceWithClient($client, $autoMatchCalls);
+        $result = $service->syncAccount($account);
+
+        $this->assertSame(1, $result['created']);
+        $this->assertSame(0, $result['filtered']);
+        $this->assertSame(1, $autoMatchCalls);
+    }
+
+    public function test_incremental_sync_uses_newer_uids_from_newest_saved_email(): void
+    {
+        $account = $this->createAccount();
+
         SyncedEmail::query()->create([
+            'email_sync_account_id' => $account->id,
             'mailbox' => 'INBOX',
-            'imap_uid' => '200',
-            'message_id' => '<message-200@example.com>',
-            'from_name' => 'Support Team',
-            'from_email' => 'support@example.com',
-            'subject' => 'Existing message',
-            'body_preview' => 'Existing preview',
-            'body_text' => 'Existing body',
-            'received_at' => now()->subMinutes(30),
+            'imap_uid' => '300',
+            'message_id' => '<message-300@example.com>',
+            'from_name' => 'BIR',
+            'from_email' => 'ebirforms-noreply@bir.gov.ph',
+            'subject' => 'Existing',
+            'body_preview' => 'Existing',
+            'body_text' => $this->confirmationBody('010860961000-1702EXv2018C-122025.xml'),
+            'received_at' => now()->subMinute(),
             'synced_at' => now(),
         ]);
 
         $client = new FakeEmailSyncClient(
-            newerUids: [201, 202],
+            newerUids: [301],
             messages: [
-                201 => $this->messagePayload(201),
-                202 => $this->messagePayload(202),
+                301 => $this->messagePayload(301, [
+                    'from_email' => 'ebirforms-noreply@bir.gov.ph',
+                    'body_text' => $this->confirmationBody('010860961000-1702EXv2018C-122025.xml'),
+                ]),
             ],
         );
 
-        $service = $this->makeServiceWithClient($client);
+        $service = $this->makeServiceWithClient($client, $autoMatchCalls);
+        $result = $service->syncAccount($account);
 
-        $result = $service->sync();
-
-        $this->assertTrue($client->wasCalled('uidsNewerThan', [200]));
-        $this->assertFalse($client->wasCalled('latestUids'));
-        $this->assertSame(2, $result['created']);
-        $this->assertDatabaseCount('synced_emails', 3);
-        $this->assertDatabaseHas('synced_emails', [
-            'imap_uid' => '202',
-        ]);
+        $this->assertTrue($client->wasCalled('uidsNewerThan', [300]));
+        $this->assertSame(1, $result['created']);
+        $this->assertSame(0, $result['filtered']);
+        $this->assertSame(1, $autoMatchCalls);
     }
 
-    public function test_backfill_imports_emails_received_on_or_after_the_selected_date()
+    private function createAccount(): EmailSyncAccount
     {
-        $client = new FakeEmailSyncClient(
-            receivedSinceUids: [150, 151],
-            messages: [
-                150 => $this->messagePayload(150),
-                151 => $this->messagePayload(151),
-            ],
-        );
-
-        $service = $this->makeServiceWithClient($client);
-        $startDate = CarbonImmutable::parse('2026-01-01');
-
-        $result = $service->backfill($startDate);
-
-        $this->assertTrue($client->wasCalled('uidsReceivedSince'));
-        $this->assertSame(2, $result['created']);
-        $this->assertDatabaseCount('synced_emails', 2);
-        $this->assertDatabaseHas('synced_emails', [
-            'imap_uid' => '150',
-        ]);
-    }
-
-    public function test_backfill_allows_a_date_import_even_without_a_previous_sync_anchor()
-    {
-        $startDate = CarbonImmutable::parse('2026-01-01');
-        $client = new FakeEmailSyncClient(receivedSinceUids: []);
-        $service = $this->makeServiceWithClient($client);
-
-        $result = $service->backfill($startDate);
-
-        $this->assertSame([
-            'fetched' => 0,
-            'created' => 0,
-            'updated' => 0,
+        return EmailSyncAccount::query()->create([
+            'display_name' => 'Shared Inbox',
+            'username' => 'sync@example.com',
+            'password' => 'secret',
+            'host' => 'imap.example.com',
+            'port' => 993,
+            'encryption' => 'ssl',
             'mailbox' => 'INBOX',
-        ], $result);
-        $this->assertTrue($client->wasCalled('uidsReceivedSince'));
+            'validate_certificate' => true,
+            'is_active' => true,
+        ]);
+    }
+
+    private function confirmationBody(string $fileName): string
+    {
+        return "File name: {$fileName}\nDate received by BIR: 12 May 2026\nTime received by BIR: 09:30 AM";
     }
 
     /**
      * @param  array{
-     *     body_html?: string|null,
-     *     attachments?: list<array{
-     *         file_name: string,
-     *         content_type: string|null,
-     *         content: string,
-     *         size: int,
-     *         content_id?: string|null,
-     *         is_inline?: bool
-     *     }>
+     *     from_email?: string,
+     *     body_text?: string,
+     *     body_html?: string|null
      * }  $overrides
      * @return array{
      *     imap_uid: string,
@@ -174,40 +160,33 @@ class EmailSyncServiceTest extends TestCase
         return array_replace([
             'imap_uid' => (string) $uid,
             'message_id' => "<message-{$uid}@example.com>",
-            'from_name' => 'Support Team',
-            'from_email' => 'support@example.com',
+            'from_name' => 'BIR',
+            'from_email' => 'ebirforms-noreply@bir.gov.ph',
             'subject' => "Message {$uid}",
-            'received_at' => CarbonImmutable::parse('2026-03-24 10:00:00')->addMinutes($uid),
-            'body_text' => "Body {$uid}",
-            'body_html' => "<p>Body {$uid}</p>",
+            'received_at' => CarbonImmutable::parse('2026-05-12 10:00:00')->addMinutes($uid),
+            'body_text' => $this->confirmationBody('010860961000-1702EXv2018C-122025.xml'),
+            'body_html' => '<p>Receipt</p>',
             'attachments' => [],
         ], $overrides);
     }
 
-    private function makeServiceWithClient(FakeEmailSyncClient $client): EmailSyncService
+    private function makeServiceWithClient(FakeEmailSyncClient $client, int &$autoMatchCalls): EmailSyncService
     {
-        config([
-            'services.email_sync' => [
-                'host' => 'imap.gmail.com',
-                'port' => 993,
-                'username' => 'mailbox@example.com',
-                'password' => 'app-password',
-                'encryption' => 'ssl',
-                'mailbox' => 'INBOX',
-                'validate_certificate' => true,
-            ],
-        ]);
-
+        $autoMatchCalls = 0;
         $autoMatchService = \Mockery::mock(BirReceiptAutoMatchService::class);
-        $autoMatchService->shouldReceive('syncEmail')->andReturnNull();
+        $autoMatchService->shouldReceive('syncEmail')
+            ->andReturnUsing(function () use (&$autoMatchCalls): void {
+                $autoMatchCalls++;
+            });
 
-        return new class($client, $autoMatchService) extends EmailSyncService
+        return new class($client, $autoMatchService, new BirReceiptEmailParser) extends EmailSyncService
         {
             public function __construct(
                 private readonly FakeEmailSyncClient $client,
                 BirReceiptAutoMatchService $birReceiptAutoMatchService,
+                BirReceiptEmailParser $birReceiptEmailParser,
             ) {
-                parent::__construct($birReceiptAutoMatchService);
+                parent::__construct($birReceiptAutoMatchService, $birReceiptEmailParser);
             }
 
             protected function makeClient(array $config): EmailSyncClient
@@ -221,7 +200,7 @@ class EmailSyncServiceTest extends TestCase
 class FakeEmailSyncClient implements EmailSyncClient
 {
     /**
-     * @var list<array<int, int|string>>
+     * @var list<array<int, mixed>>
      */
     public array $calls = [];
 
@@ -308,7 +287,7 @@ class FakeEmailSyncClient implements EmailSyncClient
     }
 
     /**
-     * @param  list<int>  $arguments
+     * @param  list<mixed>  $arguments
      */
     public function wasCalled(string $method, array $arguments = []): bool
     {

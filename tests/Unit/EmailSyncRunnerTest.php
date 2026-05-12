@@ -2,134 +2,98 @@
 
 namespace Tests\Unit;
 
+use App\Models\EmailSyncAccount;
 use App\Services\EmailSync\EmailSyncRunner;
 use App\Services\EmailSync\EmailSyncService;
-use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Facades\Cache;
-use RuntimeException;
 use Tests\TestCase;
 
 class EmailSyncRunnerTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_sync_calls_the_sync_service_when_the_lock_is_available()
+    public function test_sync_processes_work_in_global_batches_of_ten(): void
     {
+        $accountOne = $this->createAccount('first@example.com');
+        $accountTwo = $this->createAccount('second@example.com');
+
         $service = \Mockery::mock(EmailSyncService::class);
-        $service->shouldReceive('sync')
-            ->once()
-            ->andReturn([
-                'fetched' => 3,
-                'created' => 2,
-                'updated' => 1,
-                'mailbox' => 'INBOX',
-            ]);
+        $service->shouldReceive('uidsForAccountSync')->once()->withArgs(fn (EmailSyncAccount $a): bool => $a->id === $accountOne->id)->andReturn([1, 2, 3, 4, 5, 6, 7]);
+        $service->shouldReceive('uidsForAccountSync')->once()->withArgs(fn (EmailSyncAccount $a): bool => $a->id === $accountTwo->id)->andReturn([11, 12, 13, 14, 15, 16, 17]);
+
+        $receivedBatches = [];
+        $service->shouldReceive('syncAccountUids')
+            ->times(4)
+            ->andReturnUsing(function (EmailSyncAccount $account, array $uids) use (&$receivedBatches): array {
+                $receivedBatches[] = [
+                    'accountId' => $account->id,
+                    'uids' => $uids,
+                ];
+
+                return [
+                    'accountId' => $account->id,
+                    'accountLabel' => $account->label(),
+                    'fetched' => count($uids),
+                    'created' => count($uids),
+                    'updated' => 0,
+                    'filtered' => 0,
+                    'mailbox' => (string) $account->mailbox,
+                    'skipped' => false,
+                    'emailIds' => [],
+                ];
+            });
 
         $runner = new EmailSyncRunner($service);
+        $result = $runner->sync([$accountOne->id, $accountTwo->id]);
 
-        $this->assertSame([
-            'fetched' => 3,
-            'created' => 2,
-            'updated' => 1,
+        $this->assertCount(4, $receivedBatches);
+        $this->assertSame([1, 2, 3, 4, 5], $receivedBatches[0]['uids']);
+        $this->assertSame([11, 12, 13, 14, 15], $receivedBatches[1]['uids']);
+        $this->assertSame([6, 7], $receivedBatches[2]['uids']);
+        $this->assertSame([16, 17], $receivedBatches[3]['uids']);
+
+        $accountOneResult = collect($result['results'])->firstWhere('accountId', $accountOne->id);
+        $accountTwoResult = collect($result['results'])->firstWhere('accountId', $accountTwo->id);
+
+        $this->assertSame(7, $accountOneResult['fetched']);
+        $this->assertSame(7, $accountTwoResult['fetched']);
+        $this->assertSame([], $result['busyAccounts']);
+    }
+
+    public function test_sync_marks_busy_accounts_as_skipped_in_results(): void
+    {
+        $account = $this->createAccount('busy@example.com');
+        $lock = cache()->lock(EmailSyncRunner::accountLockKey($account->id), EmailSyncRunner::LOCK_TTL_SECONDS);
+        $this->assertTrue($lock->get());
+
+        try {
+            $service = \Mockery::mock(EmailSyncService::class);
+            $service->shouldNotReceive('uidsForAccountSync');
+            $service->shouldNotReceive('syncAccountUids');
+
+            $runner = new EmailSyncRunner($service);
+            $result = $runner->sync([$account->id]);
+
+            $this->assertSame([$account->label()], $result['busyAccounts']);
+            $this->assertTrue($result['results'][0]['skipped']);
+            $this->assertSame(0, $result['results'][0]['filtered']);
+        } finally {
+            $lock->release();
+        }
+    }
+
+    private function createAccount(string $username): EmailSyncAccount
+    {
+        return EmailSyncAccount::query()->create([
+            'display_name' => '',
+            'username' => $username,
+            'password' => 'secret',
+            'host' => 'imap.example.com',
+            'port' => 993,
+            'encryption' => 'ssl',
             'mailbox' => 'INBOX',
-        ], $runner->sync());
-    }
-
-    public function test_sync_throws_a_busy_error_when_the_lock_is_already_held()
-    {
-        $service = \Mockery::mock(EmailSyncService::class);
-        $service->shouldNotReceive('sync');
-
-        $lock = Cache::lock(
-            EmailSyncRunner::lockKey(),
-            EmailSyncRunner::LOCK_TTL_SECONDS,
-        );
-
-        $this->assertTrue($lock->get());
-
-        try {
-            $runner = new EmailSyncRunner($service);
-
-            $this->expectException(RuntimeException::class);
-            $this->expectExceptionMessage('Inbox sync is already running.');
-
-            $runner->sync();
-        } finally {
-            $lock->release();
-        }
-    }
-
-    public function test_sync_if_available_quietly_skips_when_the_lock_is_already_held()
-    {
-        $service = \Mockery::mock(EmailSyncService::class);
-        $service->shouldNotReceive('sync');
-
-        $lock = Cache::lock(
-            EmailSyncRunner::lockKey(),
-            EmailSyncRunner::LOCK_TTL_SECONDS,
-        );
-
-        $this->assertTrue($lock->get());
-
-        try {
-            $runner = new EmailSyncRunner($service);
-
-            $this->assertNull($runner->syncIfAvailable());
-        } finally {
-            $lock->release();
-        }
-    }
-
-    public function test_backfill_calls_the_sync_service_with_the_selected_start_date_when_the_lock_is_available()
-    {
-        $startDate = CarbonImmutable::parse('2026-01-01');
-
-        $service = \Mockery::mock(EmailSyncService::class);
-        $service->shouldReceive('backfill')
-            ->once()
-            ->with(\Mockery::on(
-                fn ($candidate): bool => $candidate instanceof CarbonImmutable
-                    && $candidate->equalTo($startDate),
-            ))
-            ->andReturn([
-                'fetched' => 3,
-                'created' => 3,
-                'updated' => 0,
-                'mailbox' => 'INBOX',
-            ]);
-
-        $runner = new EmailSyncRunner($service);
-
-        $this->assertSame([
-            'fetched' => 3,
-            'created' => 3,
-            'updated' => 0,
-            'mailbox' => 'INBOX',
-        ], $runner->backfill($startDate));
-    }
-
-    public function test_backfill_throws_a_busy_error_when_the_lock_is_already_held()
-    {
-        $service = \Mockery::mock(EmailSyncService::class);
-        $service->shouldNotReceive('backfill');
-
-        $lock = Cache::lock(
-            EmailSyncRunner::lockKey(),
-            EmailSyncRunner::LOCK_TTL_SECONDS,
-        );
-
-        $this->assertTrue($lock->get());
-
-        try {
-            $runner = new EmailSyncRunner($service);
-
-            $this->expectException(RuntimeException::class);
-            $this->expectExceptionMessage('Inbox sync is already running.');
-
-            $runner->backfill(CarbonImmutable::parse('2026-01-01'));
-        } finally {
-            $lock->release();
-        }
+            'validate_certificate' => true,
+            'is_active' => true,
+        ]);
     }
 }

@@ -50,7 +50,7 @@ class Form1702ExCompletedExportService
         if ($status === self::STATUS_READY) {
             $storagePath = is_string($state['storagePath'] ?? null) ? $state['storagePath'] : null;
 
-            if ($storagePath === null || ! \App\Support\DocumentStorage::disk()->exists($storagePath)) {
+            if ($storagePath === null || ! \App\Support\DocumentStorage::exists($storagePath)) {
                 $this->forgetState($userId);
 
                 return $this->emptyState();
@@ -118,7 +118,7 @@ class Form1702ExCompletedExportService
         foreach ($rows as $row) {
             $pdfStoragePath = (string) ($row->generated_pdf_storage_path ?? '');
 
-            if ($pdfStoragePath === '' || ! $disk->exists($pdfStoragePath)) {
+            if ($pdfStoragePath === '' || ! \App\Support\DocumentStorage::exists($pdfStoragePath)) {
                 continue;
             }
 

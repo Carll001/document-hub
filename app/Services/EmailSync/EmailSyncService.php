@@ -12,16 +12,38 @@ use RuntimeException;
 class EmailSyncService
 {
     public const INITIAL_SYNC_LIMIT = 25;
+    public const CONFIRMATION_FROM_EMAIL = 'ebirforms-noreply@bir.gov.ph';
 
     public function __construct(
         private readonly BirReceiptAutoMatchService $birReceiptAutoMatchService,
+        private readonly BirReceiptEmailParser $birReceiptEmailParser,
     ) {
     }
 
     /**
-     * @return array{accountId: int, accountLabel: string, fetched: int, created: int, updated: int, mailbox: string, skipped: bool, emailIds: list<int>}
+     * @return array{accountId: int, accountLabel: string, fetched: int, created: int, updated: int, filtered: int, mailbox: string, skipped: bool, emailIds: list<int>}
      */
     public function syncAccount(EmailSyncAccount $account, ?callable $shouldContinue = null): array
+    {
+        $uids = $this->uidsForAccountSync($account);
+
+        return $this->syncAccountUids($account, $uids, $shouldContinue);
+    }
+
+    /**
+     * @return array{accountId: int, accountLabel: string, fetched: int, created: int, updated: int, filtered: int, mailbox: string, skipped: bool, emailIds: list<int>}
+     */
+    public function backfillAccount(EmailSyncAccount $account, CarbonImmutable $startDate, ?callable $shouldContinue = null): array
+    {
+        $uids = $this->uidsForAccountBackfill($account, $startDate);
+
+        return $this->syncAccountUids($account, $uids, $shouldContinue);
+    }
+
+    /**
+     * @return list<int>
+     */
+    public function uidsForAccountSync(EmailSyncAccount $account): array
     {
         $config = $this->configuration($account);
         $mailbox = $config['mailbox'];
@@ -32,20 +54,18 @@ class EmailSyncService
             $client->connect();
             $client->selectMailbox($mailbox);
 
-            $uids = $newestSyncedUid === null
+            return $newestSyncedUid === null
                 ? $client->latestUids(self::INITIAL_SYNC_LIMIT)
                 : $client->uidsNewerThan($newestSyncedUid);
-
-            return $this->syncUids($account, $mailbox, $client, $uids, $shouldContinue);
         } finally {
             $client->disconnect();
         }
     }
 
     /**
-     * @return array{accountId: int, accountLabel: string, fetched: int, created: int, updated: int, mailbox: string, skipped: bool, emailIds: list<int>}
+     * @return list<int>
      */
-    public function backfillAccount(EmailSyncAccount $account, CarbonImmutable $startDate, ?callable $shouldContinue = null): array
+    public function uidsForAccountBackfill(EmailSyncAccount $account, CarbonImmutable $startDate): array
     {
         $config = $this->configuration($account);
         $mailbox = $config['mailbox'];
@@ -55,7 +75,25 @@ class EmailSyncService
             $client->connect();
             $client->selectMailbox($mailbox);
 
-            $uids = $client->uidsReceivedSince($startDate->startOfDay());
+            return $client->uidsReceivedSince($startDate->startOfDay());
+        } finally {
+            $client->disconnect();
+        }
+    }
+
+    /**
+     * @param  list<int>  $uids
+     * @return array{accountId: int, accountLabel: string, fetched: int, created: int, updated: int, filtered: int, mailbox: string, skipped: bool, emailIds: list<int>}
+     */
+    public function syncAccountUids(EmailSyncAccount $account, array $uids, ?callable $shouldContinue = null): array
+    {
+        $config = $this->configuration($account);
+        $mailbox = $config['mailbox'];
+        $client = $this->makeClient($config);
+
+        try {
+            $client->connect();
+            $client->selectMailbox($mailbox);
 
             return $this->syncUids($account, $mailbox, $client, $uids, $shouldContinue);
         } finally {
@@ -90,7 +128,7 @@ class EmailSyncService
 
     /**
      * @param  list<int>  $uids
-     * @return array{accountId: int, accountLabel: string, fetched: int, created: int, updated: int, mailbox: string, skipped: bool, emailIds: list<int>}
+     * @return array{accountId: int, accountLabel: string, fetched: int, created: int, updated: int, filtered: int, mailbox: string, skipped: bool, emailIds: list<int>}
      */
     private function syncUids(
         EmailSyncAccount $account,
@@ -102,6 +140,7 @@ class EmailSyncService
         $created = 0;
         $updated = 0;
         $fetched = 0;
+        $filtered = 0;
         $emailIds = [];
         $syncedAt = now();
 
@@ -112,6 +151,12 @@ class EmailSyncService
 
             $message = $client->fetchMessage($uid);
             $fetched++;
+
+            if (! $this->isSupportedConfirmationEmail($message)) {
+                $filtered++;
+
+                continue;
+            }
 
             $email = SyncedEmail::query()->updateOrCreate(
                 [
@@ -150,10 +195,42 @@ class EmailSyncService
             'fetched' => $fetched,
             'created' => $created,
             'updated' => $updated,
+            'filtered' => $filtered,
             'mailbox' => $mailbox,
             'skipped' => false,
             'emailIds' => array_values(array_unique($emailIds)),
         ];
+    }
+
+    /**
+     * @param  array{
+     *     imap_uid: string,
+     *     message_id: string|null,
+     *     from_name: string|null,
+     *     from_email: string|null,
+     *     subject: string|null,
+     *     received_at: CarbonImmutable|null,
+     *     body_text: string|null,
+     *     body_html: string|null,
+     *     attachments: list<array{
+     *         file_name: string,
+     *         content_type: string|null,
+     *         content: string,
+     *         size: int,
+     *         content_id: string|null,
+     *         is_inline: bool
+     *     }>
+     * }  $message
+     */
+    private function isSupportedConfirmationEmail(array $message): bool
+    {
+        $fromEmail = trim(strtolower((string) ($message['from_email'] ?? '')));
+
+        if ($fromEmail !== self::CONFIRMATION_FROM_EMAIL) {
+            return false;
+        }
+
+        return $this->birReceiptEmailParser->parse($message['body_text'] ?? null) !== null;
     }
 
     private function newestSyncedUid(EmailSyncAccount $account, string $mailbox): ?int
