@@ -99,7 +99,10 @@ class Form1702ExRowsExportService
 
         $fileName = '1702-ex-unmatched-rows-'.Str::uuid().'.xlsx';
         $storagePath = "{$directory}/{$fileName}";
-        $archivePath = \App\Support\DocumentStorage::disk()->path($storagePath);
+        $localXlsxPath = tempnam(sys_get_temp_dir(), '1702ex-rows-xlsx-');
+        if ($localXlsxPath === false) {
+            throw new \RuntimeException('The imported rows Excel file could not be prepared.');
+        }
 
         $headers = [
             'File name',
@@ -117,7 +120,20 @@ class Form1702ExRowsExportService
             throw new \RuntimeException('No imported rows matched this export request.');
         }
 
-        $this->writeSimpleXlsx($archivePath, $headers, $exportRows);
+        $this->writeSimpleXlsx($localXlsxPath, $headers, $exportRows);
+
+        $xlsxStream = @fopen($localXlsxPath, 'rb');
+        if (! is_resource($xlsxStream)) {
+            @unlink($localXlsxPath);
+            throw new \RuntimeException('The imported rows Excel file could not be read.');
+        }
+
+        try {
+            \App\Support\DocumentStorage::disk()->writeStream($storagePath, $xlsxStream);
+        } finally {
+            fclose($xlsxStream);
+            @unlink($localXlsxPath);
+        }
 
         return [
             'storagePath' => $storagePath,

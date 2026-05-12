@@ -45,6 +45,7 @@ import {
     receiptJobIsActive,
     receiptJobStatusLabel,
 } from '@/components/form-1702-ex-components/utils';
+import forms from '@/routes/forms';
 
 const props = withDefaults(
     defineProps<{
@@ -93,6 +94,12 @@ const isRowsExportBusy = computed(
 );
 const canExportList = computed(
     () => props.pagination.total > 0 && !isRowsExportBusy.value,
+);
+const readyExportDownloadUrl = computed(
+    () =>
+        props.rowsExportState.status === 'ready'
+            ? (props.rowsExportState.downloadUrl ?? forms.form1702ex.rows.export.file().url)
+            : null,
 );
 const selectAllState = computed<boolean | 'indeterminate'>(() => {
     if (props.rows.length === 0) {
@@ -304,6 +311,20 @@ function autoReceiptLabel(row: Form1702ExBatchRow): string | null {
             </div>
 
             <div class="flex flex-wrap gap-2 self-end md:self-auto">
+                <Button
+                    v-if="readyExportDownloadUrl"
+                    as-child
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    class="gap-2"
+                >
+                    <a :href="readyExportDownloadUrl">
+                        <Download class="size-4" />
+                        Download export
+                    </a>
+                </Button>
+
                 <Button
                     type="button"
                     variant="outline"
