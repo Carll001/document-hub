@@ -26,11 +26,18 @@ class Form1702ExCompletedEmailService
 
     public function isCompleted(Form1702ExBatchRow $row): bool
     {
+        /** @var array<string, mixed> $payload */
+        $payload = is_array($row->payload) ? $row->payload : [];
+        $signaturePath = is_scalar($payload['signature'] ?? null)
+            ? trim((string) $payload['signature'])
+            : '';
+
         return $row->pdf_status === Form1702ExBatchRow::PDF_STATUS_GENERATED
             && filled($row->generated_pdf_storage_path)
             && filled($row->receipt_storage_path)
             && filled($row->receipt_file_name)
-            && ! $row->receipt_is_temporary;
+            && ! $row->receipt_is_temporary
+            && $signaturePath !== '';
     }
 
     public function recipientEmail(Form1702ExBatchRow $row): ?string

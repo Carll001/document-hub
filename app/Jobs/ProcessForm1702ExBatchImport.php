@@ -83,7 +83,7 @@ class ProcessForm1702ExBatchImport implements ShouldQueue
                 ->filter(fn (Form1702ExBatchRow $row): bool => ! $row->isSkippedDuplicate())
                 ->pluck('id')
                 ->map(static fn (mixed $id): int => (int) $id)
-                ->chunk(200);
+                ->chunk(25);
 
             foreach ($processableRows as $rowIds) {
                 $rowIds = $rowIds->values()->all();

@@ -2150,7 +2150,9 @@ class Form1702ExController extends Controller
                 ->whereNotNull('generated_pdf_storage_path')
                 ->whereNotNull('receipt_storage_path')
                 ->whereNotNull('receipt_file_name')
-                ->where('receipt_is_temporary', false);
+                ->where('receipt_is_temporary', false)
+                ->whereNotNull('payload->signature')
+                ->where('payload->signature', '!=', '');
 
             return;
         }
@@ -2161,7 +2163,9 @@ class Form1702ExController extends Controller
                 ->orWhereNull('generated_pdf_storage_path')
                 ->orWhereNull('receipt_storage_path')
                 ->orWhereNull('receipt_file_name')
-                ->orWhere('receipt_is_temporary', true);
+                ->orWhere('receipt_is_temporary', true)
+                ->orWhereNull('payload->signature')
+                ->orWhere('payload->signature', '=', '');
         });
     }
 
