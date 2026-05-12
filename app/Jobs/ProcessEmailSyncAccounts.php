@@ -31,6 +31,7 @@ class ProcessEmailSyncAccounts implements ShouldQueue
         public readonly string $runUuid,
         public readonly ?string $startDate = null,
     ) {
+        $this->onQueue('email-sync');
     }
 
     public function handle(EmailSyncRunner $runner): void

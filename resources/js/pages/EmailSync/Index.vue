@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Head, router, useForm } from '@inertiajs/vue3';
-import { CheckCircle2 } from 'lucide-vue-next';
+import { CheckCircle2, RefreshCw } from 'lucide-vue-next';
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { toast } from 'vue-sonner';
 import EmailAppliedReceiptsDialog from '@/components/email-sync-components/EmailAppliedReceiptsDialog.vue';
@@ -37,6 +37,9 @@ const selectedSyncAccountIds = ref(
 );
 const searchTimeoutId = ref<number | null>(null);
 const pollTimeoutId = ref<number | null>(null);
+const autoRefreshTimeoutId = ref<number | null>(null);
+const autoRefreshEnabled = ref(true);
+const autoRefreshPausedForBackfill = ref(false);
 const startDate = ref('');
 const syncForm = useForm<{
     accountIds: number[];
@@ -68,6 +71,9 @@ const toolbarSyncProcessing = computed(() =>
 );
 const toolbarBackfillProcessing = computed(() =>
     isSyncQueuedOrRunning.value && toolbarRunningActionLabel.value === 'Import older',
+);
+const isAutoRefreshRunning = computed(
+    () => autoRefreshEnabled.value && !autoRefreshPausedForBackfill.value,
 );
 const latestSyncLabel = computed(() =>
     formatDateTime(props.stats.latestSyncedAt, 'No inbox sync yet'),
@@ -189,6 +195,18 @@ watch(
 watch(
     () => props.syncState.status,
     (status) => {
+        if (
+            autoRefreshPausedForBackfill.value &&
+            status !== 'queued' &&
+            status !== 'processing'
+        ) {
+            autoRefreshPausedForBackfill.value = false;
+
+            if (autoRefreshEnabled.value) {
+                scheduleAutoRefresh();
+            }
+        }
+
         if (status !== 'queued' && status !== 'processing') {
             clearPollTimeout();
 
@@ -206,13 +224,65 @@ onBeforeUnmount(() => {
     }
 
     clearPollTimeout();
+    clearAutoRefreshTimeout();
 });
+
+scheduleAutoRefresh();
 
 function clearPollTimeout(): void {
     if (pollTimeoutId.value !== null) {
         window.clearTimeout(pollTimeoutId.value);
         pollTimeoutId.value = null;
     }
+}
+
+function clearAutoRefreshTimeout(): void {
+    if (autoRefreshTimeoutId.value !== null) {
+        window.clearTimeout(autoRefreshTimeoutId.value);
+        autoRefreshTimeoutId.value = null;
+    }
+}
+
+function scheduleAutoRefresh(): void {
+    clearAutoRefreshTimeout();
+
+    if (!autoRefreshEnabled.value || autoRefreshPausedForBackfill.value) {
+        return;
+    }
+
+    autoRefreshTimeoutId.value = window.setTimeout(() => {
+        router.reload({
+            only: [
+                'flash',
+                'stats',
+                'emails',
+                'pagination',
+                'appliedEmails',
+                'appliedPagination',
+                'receiptCounts',
+                'syncState',
+            ],
+            preserveState: true,
+            preserveScroll: true,
+            onFinish: () => {
+                scheduleAutoRefresh();
+            },
+        });
+    }, 60000);
+}
+
+function toggleAutoRefresh(): void {
+    autoRefreshEnabled.value = !autoRefreshEnabled.value;
+
+    if (autoRefreshEnabled.value) {
+        toast.success('Auto-fetch enabled. Fetching every 1 minute.');
+        scheduleAutoRefresh();
+
+        return;
+    }
+
+    clearAutoRefreshTimeout();
+    toast.success('Auto-fetch stopped.');
 }
 
 function schedulePoll(): void {
@@ -279,6 +349,10 @@ function submitImportSelected(): void {
     runningAccountLabels.value = props.syncAccounts.options
         .filter((account) => selectedSyncAccountIds.value.includes(account.id))
         .map((account) => account.label);
+    if (autoRefreshEnabled.value) {
+        autoRefreshPausedForBackfill.value = true;
+        clearAutoRefreshTimeout();
+    }
     backfillForm.startDate = startDate.value;
     backfillForm.accountIds = [...selectedSyncAccountIds.value];
     backfillForm.post(emailSync.backfill.url(), {
@@ -313,6 +387,14 @@ function submitImportSelected(): void {
                     </div>
 
                     <div class="flex gap-2 lg:items-end">
+                        <Button
+                            size="sm"
+                            :variant="isAutoRefreshRunning ? 'default' : 'secondary'"
+                            :class="isAutoRefreshRunning ? 'bg-green-600 text-white hover:bg-green-700' : ''"
+                            @click="toggleAutoRefresh"
+                        >
+                            <RefreshCw :class="isAutoRefreshRunning ? 'animate-spin' : ''" />
+                        </Button>
                         <EmailSyncToolbar
                             :can-backfill="canBackfill"
                             :connection="props.connection"
