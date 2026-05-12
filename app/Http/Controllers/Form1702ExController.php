@@ -38,6 +38,7 @@ use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response;
 use ZipArchive;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class Form1702ExController extends Controller
@@ -307,7 +308,7 @@ class Form1702ExController extends Controller
             ->with('success', 'Completed files export queued. Your ZIP will be ready shortly.');
     }
 
-    public function downloadCompletedPrepared(Request $request): StreamedResponse
+    public function downloadCompletedPrepared(Request $request): BinaryFileResponse
     {
         $state = $this->form1702ExCompletedExportService->getState((int) $request->user()->getKey());
         $cached = cache()->get($this->form1702ExCompletedExportService->cacheKey((int) $request->user()->getKey()));
@@ -323,11 +324,11 @@ class Form1702ExController extends Controller
         $storagePath = (string) $cached['storagePath'];
         $downloadName = 'form1702ex-completed-files.zip';
 
-        return DocumentStorage::disk()->download(
-            $storagePath,
+        return response()->download(
+            DocumentStorage::disk()->path($storagePath),
             $downloadName,
             ['Content-Type' => 'application/zip'],
-        );
+        )->deleteFileAfterSend(true);
     }
 
     public function downloadRowsList(Request $request): RedirectResponse
@@ -376,7 +377,7 @@ class Form1702ExController extends Controller
             ->with('success', 'Imported rows export queued. Your Excel file will be ready shortly.');
     }
 
-    public function downloadRowsListPrepared(Request $request): StreamedResponse
+    public function downloadRowsListPrepared(Request $request): BinaryFileResponse
     {
         $state = $this->form1702ExRowsExportService->getState((int) $request->user()->getKey());
         $cached = cache()->get($this->form1702ExRowsExportService->cacheKey((int) $request->user()->getKey()));
@@ -389,11 +390,11 @@ class Form1702ExController extends Controller
             404,
         );
 
-        return DocumentStorage::disk()->download(
-            (string) $cached['storagePath'],
+        return response()->download(
+            DocumentStorage::disk()->path((string) $cached['storagePath']),
             'form1702ex-unmatched-rows.xlsx',
             ['Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
-        );
+        )->deleteFileAfterSend(true);
     }
 
     public function show(Request $request, Form1702ExBatch $form1702ExBatch): Response

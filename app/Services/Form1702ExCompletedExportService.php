@@ -99,15 +99,11 @@ class Form1702ExCompletedExportService
 
         $fileName = '1702-ex-completed-files-'.Str::uuid().'.zip';
         $storagePath = "{$directory}/{$fileName}";
-        $localArchivePath = tempnam(sys_get_temp_dir(), '1702ex-completed-zip-');
-        if ($localArchivePath === false) {
-            throw new \RuntimeException('The completed files ZIP could not be prepared.');
-        }
+        $archivePath = \App\Support\DocumentStorage::disk()->path($storagePath);
 
         $archive = new ZipArchive;
 
-        if ($archive->open($localArchivePath, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
-            @unlink($localArchivePath);
+        if ($archive->open($archivePath, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
             throw new \RuntimeException('The completed files ZIP could not be created.');
         }
 
@@ -115,54 +111,28 @@ class Form1702ExCompletedExportService
         $disk = \App\Support\DocumentStorage::disk();
         $includedRows = 0;
 
-        try {
-            foreach ($rows as $row) {
-                $pdfStoragePath = (string) ($row->generated_pdf_storage_path ?? '');
+        foreach ($rows as $row) {
+            $pdfStoragePath = (string) ($row->generated_pdf_storage_path ?? '');
 
-                if ($pdfStoragePath === '' || ! $disk->exists($pdfStoragePath)) {
-                    continue;
-                }
-
-                $stream = $disk->readStream($pdfStoragePath);
-                if (! is_resource($stream)) {
-                    continue;
-                }
-
-                $contents = stream_get_contents($stream);
-                fclose($stream);
-
-                if (! is_string($contents) || $contents === '') {
-                    continue;
-                }
-
-                $zipPath = $this->uniqueZipPath(
-                    (string) ($row->generated_pdf_file_name ?? "completed-row-{$row->uuid}.pdf"),
-                    $usedPaths,
-                );
-
-                $archive->addFromString($zipPath, $contents);
-                $includedRows++;
+            if ($pdfStoragePath === '' || ! $disk->exists($pdfStoragePath)) {
+                continue;
             }
-        } finally {
-            $archive->close();
+
+            $zipPath = $this->uniqueZipPath(
+                (string) ($row->generated_pdf_file_name ?? "completed-row-{$row->uuid}.pdf"),
+                $usedPaths,
+            );
+
+            $archive->addFile($disk->path($pdfStoragePath), $zipPath);
+            $includedRows++;
         }
+
+        $archive->close();
 
         if ($includedRows === 0) {
-            @unlink($localArchivePath);
+            $disk->delete($storagePath);
+
             throw new \RuntimeException('No completed files were available to add to the ZIP.');
-        }
-
-        $zipStream = @fopen($localArchivePath, 'rb');
-        if (! is_resource($zipStream)) {
-            @unlink($localArchivePath);
-            throw new \RuntimeException('The completed files ZIP could not be read.');
-        }
-
-        try {
-            $disk->writeStream($storagePath, $zipStream);
-        } finally {
-            fclose($zipStream);
-            @unlink($localArchivePath);
         }
 
         return [
