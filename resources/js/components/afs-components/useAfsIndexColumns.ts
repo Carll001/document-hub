@@ -1,5 +1,5 @@
 import type { ColumnDef } from '@tanstack/vue-table';
-import { ArrowUpDown, Download, Eye, FileText, MoreHorizontal, Pencil, PenLine, Trash2, Upload } from 'lucide-vue-next';
+import { AlertCircle, ArrowUpDown, Download, Eye, FileText, MoreHorizontal, Pencil, PenLine, Trash2, Upload } from 'lucide-vue-next';
 import { computed, h, type Ref } from 'vue';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -182,35 +182,17 @@ export function useAfsIndexColumns(params: UseAfsIndexColumnsParams) {
                 ]),
         },
         {
-            id: 'error_message',
-            accessorKey: 'error_message',
-            header: 'Error',
-            enableSorting: false,
-            cell: ({ row }) => {
-                const parsed = params.parseErrorDetails(row.original);
-                const hasDetails = parsed.missingData.length > 0 || parsed.errors.length > 0;
-
-                if (hasDetails || row.original.error_message) {
-                    return h(
-                        Badge,
-                        {
-                            variant: 'destructive',
-                            class: 'cursor-pointer',
-                            onClick: () => params.openErrorDialog(row.original),
-                        },
-                        () => 'Error',
-                    );
-                }
-
-                return '-';
-            },
-        },
-        {
             id: 'actions',
             header: 'Actions',
             enableSorting: false,
-            cell: ({ row }) =>
-                h(DropdownMenu, {}, {
+            cell: ({ row }) => {
+                const parsed = params.parseErrorDetails(row.original);
+                const hasError = parsed.missingData.length > 0
+                    || parsed.errors.length > 0
+                    || Boolean(row.original.error_message?.trim())
+                    || Boolean(parsed.message);
+
+                return h(DropdownMenu, {}, {
                     default: () => [
                         h(DropdownMenuTrigger, { asChild: true }, {
                             default: () =>
@@ -293,6 +275,11 @@ export function useAfsIndexColumns(params: UseAfsIndexColumnsParams) {
                                         default: () => [h(Upload, { class: 'size-4' }), 'Retry'],
                                     })
                                     : null,
+                                hasError
+                                    ? h(DropdownMenuItem, { onSelect: () => { params.openErrorDialog(row.original); } }, {
+                                        default: () => [h(AlertCircle, { class: 'size-4' }), 'Error Details'],
+                                    })
+                                    : null,
                                 h(DropdownMenuItem, {
                                     disabled: !params.canDeleteItem(row.original) || params.deletingItems.value,
                                     variant: 'destructive',
@@ -301,7 +288,8 @@ export function useAfsIndexColumns(params: UseAfsIndexColumnsParams) {
                             ],
                         }),
                     ],
-                }),
+                });
+            },
         },
     ]);
 }
