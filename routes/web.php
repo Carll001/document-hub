@@ -3,11 +3,13 @@
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\ClientController;
 use App\Http\Controllers\ClientPortalController;
+use App\Http\Controllers\BackgroundJobsController;
 use App\Http\Controllers\AfsFiling\AfsFilingExportController;
 use App\Http\Controllers\AfsFiling\AfsFilingItemController;
 use App\Http\Controllers\AfsFiling\AfsFilingPageController;
 use App\Http\Controllers\AfsFiling\AfsFilingSignatureController;
 use App\Http\Controllers\DocMerge\DocMergeBatchController;
+use App\Http\Controllers\DocMerge\DocMergeBatchChunkUploadController;
 use App\Http\Controllers\DocMerge\DocMergeController;
 use App\Http\Controllers\EmailSyncAccountManagementController;
 use App\Http\Controllers\EmailSyncController;
@@ -66,6 +68,16 @@ Route::middleware(['auth', 'verified'])->group(function () {
                         Route::get('{docMergeBatch}/results', 'results')->name('results');
                         Route::post('{docMergeBatch}/page-folders', 'storePageFolders')
                             ->name('page-folders.store');
+                        Route::controller(DocMergeBatchChunkUploadController::class)
+                            ->prefix('{docMergeBatch}/page-folders/uploads')
+                            ->name('page-folders.uploads.')
+                            ->group(function () {
+                                Route::post('init', 'init')->name('init');
+                                Route::post('{uploadId}/chunk', 'chunk')->name('chunk');
+                                Route::post('{uploadId}/complete', 'complete')->name('complete');
+                                Route::post('{uploadId}/finalize', 'finalize')->name('finalize');
+                                Route::delete('{uploadId}', 'destroy')->name('destroy');
+                            });
                         Route::post('{docMergeBatch}/zip', 'storeZip')->name('zip.store');
                         Route::delete('{docMergeBatch}/source-files/{sourceFile}', 'destroySourceFile')
                             ->name('source-files.destroy');
@@ -239,6 +251,13 @@ Route::middleware(['auth', 'verified'])->group(function () {
                     });
             });
     });
+    Route::middleware('superadmin')
+        ->controller(BackgroundJobsController::class)
+        ->prefix('background-jobs')
+        ->name('background-jobs.')
+        ->group(function () {
+            Route::get('/', 'index')->name('index');
+        });
     Route::middleware('superadmin')
         ->controller(UserManagementController::class)
         ->prefix('users')

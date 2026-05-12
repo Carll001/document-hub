@@ -113,6 +113,11 @@ export type BatchDetail = {
     downloadExportState: BatchDownloadExportState;
     deleteUrl: string;
     uploadPageFoldersUrl: string;
+    uploadPageFoldersChunkInitUrl: string;
+    uploadPageFoldersChunkChunkUrlTemplate: string;
+    uploadPageFoldersChunkCompleteUrlTemplate: string;
+    uploadPageFoldersChunkFinalizeUrlTemplate: string;
+    uploadPageFoldersChunkDestroyUrlTemplate: string;
     uploadZipUrl: string;
     results: BatchMergeHistoryRecord[];
     resultsPagination: BatchResultsPaginationState;

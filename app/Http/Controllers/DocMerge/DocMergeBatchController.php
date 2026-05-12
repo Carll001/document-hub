@@ -563,6 +563,11 @@ class DocMergeBatchController extends Controller
             'downloadExportState' => app(DocMergeBatchExportService::class)->getState($batch->user_id, $batch->id),
             'deleteUrl' => route('doc-merge.batches.destroy', ['docMergeBatch' => $batch]),
             'uploadPageFoldersUrl' => route('doc-merge.batches.page-folders.store', ['docMergeBatch' => $batch]),
+            'uploadPageFoldersChunkInitUrl' => route('doc-merge.batches.page-folders.uploads.init', ['docMergeBatch' => $batch]),
+            'uploadPageFoldersChunkChunkUrlTemplate' => route('doc-merge.batches.page-folders.uploads.chunk', ['docMergeBatch' => $batch, 'uploadId' => '__UPLOAD_ID__']),
+            'uploadPageFoldersChunkCompleteUrlTemplate' => route('doc-merge.batches.page-folders.uploads.complete', ['docMergeBatch' => $batch, 'uploadId' => '__UPLOAD_ID__']),
+            'uploadPageFoldersChunkFinalizeUrlTemplate' => route('doc-merge.batches.page-folders.uploads.finalize', ['docMergeBatch' => $batch, 'uploadId' => '__UPLOAD_ID__']),
+            'uploadPageFoldersChunkDestroyUrlTemplate' => route('doc-merge.batches.page-folders.uploads.destroy', ['docMergeBatch' => $batch, 'uploadId' => '__UPLOAD_ID__']),
             'uploadZipUrl' => route('doc-merge.batches.zip.store', ['docMergeBatch' => $batch]),
         ]);
     }

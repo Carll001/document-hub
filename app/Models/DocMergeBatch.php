@@ -91,6 +91,11 @@ class DocMergeBatch extends Model
         return $this->hasMany(BulkMergeFailure::class);
     }
 
+    public function chunkUploads(): HasMany
+    {
+        return $this->hasMany(DocMergeBatchChunkUpload::class);
+    }
+
     public function getRouteKeyName(): string
     {
         return 'uuid';

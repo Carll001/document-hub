@@ -92,6 +92,8 @@ const bulkFolderForm = useForm<{
     outputPrefix: '',
     pageFolders: [],
 });
+const isChunkUploadProcessing = ref(false);
+const chunkUploadProgressPercentage = ref<number | null>(null);
 
 const {
     bulkFolderClientError,
@@ -191,6 +193,7 @@ const canSubmitBulkFolderMerge = computed(
         bulkFolderClientError.value === null &&
         validSelectedPageFolderCount.value >= 2 &&
         !bulkFolderForm.processing &&
+        !isChunkUploadProcessing.value &&
         !isBatchBusy.value,
 );
 const bulkZipOutputPreview = computed(() =>
@@ -489,6 +492,7 @@ function resetBulkFolderForm(): void {
     bulkFolderForm.reset();
     bulkFolderForm.clearErrors();
     bulkFolderForm.pageFolders = [];
+    chunkUploadProgressPercentage.value = null;
 }
 
 function resetDeleteForm(): void {
@@ -594,7 +598,7 @@ function submitBulkZipMerge(): void {
     });
 }
 
-function submitBulkFolderMerge(): void {
+async function submitBulkFolderMerge(): Promise<void> {
     if (isBatchBusy.value) {
         showBusyBatchToast();
 
@@ -613,10 +617,294 @@ function submitBulkFolderMerge(): void {
         files: pageFolder.files,
     }));
 
+    if (props.batch.uploadPageFoldersChunkInitUrl) {
+        await submitBulkFolderMergeChunked();
+        return;
+    }
+
     bulkFolderForm.post(props.batch.uploadPageFoldersUrl, {
         forceFormData: true,
         preserveScroll: true,
     });
+}
+
+type UploadManifestFile = {
+    fileKey: string;
+    displayName: string;
+    size: number;
+    mimeType: string;
+    file: File;
+};
+
+type UploadManifestFolder = {
+    name: string;
+    number: number;
+    hasNestedEntries: boolean;
+    hasInvalidFiles: boolean;
+    files: UploadManifestFile[];
+};
+
+const CHUNK_SIZE_BYTES = 5 * 1024 * 1024;
+const FILE_UPLOAD_CONCURRENCY = 2;
+const CHUNK_UPLOAD_RETRIES = 3;
+
+function chunkUploadUrl(template: string, uploadId: string): string {
+    return template.replace('__UPLOAD_ID__', encodeURIComponent(uploadId));
+}
+
+function csrfToken(): string {
+    return document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') ?? '';
+}
+
+function normalizeErrorMessage(payload: unknown, fallback: string): string {
+    if (typeof payload === 'object' && payload !== null) {
+        const message = (payload as { message?: unknown }).message;
+        if (typeof message === 'string' && message.trim() !== '') {
+            return message;
+        }
+
+        const errors = (payload as { errors?: Record<string, string[] | string> }).errors;
+        if (errors && typeof errors === 'object') {
+            for (const value of Object.values(errors)) {
+                if (Array.isArray(value) && typeof value[0] === 'string') {
+                    return value[0];
+                }
+                if (typeof value === 'string') {
+                    return value;
+                }
+            }
+        }
+    }
+
+    return fallback;
+}
+
+function buildUploadManifest(): UploadManifestFolder[] {
+    return selectedPageFolders.value.map((pageFolder) => ({
+        name: pageFolder.name,
+        number: pageFolder.number ?? 0,
+        hasNestedEntries: pageFolder.hasNestedEntries,
+        hasInvalidFiles: pageFolder.hasInvalidFiles,
+        files: pageFolder.files.map((file, index) => ({
+            fileKey: `${pageFolder.key}-${index}-${file.name}-${file.size}`,
+            displayName: file.name,
+            size: file.size,
+            mimeType: file.type || 'application/pdf',
+            file,
+        })),
+    }));
+}
+
+async function requestJson(
+    url: string,
+    init: RequestInit,
+    fallbackError: string,
+): Promise<unknown> {
+    const response = await fetch(url, {
+        credentials: 'same-origin',
+        headers: {
+            Accept: 'application/json',
+            'X-Requested-With': 'XMLHttpRequest',
+            ...init.headers,
+        },
+        ...init,
+    });
+    const payload = (await response.json().catch(() => ({}))) as unknown;
+
+    if (!response.ok) {
+        throw new Error(normalizeErrorMessage(payload, fallbackError));
+    }
+
+    return payload;
+}
+
+function delay(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+        window.setTimeout(resolve, ms);
+    });
+}
+
+async function uploadOneFileInChunks(
+    uploadId: string,
+    uploadFile: UploadManifestFile,
+    onChunkUploaded: () => void,
+): Promise<void> {
+    const totalChunks = Math.max(1, Math.ceil(uploadFile.size / CHUNK_SIZE_BYTES));
+
+    for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+        const start = chunkIndex * CHUNK_SIZE_BYTES;
+        const end = Math.min(start + CHUNK_SIZE_BYTES, uploadFile.size);
+        const blob = uploadFile.file.slice(start, end);
+
+        let attempt = 0;
+        while (attempt < CHUNK_UPLOAD_RETRIES) {
+            try {
+                const formData = new FormData();
+                formData.append('fileKey', uploadFile.fileKey);
+                formData.append('chunkIndex', String(chunkIndex));
+                formData.append('chunk', blob, `${uploadFile.displayName}.part-${chunkIndex}`);
+
+                await requestJson(
+                    chunkUploadUrl(props.batch.uploadPageFoldersChunkChunkUrlTemplate, uploadId),
+                    {
+                        method: 'POST',
+                        headers: {
+                            'X-CSRF-TOKEN': csrfToken(),
+                        },
+                        body: formData,
+                    },
+                    'Unable to upload one of the file chunks.',
+                );
+                onChunkUploaded();
+                break;
+            } catch (error) {
+                attempt++;
+                if (attempt >= CHUNK_UPLOAD_RETRIES) {
+                    throw error;
+                }
+                await delay(300 * (2 ** (attempt - 1)));
+            }
+        }
+    }
+
+    await requestJson(
+        chunkUploadUrl(props.batch.uploadPageFoldersChunkCompleteUrlTemplate, uploadId),
+        {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-TOKEN': csrfToken(),
+            },
+            body: JSON.stringify({
+                fileKey: uploadFile.fileKey,
+                totalChunks,
+                expectedSize: uploadFile.size,
+            }),
+        },
+        `Unable to complete upload for ${uploadFile.displayName}.`,
+    );
+}
+
+async function runWithConcurrency<T>(
+    items: T[],
+    concurrency: number,
+    worker: (item: T) => Promise<void>,
+): Promise<void> {
+    let currentIndex = 0;
+
+    const runners = Array.from({ length: Math.max(1, concurrency) }, async () => {
+        while (currentIndex < items.length) {
+            const index = currentIndex;
+            currentIndex++;
+            await worker(items[index] as T);
+        }
+    });
+
+    await Promise.all(runners);
+}
+
+async function submitBulkFolderMergeChunked(): Promise<void> {
+    isChunkUploadProcessing.value = true;
+    chunkUploadProgressPercentage.value = 0;
+    bulkFolderForm.clearErrors();
+    let uploadId: string | null = null;
+
+    try {
+        const manifestFolders = buildUploadManifest();
+        const allFiles = manifestFolders.flatMap((folder) => folder.files);
+
+        const initPayload = await requestJson(
+            props.batch.uploadPageFoldersChunkInitUrl,
+            {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-TOKEN': csrfToken(),
+                },
+                body: JSON.stringify({
+                    outputPrefix: bulkFolderForm.outputPrefix || null,
+                    pageFolders: manifestFolders.map((folder) => ({
+                        name: folder.name,
+                        number: folder.number,
+                        hasNestedEntries: folder.hasNestedEntries,
+                        hasInvalidFiles: folder.hasInvalidFiles,
+                        files: folder.files.map((file) => ({
+                            fileKey: file.fileKey,
+                            displayName: file.displayName,
+                            size: file.size,
+                            mimeType: file.mimeType,
+                        })),
+                    })),
+                }),
+            },
+            'Unable to initialize chunk upload.',
+        ) as { uploadId: string; chunkSize?: number };
+
+        uploadId = initPayload.uploadId;
+
+        const totalChunks = allFiles.reduce(
+            (sum, file) => sum + Math.max(1, Math.ceil(file.size / CHUNK_SIZE_BYTES)),
+            0,
+        );
+        let completedChunks = 0;
+        const updateProgress = (): void => {
+            completedChunks++;
+            chunkUploadProgressPercentage.value = Math.min(
+                100,
+                Math.round((completedChunks / totalChunks) * 100),
+            );
+        };
+
+        await runWithConcurrency(allFiles, FILE_UPLOAD_CONCURRENCY, async (file) => {
+            await uploadOneFileInChunks(uploadId as string, file, updateProgress);
+        });
+
+        await requestJson(
+            chunkUploadUrl(props.batch.uploadPageFoldersChunkFinalizeUrlTemplate, uploadId),
+            {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-TOKEN': csrfToken(),
+                },
+                body: JSON.stringify({
+                    outputPrefix: bulkFolderForm.outputPrefix || null,
+                }),
+            },
+            'Unable to finalize chunk upload.',
+        );
+
+        toast.success('Batch processing queued. Results will refresh automatically.');
+        resetBulkFolderForm();
+        isBulkFolderDialogOpen.value = false;
+        router.visit(`${window.location.pathname}${window.location.search}`, {
+            only: ['batch', 'flash'],
+            preserveScroll: true,
+            preserveState: true,
+            replace: true,
+        });
+    } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unable to upload page folders right now.';
+        bulkFolderForm.setError('pageFolders', message);
+        toast.error(message);
+
+        if (uploadId !== null) {
+            await fetch(chunkUploadUrl(props.batch.uploadPageFoldersChunkDestroyUrlTemplate, uploadId), {
+                method: 'DELETE',
+                credentials: 'same-origin',
+                headers: {
+                    Accept: 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'X-CSRF-TOKEN': csrfToken(),
+                },
+            }).catch(() => undefined);
+        }
+    } finally {
+        isChunkUploadProcessing.value = false;
+        if (!bulkFolderForm.processing) {
+            chunkUploadProgressPercentage.value = null;
+        }
+    }
 }
 
 function submitDelete(): void {
@@ -963,8 +1251,8 @@ function deleteBatch(): void {
             :output-prefix-error="bulkFolderOutputPrefixError"
             :output-preview="bulkFolderOutputPreview"
             :page-folders="pageFoldersForDisplay"
-            :processing="bulkFolderForm.processing"
-            :progress-percentage="bulkFolderForm.progress?.percentage ?? null"
+            :processing="bulkFolderForm.processing || isChunkUploadProcessing"
+            :progress-percentage="chunkUploadProgressPercentage ?? bulkFolderForm.progress?.percentage ?? null"
             :valid-selected-page-folder-count="validSelectedPageFolderCount"
             @remove-page-folder="removeSelectedPageFolder"
             @select-container-folder="handlePageFolderContainerSelection"

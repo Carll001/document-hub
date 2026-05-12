@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Link, usePage } from '@inertiajs/vue3';
 import {
+    Activity,
     BriefcaseBusiness,
     Files,
     FileStack,
@@ -58,6 +59,11 @@ const mainNavItems = computed<NavItem[]>(() => {
                 title: 'Aliases',
                 href: '/settings/aliases',
                 icon: FileStack,
+            },
+            {
+                title: 'Background Jobs',
+                href: '/background-jobs',
+                icon: Activity,
             },
         ];
     }

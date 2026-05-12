@@ -10,3 +10,4 @@ Artisan::command('inspire', function () {
 })->purpose('Display an inspiring quote');
 
 Schedule::job(new SyncSharedInbox)->everyMinute();
+Schedule::command('doc-merge:purge-chunk-uploads')->everyFifteenMinutes();
