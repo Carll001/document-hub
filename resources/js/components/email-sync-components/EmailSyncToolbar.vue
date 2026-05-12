@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ArrowDownToLine, ChevronDown, LoaderCircle, MailSearch, RefreshCcw } from 'lucide-vue-next';
+import { ArrowDownToLine, ChevronDown, LoaderCircle, MailSearch, RefreshCcw, XCircle } from 'lucide-vue-next';
 import { computed } from 'vue';
+import type { ConnectionState, EmailSyncAccountOption, SyncResultDetails } from '@/components/email-sync-components/types';
 import InputError from '@/components/InputError.vue';
 import { Button } from '@/components/ui/button';
 import {
@@ -20,7 +21,6 @@ import {
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
-import type { ConnectionState, EmailSyncAccountOption, SyncResultDetails } from '@/components/email-sync-components/types';
 
 const props = defineProps<{
     canBackfill: boolean;
@@ -33,6 +33,7 @@ const props = defineProps<{
     accountOptions: EmailSyncAccountOption[];
     syncProcessing: boolean;
     backfillProcessing: boolean;
+    cancelProcessing?: boolean;
     flashError?: string | null;
     syncResultDetails?: SyncResultDetails | null;
     errors?: {
@@ -48,6 +49,7 @@ const emit = defineEmits<{
     syncAll: [];
     syncSelected: [];
     importSelected: [];
+    cancelSync: [];
 }>();
 
 const selectedCount = computed(() => props.selectedAccountIds.length);
@@ -120,16 +122,33 @@ function clearSelection(): void {
 
                 <div v-if="isRunning" class="space-y-4">
                     <div class="rounded-2xl border bg-muted/40 p-4">
-                        <div class="flex items-center gap-3">
-                            <LoaderCircle class="size-5 animate-spin text-primary" />
-                            <div class="space-y-1">
-                                <p class="text-sm font-medium text-foreground">
-                                    {{ props.runningActionLabel ?? 'Syncing email' }}
-                                </p>
-                                <p class="text-xs text-muted-foreground">
-                                    The page will refresh automatically when this finishes.
-                                </p>
+                        <div class="flex items-center justify-between gap-3">
+                            <div class="flex items-center gap-3">
+                                <LoaderCircle class="size-5 animate-spin text-primary" />
+                                <div class="space-y-1">
+                                    <p class="text-sm font-medium text-foreground">
+                                        {{ props.runningActionLabel ?? 'Syncing email' }}
+                                    </p>
+                                    <p class="text-xs text-muted-foreground">
+                                        The page will refresh automatically when this finishes.
+                                    </p>
+                                </div>
                             </div>
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                class="gap-1.5 rounded-xl"
+                                :disabled="props.cancelProcessing"
+                                @click="emit('cancelSync')"
+                            >
+                                <LoaderCircle
+                                    v-if="props.cancelProcessing"
+                                    class="size-3.5 animate-spin"
+                                />
+                                <XCircle v-else class="size-3.5" />
+                                Cancel sync
+                            </Button>
                         </div>
                     </div>
 

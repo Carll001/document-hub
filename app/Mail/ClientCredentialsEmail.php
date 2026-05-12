@@ -23,6 +23,7 @@ class ClientCredentialsEmail extends Mailable implements ShouldQueue
         public readonly string $password,
         public readonly string $loginUrl,
     ) {
+        $this->onQueue('filing-1702');
     }
 
     public function envelope(): Envelope
@@ -45,4 +46,3 @@ class ClientCredentialsEmail extends Mailable implements ShouldQueue
         );
     }
 }
-

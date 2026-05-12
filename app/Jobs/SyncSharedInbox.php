@@ -20,6 +20,11 @@ class SyncSharedInbox implements ShouldQueue
 
     public int $tries = 1;
 
+    public function __construct()
+    {
+        $this->onQueue('email-sync');
+    }
+
     public function handle(EmailSyncRunner $runner): void
     {
         $runner->syncIfAvailable();

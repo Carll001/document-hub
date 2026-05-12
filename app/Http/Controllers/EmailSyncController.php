@@ -282,6 +282,28 @@ class EmailSyncController extends Controller
         return back()->with('success', 'Older email import queued. Results will refresh automatically.');
     }
 
+    public function cancel(): RedirectResponse
+    {
+        $cancelled = EmailSyncAccount::query()
+            ->whereIn('processing_status', [
+                EmailSyncAccount::PROCESSING_STATUS_QUEUED,
+                EmailSyncAccount::PROCESSING_STATUS_PROCESSING,
+            ])
+            ->update([
+                'processing_status' => null,
+                'processing_action' => null,
+                'processing_run_uuid' => null,
+                'processing_error' => null,
+                'processing_started_at' => null,
+            ]);
+
+        if ($cancelled === 0) {
+            return back()->with('error', 'There is no active email sync to cancel.');
+        }
+
+        return back()->with('success', 'Email sync cancelled.');
+    }
+
     private function emailPage($user, int $page, array $accountIds = [], int $perPage = self::EMAILS_PER_PAGE): LengthAwarePaginator
     {
         $query = SyncedEmail::query()

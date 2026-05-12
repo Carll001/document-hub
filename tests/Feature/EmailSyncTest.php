@@ -376,7 +376,7 @@ class EmailSyncTest extends TestCase
         $runner = \Mockery::mock(EmailSyncRunner::class);
         $runner->shouldReceive('sync')
             ->once()
-            ->with([$account->id])
+            ->with([$account->id], \Mockery::type('callable'))
             ->andReturn([
                 'results' => [[
                     'accountId' => $account->id,
@@ -424,6 +424,7 @@ class EmailSyncTest extends TestCase
             ->with(
                 \Mockery::on(fn (mixed $candidate): bool => $candidate instanceof CarbonImmutable && $candidate->format('Y-m-d') === '2026-01-01'),
                 [$account->id],
+                \Mockery::type('callable'),
             )
             ->andReturn([
                 'results' => [[
@@ -461,7 +462,7 @@ class EmailSyncTest extends TestCase
         $runner = \Mockery::mock(EmailSyncRunner::class);
         $runner->shouldReceive('sync')
             ->once()
-            ->with([$account->id])
+            ->with([$account->id], \Mockery::type('callable'))
             ->andThrow(new \RuntimeException('Mailbox connection timed out.'));
 
         $job = new ProcessEmailSyncAccounts([$account->id], 'Sync', 'run-failed');
@@ -477,6 +478,32 @@ class EmailSyncTest extends TestCase
 
         $this->assertSame(EmailSyncAccount::PROCESSING_STATUS_FAILED, $account->processing_status);
         $this->assertSame('Mailbox connection timed out.', $account->processing_error);
+    }
+
+    public function test_authenticated_users_can_cancel_a_running_email_sync(): void
+    {
+        $user = User::factory()->create();
+        $account = $this->createActiveSyncAccount([
+            'processing_status' => EmailSyncAccount::PROCESSING_STATUS_PROCESSING,
+            'processing_action' => 'Import older',
+            'processing_run_uuid' => 'run-cancel',
+            'processing_error' => null,
+            'processing_started_at' => now(),
+        ]);
+
+        $this->actingAs($user)
+            ->from(route('email-sync.index'))
+            ->post(route('email-sync.cancel'))
+            ->assertRedirect(route('email-sync.index'))
+            ->assertSessionHas('success', 'Email sync cancelled.');
+
+        $account->refresh();
+
+        $this->assertNull($account->processing_status);
+        $this->assertNull($account->processing_action);
+        $this->assertNull($account->processing_run_uuid);
+        $this->assertNull($account->processing_error);
+        $this->assertNull($account->processing_started_at);
     }
 
     public function test_email_sync_page_exposes_queued_sync_state(): void

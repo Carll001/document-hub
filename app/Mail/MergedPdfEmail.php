@@ -22,7 +22,9 @@ class MergedPdfEmail extends Mailable implements ShouldQueue
         public readonly MergedPdf $mergedPdf,
         public readonly ?string $subjectLine = null,
         public readonly ?string $messageBody = null,
-    ) {}
+    ) {
+        $this->onQueue('document-merger');
+    }
 
     /**
      * Define the message envelope.

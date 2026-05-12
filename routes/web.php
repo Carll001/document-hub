@@ -141,6 +141,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
                 Route::get('messages', 'emails')->name('emails');
                 Route::post('/', 'sync')->name('sync');
                 Route::post('backfill', 'backfill')->name('backfill');
+                Route::post('cancel', 'cancel')->name('cancel');
                 Route::get('{syncedEmail}/rendered', 'renderedMessage')->name('rendered');
                 Route::get('{syncedEmail}/attachments/{attachment}/inline', 'inlineAttachment')
                     ->name('attachments.inline');

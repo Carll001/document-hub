@@ -27,7 +27,9 @@ class GenerateDocumentBatchItemJob implements ShouldQueue
 
     public function __construct(
         public readonly int $documentBatchItemId
-    ) {}
+    ) {
+        $this->onQueue('afs-filing');
+    }
 
     public function handle(DocumentBatchItemGenerationService $documentBatchItemGenerationService): void
     {

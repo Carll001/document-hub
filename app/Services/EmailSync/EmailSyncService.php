@@ -21,7 +21,7 @@ class EmailSyncService
     /**
      * @return array{accountId: int, accountLabel: string, fetched: int, created: int, updated: int, mailbox: string, skipped: bool, emailIds: list<int>}
      */
-    public function syncAccount(EmailSyncAccount $account): array
+    public function syncAccount(EmailSyncAccount $account, ?callable $shouldContinue = null): array
     {
         $config = $this->configuration($account);
         $mailbox = $config['mailbox'];
@@ -36,7 +36,7 @@ class EmailSyncService
                 ? $client->latestUids(self::INITIAL_SYNC_LIMIT)
                 : $client->uidsNewerThan($newestSyncedUid);
 
-            return $this->syncUids($account, $mailbox, $client, $uids);
+            return $this->syncUids($account, $mailbox, $client, $uids, $shouldContinue);
         } finally {
             $client->disconnect();
         }
@@ -45,7 +45,7 @@ class EmailSyncService
     /**
      * @return array{accountId: int, accountLabel: string, fetched: int, created: int, updated: int, mailbox: string, skipped: bool, emailIds: list<int>}
      */
-    public function backfillAccount(EmailSyncAccount $account, CarbonImmutable $startDate): array
+    public function backfillAccount(EmailSyncAccount $account, CarbonImmutable $startDate, ?callable $shouldContinue = null): array
     {
         $config = $this->configuration($account);
         $mailbox = $config['mailbox'];
@@ -57,7 +57,7 @@ class EmailSyncService
 
             $uids = $client->uidsReceivedSince($startDate->startOfDay());
 
-            return $this->syncUids($account, $mailbox, $client, $uids);
+            return $this->syncUids($account, $mailbox, $client, $uids, $shouldContinue);
         } finally {
             $client->disconnect();
         }
@@ -97,6 +97,7 @@ class EmailSyncService
         string $mailbox,
         EmailSyncClient $client,
         array $uids,
+        ?callable $shouldContinue = null,
     ): array {
         $created = 0;
         $updated = 0;
@@ -105,6 +106,10 @@ class EmailSyncService
         $syncedAt = now();
 
         foreach ($uids as $uid) {
+            if ($shouldContinue !== null && ! $shouldContinue($account)) {
+                break;
+            }
+
             $message = $client->fetchMessage($uid);
             $fetched++;
 

@@ -38,6 +38,11 @@ class ProcessEmailSyncAccounts implements ShouldQueue
     {
         $accounts = EmailSyncAccount::query()
             ->whereIn('id', $this->accountIds)
+            ->where('processing_run_uuid', $this->runUuid)
+            ->whereIn('processing_status', [
+                EmailSyncAccount::PROCESSING_STATUS_QUEUED,
+                EmailSyncAccount::PROCESSING_STATUS_PROCESSING,
+            ])
             ->get();
 
         if ($accounts->isEmpty()) {
@@ -46,6 +51,7 @@ class ProcessEmailSyncAccounts implements ShouldQueue
 
         EmailSyncAccount::query()
             ->whereIn('id', $accounts->modelKeys())
+            ->where('processing_run_uuid', $this->runUuid)
             ->update([
                 'processing_status' => EmailSyncAccount::PROCESSING_STATUS_PROCESSING,
                 'processing_error' => null,
@@ -53,10 +59,11 @@ class ProcessEmailSyncAccounts implements ShouldQueue
 
         try {
             $result = $this->startDate === null
-                ? $runner->sync($accounts->modelKeys())
+                ? $runner->sync($accounts->modelKeys(), $this->shouldContinue(...))
                 : $runner->backfill(
                     CarbonImmutable::createFromFormat('Y-m-d', $this->startDate)->startOfDay(),
                     $accounts->modelKeys(),
+                    $this->shouldContinue(...),
                 );
 
             $resultsByAccountId = collect($result['results'] ?? [])
@@ -65,6 +72,10 @@ class ProcessEmailSyncAccounts implements ShouldQueue
                 ->filter(fn (mixed $label): bool => is_string($label) && $label !== '');
 
             foreach ($accounts as $account) {
+                if (! $this->shouldContinue($account)) {
+                    continue;
+                }
+
                 $resultForAccount = $resultsByAccountId->get((int) $account->getKey());
 
                 if (is_array($resultForAccount)) {
@@ -99,6 +110,7 @@ class ProcessEmailSyncAccounts implements ShouldQueue
 
             EmailSyncAccount::query()
                 ->whereIn('id', $accounts->modelKeys())
+                ->where('processing_run_uuid', $this->runUuid)
                 ->update([
                     'processing_status' => EmailSyncAccount::PROCESSING_STATUS_FAILED,
                     'processing_error' => $message,
@@ -113,5 +125,17 @@ class ProcessEmailSyncAccounts implements ShouldQueue
         return $exception->getMessage() !== ''
             ? $exception->getMessage()
             : 'The email sync could not be processed right now.';
+    }
+
+    private function shouldContinue(EmailSyncAccount $account): bool
+    {
+        return EmailSyncAccount::query()
+            ->whereKey($account->getKey())
+            ->where('processing_run_uuid', $this->runUuid)
+            ->whereIn('processing_status', [
+                EmailSyncAccount::PROCESSING_STATUS_QUEUED,
+                EmailSyncAccount::PROCESSING_STATUS_PROCESSING,
+            ])
+            ->exists();
     }
 }

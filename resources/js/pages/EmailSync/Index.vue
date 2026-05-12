@@ -53,6 +53,7 @@ const backfillForm = useForm<{
     startDate: '',
     accountIds: [],
 });
+const cancelSyncForm = useForm({});
 
 const canBackfill = computed(() => props.stats.totalStored > 0 || props.connection.hasActiveAccounts);
 const isSyncQueuedOrRunning = computed(
@@ -349,15 +350,34 @@ function submitImportSelected(): void {
     runningAccountLabels.value = props.syncAccounts.options
         .filter((account) => selectedSyncAccountIds.value.includes(account.id))
         .map((account) => account.label);
+
     if (autoRefreshEnabled.value) {
         autoRefreshPausedForBackfill.value = true;
         clearAutoRefreshTimeout();
     }
+
     backfillForm.startDate = startDate.value;
     backfillForm.accountIds = [...selectedSyncAccountIds.value];
     backfillForm.post(emailSync.backfill.url(), {
         preserveScroll: true,
         preserveState: true,
+    });
+}
+
+function cancelSync(): void {
+    cancelSyncForm.post('/email-sync/cancel', {
+        preserveScroll: true,
+        preserveState: true,
+        only: [
+            'flash',
+            'stats',
+            'emails',
+            'pagination',
+            'appliedEmails',
+            'appliedPagination',
+            'receiptCounts',
+            'syncState',
+        ],
     });
 }
 </script>
@@ -406,6 +426,7 @@ function submitImportSelected(): void {
                             :account-options="props.syncAccounts.options"
                             :sync-processing="toolbarSyncProcessing"
                             :backfill-processing="toolbarBackfillProcessing"
+                            :cancel-processing="cancelSyncForm.processing"
                             :flash-error="toolbarFlashError"
                             :sync-result-details="toolbarResultDetails"
                             :errors="{
@@ -416,6 +437,7 @@ function submitImportSelected(): void {
                             @sync-all="submitSyncAll"
                             @sync-selected="submitSyncSelected"
                             @import-selected="submitImportSelected"
+                            @cancel-sync="cancelSync"
                             @update:start-date="startDate = $event"
                             @update:selected-account-ids="selectedSyncAccountIds = $event"
                         />

@@ -24,6 +24,7 @@ class SyncInboxForUser implements ShouldQueue
     public function __construct(
         public readonly ?int $userId = null,
     ) {
+        $this->onQueue('email-sync');
     }
 
     public function handle(EmailSyncRunner $runner): void

@@ -30,6 +30,7 @@ class ProcessDocumentGeneratorCompletedExport implements ShouldQueue
         public readonly int $userId,
         public readonly array $itemIds,
     ) {
+        $this->onQueue('afs-filing');
     }
 
     public function handle(DocumentGeneratorCompletedExportService $completedExportService): void

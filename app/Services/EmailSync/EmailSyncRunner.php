@@ -26,7 +26,7 @@ class EmailSyncRunner
      *     busyAccounts: list<string>
      * }
      */
-    public function sync(array $accountIds = []): array
+    public function sync(array $accountIds = [], ?callable $shouldContinue = null): array
     {
         $lock = Cache::lock(self::aggregateLockKey(), 30);
 
@@ -35,7 +35,7 @@ class EmailSyncRunner
         }
 
         try {
-            return $this->runAcrossAccountsManually($this->accountsFor($accountIds), null);
+            return $this->runAcrossAccountsManually($this->accountsFor($accountIds), null, $shouldContinue);
         } finally {
             $lock->release();
         }
@@ -75,7 +75,7 @@ class EmailSyncRunner
      *     busyAccounts: list<string>
      * }
      */
-    public function backfill(CarbonImmutable $startDate, array $accountIds = []): array
+    public function backfill(CarbonImmutable $startDate, array $accountIds = [], ?callable $shouldContinue = null): array
     {
         $lock = Cache::lock(self::aggregateLockKey(), 30);
 
@@ -84,7 +84,7 @@ class EmailSyncRunner
         }
 
         try {
-            return $this->runAcrossAccountsManually($this->accountsFor($accountIds), $startDate);
+            return $this->runAcrossAccountsManually($this->accountsFor($accountIds), $startDate, $shouldContinue);
         } finally {
             $lock->release();
         }
@@ -169,12 +169,19 @@ class EmailSyncRunner
      *     busyAccounts: list<string>
      * }
      */
-    private function runAcrossAccountsManually(Collection $accounts, ?CarbonImmutable $startDate): array
-    {
+    private function runAcrossAccountsManually(
+        Collection $accounts,
+        ?CarbonImmutable $startDate,
+        ?callable $shouldContinue = null,
+    ): array {
         $results = [];
         $busyAccounts = [];
 
         foreach ($accounts as $account) {
+            if ($shouldContinue !== null && ! $shouldContinue($account)) {
+                continue;
+            }
+
             $lock = Cache::lock(self::accountLockKey((int) $account->getKey()), self::LOCK_TTL_SECONDS);
 
             if (! $lock->get()) {
@@ -185,8 +192,8 @@ class EmailSyncRunner
 
             try {
                 $results[] = $startDate === null
-                    ? $this->emailSyncService->syncAccount($account)
-                    : $this->emailSyncService->backfillAccount($account, $startDate);
+                    ? $this->emailSyncService->syncAccount($account, $shouldContinue)
+                    : $this->emailSyncService->backfillAccount($account, $startDate, $shouldContinue);
             } finally {
                 $lock->release();
             }
