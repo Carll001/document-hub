@@ -1035,13 +1035,6 @@ function submitRemoveReceipt(): void {
                 </AlertDescription>
             </Alert>
 
-            <Alert v-if="props.importStatus === 'cancelled'">
-                <AlertTitle>Spreadsheet Import Cancelled</AlertTitle>
-                <AlertDescription>
-                    {{ props.importError || 'The queued spreadsheet import was cancelled.' }}
-                </AlertDescription>
-            </Alert>
-
             <Alert v-if="isRowsExportBusy">
                 <LoaderCircle class="size-4 animate-spin" />
                 <AlertTitle>Rows Export In Progress</AlertTitle>
