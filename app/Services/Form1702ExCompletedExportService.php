@@ -95,20 +95,24 @@ class Form1702ExCompletedExportService
     public function buildZip(Collection $rows, int $userId): array
     {
         $directory = "tmp/form-1702-ex-completed-exports/user-{$userId}";
-        \App\Support\DocumentStorage::disk()->makeDirectory($directory);
+        $disk = \App\Support\DocumentStorage::disk();
+        $disk->makeDirectory($directory);
 
         $fileName = '1702-ex-completed-files-'.Str::uuid().'.zip';
         $storagePath = "{$directory}/{$fileName}";
-        $archivePath = \App\Support\DocumentStorage::disk()->path($storagePath);
+        $temporaryZipPath = storage_path('app/tmp/form-1702-ex-completed-files-'.Str::uuid().'.zip');
+
+        if (! is_dir(dirname($temporaryZipPath))) {
+            mkdir(dirname($temporaryZipPath), 0777, true);
+        }
 
         $archive = new ZipArchive;
 
-        if ($archive->open($archivePath, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
+        if ($archive->open($temporaryZipPath, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
             throw new \RuntimeException('The completed files ZIP could not be created.');
         }
 
         $usedPaths = [];
-        $disk = \App\Support\DocumentStorage::disk();
         $includedRows = 0;
 
         foreach ($rows as $row) {
@@ -130,9 +134,29 @@ class Form1702ExCompletedExportService
         $archive->close();
 
         if ($includedRows === 0) {
-            $disk->delete($storagePath);
+            @unlink($temporaryZipPath);
 
             throw new \RuntimeException('No completed files were available to add to the ZIP.');
+        }
+
+        try {
+            $stream = fopen($temporaryZipPath, 'rb');
+
+            if (! is_resource($stream)) {
+                throw new \RuntimeException('The completed files ZIP could not be created.');
+            }
+
+            try {
+                if (! $disk->put($storagePath, $stream)) {
+                    throw new \RuntimeException('The completed files ZIP could not be stored.');
+                }
+            } finally {
+                fclose($stream);
+            }
+        } finally {
+            if (is_file($temporaryZipPath)) {
+                @unlink($temporaryZipPath);
+            }
         }
 
         return [

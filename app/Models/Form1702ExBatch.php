@@ -34,6 +34,8 @@ class Form1702ExBatch extends Model
 
     public const IMPORT_STATUS_FAILED = 'failed';
 
+    public const IMPORT_STATUS_CANCELLED = 'cancelled';
+
     /**
      * @return array<string, string>
      */

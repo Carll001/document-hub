@@ -78,6 +78,7 @@ class Form1702ExController extends Controller
             'completedFilesUrl' => route('forms.form1702ex.completed.index'),
             'completedCount' => $this->completedCount($user),
             'importUrl' => route('forms.form1702ex.import.store'),
+            'importCancelUrl' => route('forms.form1702ex.import.cancel'),
             'bulkDeleteUrl' => route('forms.form1702ex.rows.destroy'),
             'rowsExportUrl' => route('forms.form1702ex.rows.export', $this->indexRouteParameters($request)),
             'settingsUpdateUrl' => route('forms.form1702ex.settings.update'),
@@ -586,6 +587,33 @@ class Form1702ExController extends Controller
             return to_route('forms.form1702ex.index', $this->indexRouteParameters($request))
                 ->with('error', 'Error: ' . $exception->getMessage()); // 👈 temporary
         }
+    }
+
+    public function cancelImportDirect(Request $request): RedirectResponse
+    {
+        $queuedBatch = Form1702ExBatch::query()
+            ->whereBelongsTo($request->user())
+            ->where('import_status', Form1702ExBatch::IMPORT_STATUS_QUEUED)
+            ->orderByDesc('updated_at')
+            ->first();
+
+        if (! $queuedBatch instanceof Form1702ExBatch) {
+            return to_route('forms.form1702ex.index', $this->indexRouteParameters($request))
+                ->with('error', 'No queued import is available to cancel.');
+        }
+
+        if (DocumentStorage::isValidPath($queuedBatch->import_source_path)) {
+            DocumentStorage::disk()->delete((string) $queuedBatch->import_source_path);
+        }
+
+        $queuedBatch->forceFill([
+            'import_status' => Form1702ExBatch::IMPORT_STATUS_CANCELLED,
+            'import_error' => 'Import cancelled by user before processing.',
+            'import_source_path' => null,
+        ])->save();
+
+        return to_route('forms.form1702ex.index', $this->indexRouteParameters($request))
+            ->with('success', 'Queued import cancelled.');
     }
 
     public function destroyRowsDirect(Request $request): RedirectResponse

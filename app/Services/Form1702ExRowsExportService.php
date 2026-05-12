@@ -95,11 +95,16 @@ class Form1702ExRowsExportService
     public function buildXlsx(Collection $rows, int $userId): array
     {
         $directory = "tmp/form-1702-ex-rows-exports/user-{$userId}";
-        \App\Support\DocumentStorage::disk()->makeDirectory($directory);
+        $disk = \App\Support\DocumentStorage::disk();
+        $disk->makeDirectory($directory);
 
         $fileName = '1702-ex-unmatched-rows-'.Str::uuid().'.xlsx';
         $storagePath = "{$directory}/{$fileName}";
-        $archivePath = \App\Support\DocumentStorage::disk()->path($storagePath);
+        $temporaryOutputPath = storage_path('app/tmp/form-1702-ex-unmatched-rows-'.Str::uuid().'.xlsx');
+
+        if (! is_dir(dirname($temporaryOutputPath))) {
+            mkdir(dirname($temporaryOutputPath), 0777, true);
+        }
 
         $headers = [
             'File name',
@@ -117,7 +122,26 @@ class Form1702ExRowsExportService
             throw new \RuntimeException('No imported rows matched this export request.');
         }
 
-        $this->writeSimpleXlsx($archivePath, $headers, $exportRows);
+        try {
+            $this->writeSimpleXlsx($temporaryOutputPath, $headers, $exportRows);
+            $stream = fopen($temporaryOutputPath, 'rb');
+
+            if (! is_resource($stream)) {
+                throw new \RuntimeException('The imported rows Excel file could not be created.');
+            }
+
+            try {
+                if (! $disk->put($storagePath, $stream)) {
+                    throw new \RuntimeException('The imported rows Excel file could not be stored.');
+                }
+            } finally {
+                fclose($stream);
+            }
+        } finally {
+            if (is_file($temporaryOutputPath)) {
+                @unlink($temporaryOutputPath);
+            }
+        }
 
         return [
             'storagePath' => $storagePath,

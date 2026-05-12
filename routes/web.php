@@ -172,6 +172,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
                         Route::post('signature-upload', 'uploadSignature')->name('signature.upload');
                         Route::post('settings', 'updateSettings')->name('settings.update');
                         Route::post('import', 'storeImportDirect')->name('import.store');
+                        Route::post('import/cancel', 'cancelImportDirect')->name('import.cancel');
                         Route::delete('rows', 'destroyRowsDirect')->name('rows.destroy');
                         Route::get('rows/export', 'downloadRowsList')->name('rows.export');
                         Route::get('rows/export/file', 'downloadRowsListPrepared')->name('rows.export.file');

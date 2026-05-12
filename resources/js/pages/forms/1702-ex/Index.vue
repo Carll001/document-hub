@@ -71,6 +71,7 @@ const importForm = useForm<{
     spreadsheet: null,
     receiptAcceptanceStartDate: '',
 });
+const cancelImportForm = useForm<Record<string, never>>({});
 const settingsForm = useForm<{
     fileNamePrefix: string;
 }>({
@@ -129,6 +130,9 @@ const uploadedSignatureUrl = ref<string | null>(null);
 
 const canSubmitImport = computed(
     () => importForm.spreadsheet instanceof File && !importForm.processing,
+);
+const canCancelQueuedImport = computed(
+    () => props.importStatus === 'queued' && !cancelImportForm.processing,
 );
 const canSubmitSettings = computed(() => !settingsForm.processing);
 const canSubmitRecipient = computed(
@@ -468,6 +472,16 @@ function submitImport(): void {
 
     importForm.post(props.importUrl, {
         forceFormData: true,
+        preserveScroll: true,
+    });
+}
+
+function cancelQueuedImport(): void {
+    if (!canCancelQueuedImport.value) {
+        return;
+    }
+
+    cancelImportForm.post(props.importCancelUrl, {
         preserveScroll: true,
     });
 }
@@ -985,12 +999,32 @@ function submitRemoveReceipt(): void {
             <Alert v-if="props.importStatus === 'queued' || props.importStatus === 'processing'">
                 <LoaderCircle class="size-4 animate-spin" />
                 <AlertTitle>Spreadsheet Import In Progress</AlertTitle>
-                <AlertDescription>
-                    {{
-                        props.importSourceName
-                            ? `Importing ${props.importSourceName}. Rows will appear here once the background import finishes.`
-                            : 'Your spreadsheet is being imported in the background. Rows will appear here once it finishes.'
-                    }}
+                <AlertDescription class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <span>
+                        {{
+                            props.importSourceName
+                                ? `Importing ${props.importSourceName}. Rows will appear here once the background import finishes.`
+                                : 'Your spreadsheet is being imported in the background. Rows will appear here once it finishes.'
+                        }}
+                    </span>
+                    <div class="self-start sm:self-auto">
+                        <Button
+                            v-if="props.importStatus === 'queued'"
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            :disabled="!canCancelQueuedImport"
+                            @click="cancelQueuedImport"
+                        >
+                            {{ cancelImportForm.processing ? 'Cancelling...' : 'Cancel' }}
+                        </Button>
+                        <span
+                            v-else-if="props.importStatus === 'processing'"
+                            class="text-xs text-muted-foreground"
+                        >
+                            Processing already started. Cancel is no longer available.
+                        </span>
+                    </div>
                 </AlertDescription>
             </Alert>
 
@@ -998,6 +1032,13 @@ function submitRemoveReceipt(): void {
                 <AlertTitle>Spreadsheet Import Failed</AlertTitle>
                 <AlertDescription>
                     {{ props.importError }}
+                </AlertDescription>
+            </Alert>
+
+            <Alert v-if="props.importStatus === 'cancelled'">
+                <AlertTitle>Spreadsheet Import Cancelled</AlertTitle>
+                <AlertDescription>
+                    {{ props.importError || 'The queued spreadsheet import was cancelled.' }}
                 </AlertDescription>
             </Alert>
 

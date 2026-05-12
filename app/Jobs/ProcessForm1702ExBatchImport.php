@@ -41,6 +41,10 @@ class ProcessForm1702ExBatchImport implements ShouldQueue
             return;
         }
 
+        if ($batch->import_status !== Form1702ExBatch::IMPORT_STATUS_QUEUED) {
+            return;
+        }
+
         $batch->forceFill([
             'import_status' => Form1702ExBatch::IMPORT_STATUS_PROCESSING,
             'import_error' => null,

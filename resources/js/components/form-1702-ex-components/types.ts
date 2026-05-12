@@ -72,7 +72,7 @@ export type Form1702ExSettings = {
     receiptAcceptanceStartDate: string | null;
 };
 
-export type Form1702ExImportStatus = 'queued' | 'processing' | 'failed' | null;
+export type Form1702ExImportStatus = 'queued' | 'processing' | 'failed' | 'cancelled' | null;
 
 export type Form1702ExCompletedExportStatus =
     | 'queued'
@@ -94,6 +94,7 @@ export type Form1702ExIndexPageProps = {
     completedFilesUrl: string;
     completedCount: number;
     importUrl: string;
+    importCancelUrl: string;
     bulkDeleteUrl: string;
     rowsExportUrl: string;
     settingsUpdateUrl: string;
