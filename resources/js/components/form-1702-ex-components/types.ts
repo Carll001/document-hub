@@ -22,6 +22,7 @@ export type Form1702ExBatchRow = {
     id: string;
     fileName: string;
     taxpayerName: string;
+    clientName: string | null;
     tin: string;
     sourceRowNumber: number;
     sourceName: string;

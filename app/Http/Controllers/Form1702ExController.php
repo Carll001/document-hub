@@ -1893,7 +1893,8 @@ class Form1702ExController extends Controller
             ->where(function ($query): void {
                 $query
                     ->whereNotNull('import_status')
-                    ->orWhereNotNull('import_error');
+                    ->orWhereNotNull('import_error')
+                    ->orWhereNotNull('import_completed_at');
             })
             ->orderByDesc('updated_at')
             ->first();

@@ -298,7 +298,7 @@ function requestCancel(row: Form1702ExBatchRow): void {
                 <Input
                     v-model="searchValue"
                     type="search"
-                    placeholder="Search company, TIN, recipient, or file"
+                    placeholder="Search company, client, TIN, recipient, or file"
                     class="pl-10"
                 />
             </div>
@@ -367,6 +367,7 @@ function requestCancel(row: Form1702ExBatchRow): void {
                         </TableHead>
                         <TableHead class="w-[1%]">#</TableHead>
                         <TableHead>Company</TableHead>
+                        <TableHead>Client</TableHead>
                         <TableHead>TIN</TableHead>
                         <TableHead>Recipient</TableHead>
                         <TableHead>Signature</TableHead>
@@ -415,6 +416,9 @@ function requestCancel(row: Form1702ExBatchRow): void {
                                 <p class="font-medium text-foreground">
                                     {{ row.taxpayerName }}
                                 </p>
+                            </TableCell>
+                            <TableCell class="text-sm text-muted-foreground">
+                                {{ row.clientName || '-' }}
                             </TableCell>
                             <TableCell class="text-sm text-muted-foreground">
                                 {{ row.tin || '-' }}
@@ -522,7 +526,7 @@ function requestCancel(row: Form1702ExBatchRow): void {
                         </TableRow>
                     </template>
 
-                    <TableEmpty v-else :colspan="8">
+                    <TableEmpty v-else :colspan="9">
                         {{
                             props.pagination.total === 0
                                 ? 'No completed files yet.'

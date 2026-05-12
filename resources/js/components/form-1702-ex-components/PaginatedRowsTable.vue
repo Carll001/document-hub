@@ -298,7 +298,7 @@ function autoReceiptLabel(row: Form1702ExBatchRow): string | null {
                 <Input
                     v-model="searchValue"
                     type="search"
-                    placeholder="Search company, TIN, recipient, or status"
+                    placeholder="Search company, client, TIN, recipient, or status"
                     class="pl-10"
                 />
             </div>
@@ -352,6 +352,7 @@ function autoReceiptLabel(row: Form1702ExBatchRow): string | null {
                         </TableHead>
                         <TableHead class="w-[1%]">#</TableHead>
                         <TableHead>Company</TableHead>
+                        <TableHead>Client</TableHead>
                         <TableHead>TIN</TableHead>
                         <TableHead>
                             Accepted receipts from
@@ -408,6 +409,9 @@ function autoReceiptLabel(row: Form1702ExBatchRow): string | null {
                                 <p class="text-xs text-muted-foreground">
                                     {{ row.sourceName }} row {{ row.sourceRowNumber }}
                                 </p>
+                            </TableCell>
+                            <TableCell class="text-sm text-muted-foreground">
+                                {{ row.clientName || '-' }}
                             </TableCell>
                             <TableCell class="text-sm text-muted-foreground">
                                 {{ row.tin || '-' }}
@@ -572,7 +576,7 @@ function autoReceiptLabel(row: Form1702ExBatchRow): string | null {
                         </TableRow>
                     </template>
 
-                    <TableEmpty v-else :colspan="10">
+                    <TableEmpty v-else :colspan="11">
                         {{
                             props.pagination.total === 0
                                 ? 'No imported rows yet.'
