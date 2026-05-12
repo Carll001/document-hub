@@ -7,6 +7,7 @@ import {
     ChevronRight,
     ChevronUp,
     Download,
+    Upload,
     Pencil,
     Eye,
     Mail,
@@ -67,6 +68,8 @@ const emit = defineEmits<{
     requestBulkCancel: [rowIds: string[]];
     requestBulkDownload: [rowIds: string[]];
     requestBulkSend: [rowIds: string[]];
+    openSignature: [row: Form1702ExBatchRow];
+    openSignaturePreview: [row: Form1702ExBatchRow];
 }>();
 
 const searchValue = ref(props.filters.search);
@@ -366,6 +369,7 @@ function requestCancel(row: Form1702ExBatchRow): void {
                         <TableHead>Company</TableHead>
                         <TableHead>TIN</TableHead>
                         <TableHead>Recipient</TableHead>
+                        <TableHead>Signature</TableHead>
                         <TableHead>
                             <Button
                                 type="button"
@@ -417,16 +421,33 @@ function requestCancel(row: Form1702ExBatchRow): void {
                             </TableCell>
                             <TableCell>
                                 <div class="space-y-1">
-                                    <p class="text-sm text-foreground">
-                                        {{ row.recipientEmail || 'No recipients' }}
+                                    <template v-if="row.recipientEmail">
+                                        <p class="text-sm text-foreground">
+                                            {{ row.recipientEmail }}
+                                        </p>
+                                        <Badge
+                                            variant="secondary"
+                                            class="rounded-full"
+                                        >
+                                            Ready to send
+                                        </Badge>
+                                    </template>
+                                    <p v-else class="text-sm text-muted-foreground">
+                                        No recipients
                                     </p>
-                                    <Badge
-                                        :variant="row.recipientEmail ? 'secondary' : 'outline'"
-                                        class="rounded-full"
-                                    >
-                                        {{ row.recipientEmail ? 'Ready to send' : 'No recipients' }}
-                                    </Badge>
                                 </div>
+                            </TableCell>
+                            <TableCell>
+                                <Button
+                                    v-if="row.signatureApplied && row.signaturePreviewUrl"
+                                    type="button"
+                                    variant="link"
+                                    class="h-auto p-0 text-emerald-700"
+                                    @click="emit('openSignaturePreview', row)"
+                                >
+                                    Applied
+                                </Button>
+                                <span v-else class="text-sm text-muted-foreground">Not applied</span>
                             </TableCell>
                             <TableCell class="text-sm text-muted-foreground">
                                 {{ formatDateTime(row.generatedAt) }}
@@ -474,6 +495,12 @@ function requestCancel(row: Form1702ExBatchRow): void {
                                                 {{ row.recipientEmail ? 'Edit recipient' : 'Add recipient' }}
                                             </DropdownMenuItem>
                                             <DropdownMenuItem
+                                                @select="emit('openSignature', row)"
+                                            >
+                                                <Upload class="size-4" />
+                                                Add signature
+                                            </DropdownMenuItem>
+                                            <DropdownMenuItem
                                                 :disabled="!row.recipientEmail || !row.sendEmailUrl || props.singleSendProcessing"
                                                 @select="emit('openSendEmail', row)"
                                             >
@@ -495,7 +522,7 @@ function requestCancel(row: Form1702ExBatchRow): void {
                         </TableRow>
                     </template>
 
-                    <TableEmpty v-else :colspan="7">
+                    <TableEmpty v-else :colspan="8">
                         {{
                             props.pagination.total === 0
                                 ? 'No completed files yet.'
