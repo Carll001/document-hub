@@ -231,13 +231,17 @@ class PdfMergeService
         $baseStoragePath = $this->ensureForm1702ExReceiptBaseExists($disk, $row);
         $temporaryMergedOutputPath = storage_path('app/tmp/form-1702-ex-receipt-'.Str::uuid().'.pdf');
         $temporaryReceiptPdfPath = null;
+        $temporaryBasePdfPath = null;
 
         try {
-            $temporaryReceiptPdfPath = $this->normalizeReceiptSource($receiptPath);
+            $temporaryBasePdfPath = $this->localizeStorageSource($disk, $baseStoragePath);
+            $temporaryReceiptPdfPath = $this->normalizeReceiptSource(
+                $this->localizeStorageSource($disk, $receiptPath),
+            );
 
             $this->writeMergedPdf([
                 [
-                    'path' => $disk->path($baseStoragePath),
+                    'path' => $temporaryBasePdfPath,
                     'displayName' => (string) ($row->generated_pdf_file_name ?? '1702-ex.pdf'),
                 ],
                 [
@@ -260,6 +264,10 @@ class PdfMergeService
         } finally {
             if ($temporaryReceiptPdfPath !== null && $temporaryReceiptPdfPath !== $receiptPath && is_file($temporaryReceiptPdfPath)) {
                 @unlink($temporaryReceiptPdfPath);
+            }
+
+            if ($temporaryBasePdfPath !== null && is_file($temporaryBasePdfPath)) {
+                @unlink($temporaryBasePdfPath);
             }
 
             if (is_file($temporaryMergedOutputPath)) {
@@ -461,6 +469,61 @@ class PdfMergeService
         }
 
         return $this->convertReceiptImageToPdf($receiptPath);
+    }
+
+    /**
+     * Ensure a source path is available as a real local file for FPDI.
+     */
+    private function localizeStorageSource(FilesystemAdapter $disk, string $path): string
+    {
+        if (is_file($path)) {
+            return $path;
+        }
+
+        if (! $disk->exists($path)) {
+            throw new RuntimeException('One of the selected PDF sources is no longer available.');
+        }
+
+        $extension = Str::of(pathinfo($path, PATHINFO_EXTENSION))
+            ->lower()
+            ->value();
+        $temporaryPath = storage_path(
+            'app/tmp/doc-merge-source-'.Str::uuid().($extension !== '' ? ".{$extension}" : '.pdf'),
+        );
+
+        if (! is_dir(dirname($temporaryPath))) {
+            mkdir(dirname($temporaryPath), 0777, true);
+        }
+
+        $stream = $disk->readStream($path);
+
+        if ($stream === false) {
+            throw new RuntimeException('One of the selected PDF sources is no longer available.');
+        }
+
+        try {
+            $output = fopen($temporaryPath, 'wb');
+
+            if ($output === false) {
+                throw new RuntimeException('One of the selected PDF sources is no longer available.');
+            }
+
+            try {
+                if (stream_copy_to_stream($stream, $output) === false) {
+                    throw new RuntimeException('One of the selected PDF sources is no longer available.');
+                }
+            } finally {
+                fclose($output);
+            }
+        } finally {
+            fclose($stream);
+        }
+
+        if (! is_file($temporaryPath)) {
+            throw new RuntimeException('One of the selected PDF sources is no longer available.');
+        }
+
+        return $temporaryPath;
     }
 
     /**

@@ -63,7 +63,8 @@ class User extends Authenticatable
 
     public function canManageUser(self $user): bool
     {
-        return $this->isSuperadmin() && $user->isStaff();
+        return $this->isSuperadmin()
+            && in_array($user->role, [UserRole::Staff, UserRole::Client], true);
     }
 
     public function isClient(): bool

@@ -26,6 +26,7 @@ class Form1702ExFieldValueFormatter
             'uppercase' => Str::upper($squished),
             'digits_only', 'tin_digits' => preg_replace('/\D+/', '', $squished) ?? '',
             'date_parts' => $this->formatDateParts($squished),
+            'email_angle_brackets' => $squished !== '' ? "<{$squished}>" : '',
             'currency' => $squished,
             default => $squished,
         };

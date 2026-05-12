@@ -39,6 +39,10 @@
                     $style[] = 'font-family: ' . e((string) $field['fontFamily']) . ', serif';
                 }
 
+                if (filled($field['backgroundFill'] ?? null)) {
+                    $style[] = 'background-color: ' . e((string) $field['backgroundFill']);
+                }
+
                 if (filled($field['fontWeight'] ?? null)) {
                     $style[] = 'font-weight: ' . e((string) $field['fontWeight']);
                 }

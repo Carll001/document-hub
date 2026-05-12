@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { Head, Link } from '@inertiajs/vue3';
+import { Head, Link, router } from '@inertiajs/vue3';
 import { BriefcaseBusiness, FolderOpen } from 'lucide-vue-next';
-import { watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { toast } from 'vue-sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -12,6 +12,14 @@ import {
     CardHeader,
     CardTitle,
 } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from '@/components/ui/select';
 import {
     Table,
     TableBody,
@@ -31,11 +39,26 @@ type ClientListItem = {
     showUrl: string;
 };
 
+type ClientsPagination = {
+    currentPage: number;
+    lastPage: number;
+    perPage: number;
+    total: number;
+    from: number | null;
+    to: number | null;
+};
+
 const props = defineProps<{
     flash: {
         success?: string | null;
         error?: string | null;
     };
+    indexUrl: string;
+    filters: {
+        search: string;
+        per_page: number;
+    };
+    pagination: ClientsPagination;
     clients: ClientListItem[];
 }>();
 
@@ -45,6 +68,10 @@ const breadcrumbs: BreadcrumbItem[] = [
         href: '/clients',
     },
 ];
+
+const searchInput = ref(props.filters.search ?? '');
+const searchTimeoutId = ref<number | null>(null);
+const perPage = computed(() => String(props.filters.per_page ?? 25));
 
 watch(
     () => [props.flash.success, props.flash.error] as const,
@@ -59,6 +86,64 @@ watch(
     },
     { immediate: true },
 );
+
+watch(
+    () => props.filters.search,
+    (value) => {
+        searchInput.value = value ?? '';
+    },
+);
+
+watch(searchInput, (value) => {
+    if (searchTimeoutId.value !== null) {
+        window.clearTimeout(searchTimeoutId.value);
+    }
+
+    searchTimeoutId.value = window.setTimeout(() => {
+        visitIndex({
+            page: 1,
+            search: value.trim(),
+            perPage: Number.parseInt(perPage.value, 10) || 25,
+        });
+    }, 350);
+});
+
+function visitIndex(overrides: {
+    page?: number;
+    perPage?: number;
+    search?: string;
+}): void {
+    const query: Record<string, string | number | undefined> = {
+        page: overrides.page ?? props.pagination.currentPage,
+        per_page: overrides.perPage ?? props.filters.per_page,
+        search: overrides.search ?? props.filters.search,
+    };
+
+    if (!query.search) {
+        delete query.search;
+    }
+
+    router.get(props.indexUrl, query, {
+        preserveScroll: true,
+        preserveState: true,
+        replace: true,
+        only: ['clients', 'pagination', 'filters', 'flash'],
+    });
+}
+
+function onPerPageChange(value: string): void {
+    const parsed = Number.parseInt(value, 10);
+
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+        return;
+    }
+
+    visitIndex({
+        page: 1,
+        perPage: parsed,
+        search: searchInput.value.trim(),
+    });
+}
 </script>
 
 <template>
@@ -82,6 +167,15 @@ watch(
                 </CardHeader>
 
                 <CardContent>
+                    <div class="mb-4">
+                        <Input
+                            v-model="searchInput"
+                            type="search"
+                            placeholder="Search client name..."
+                            class="w-full md:max-w-sm"
+                        />
+                    </div>
+
                     <div
                         v-if="props.clients.length > 0"
                         class="overflow-hidden rounded-2xl border"
@@ -128,6 +222,52 @@ watch(
                                 </TableRow>
                             </TableBody>
                         </Table>
+                    </div>
+                    <div
+                        v-if="props.clients.length > 0"
+                        class="mt-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between"
+                    >
+                        <p class="text-sm text-muted-foreground">
+                            Showing {{ props.pagination.from ?? 0 }} to {{ props.pagination.to ?? 0 }} of {{ props.pagination.total }} clients
+                        </p>
+                        <div class="flex items-center gap-2">
+                            <span class="text-sm text-muted-foreground">Rows per page</span>
+                            <Select
+                                :model-value="perPage"
+                                @update:model-value="onPerPageChange(String($event))"
+                            >
+                                <SelectTrigger class="w-[96px]">
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="10">10</SelectItem>
+                                    <SelectItem value="25">25</SelectItem>
+                                    <SelectItem value="50">50</SelectItem>
+                                    <SelectItem value="100">100</SelectItem>
+                                </SelectContent>
+                            </Select>
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                :disabled="props.pagination.currentPage <= 1"
+                                @click="visitIndex({ page: props.pagination.currentPage - 1, search: searchInput.trim() })"
+                            >
+                                Previous
+                            </Button>
+                            <span class="text-sm">
+                                Page {{ props.pagination.currentPage }} / {{ props.pagination.lastPage }}
+                            </span>
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                :disabled="props.pagination.currentPage >= props.pagination.lastPage"
+                                @click="visitIndex({ page: props.pagination.currentPage + 1, search: searchInput.trim() })"
+                            >
+                                Next
+                            </Button>
+                        </div>
                     </div>
 
                     <div

@@ -305,6 +305,7 @@ class BirReceiptAutoMatchService
         $row->loadMissing('batch');
 
         $values = [
+            'mailbox_email' => $this->mailboxEmail($email),
             'file_name' => (string) ($parsed['file_name'] ?? ''),
             'date_received_by_bir' => (string) ($parsed['date_received_by_bir'] ?? ''),
             'time_received_by_bir' => (string) ($parsed['time_received_by_bir'] ?? ''),
@@ -326,6 +327,13 @@ class BirReceiptAutoMatchService
             $values,
             (int) $email->getKey(),
         )->afterCommit();
+    }
+
+    private function mailboxEmail(SyncedEmail $email): string
+    {
+        $email->loadMissing('emailSyncAccount');
+
+        return trim((string) ($email->emailSyncAccount?->username ?? ''));
     }
 
     /**

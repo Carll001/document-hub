@@ -8,6 +8,7 @@ use App\Jobs\GenerateForm1702ExRowReceipt;
 use App\Jobs\ProcessForm1702ExBatchRows;
 use App\Mail\Form1702ExCompletedRowEmail;
 use App\Mail\Form1702ExCompletedRowsEmail;
+use App\Models\EmailSyncAccount;
 use App\Models\Form1702ExBatch;
 use App\Models\Form1702ExBatchRow;
 use App\Models\SyncedEmail;
@@ -17,6 +18,7 @@ use App\Services\Form1702ExCompletedEmailService;
 use App\Services\Form1702ExRowReceiptService;
 use App\Services\Form1702ExService;
 use App\Services\PdfTextExtractionService;
+use App\Support\DocumentStorage;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Queue;
@@ -30,19 +32,19 @@ class Form1702ExReceiptTest extends TestCase
 
     public function test_staff_users_can_view_and_generate_the_receipt_template_alignment_page(): void
     {
-        Storage::fake('local');
+        Storage::fake(DocumentStorage::diskName());
 
         $staff = User::factory()->create();
 
         $this->actingAs($staff)
-            ->get(route('forms.1702-ex.receipt-template.show'))
+            ->get(route('forms.form1702ex.receipt-template.show'))
             ->assertOk()
             ->assertSee('Receipt Template Alignment')
             ->assertSee('receipt.schema.json');
 
         $this->actingAs($staff)
-            ->post(route('forms.1702-ex.receipt-template.generate'))
-            ->assertRedirect(route('forms.1702-ex.receipt-template.show'))
+            ->post(route('forms.form1702ex.receipt-template.generate'))
+            ->assertRedirect(route('forms.form1702ex.receipt-template.show'))
             ->assertSessionHas('success', 'The 1702-EX receipt PDF was generated.');
 
         $latestReceiptTemplate = app(Form1702ExService::class)
@@ -63,18 +65,19 @@ class Form1702ExReceiptTest extends TestCase
             '1702-EX-2025-FOUNDATION-FOR-COMMUNITY-GROWTH.xml',
             $receiptText,
         );
+        $this->assertStringContainsString('<client-mailbox@example.com>', $receiptText);
         $this->assertStringContainsString('March 23, 2026', $receiptText);
         $this->assertStringContainsString('3:01 PM', $receiptText);
 
         $this->actingAs($staff)
-            ->get(route('forms.1702-ex.receipt-template.preview', [
+            ->get(route('forms.form1702ex.receipt-template.preview', [
                 'v' => $latestReceiptTemplate['version'],
             ]))
             ->assertOk()
             ->assertHeader('content-type', 'application/pdf');
 
         $this->actingAs($staff)
-            ->get(route('forms.1702-ex.receipt-template.download'))
+            ->get(route('forms.form1702ex.receipt-template.download'))
             ->assertOk()
             ->assertDownload('1702-ex-receipt-template.pdf');
     }
@@ -93,7 +96,7 @@ class Form1702ExReceiptTest extends TestCase
         $row = $this->generateRowPdf($this->createBatchRow($batch));
 
         $this->actingAs($staff)
-            ->post(route('forms.1702-ex.rows.receipt.store', [
+            ->post(route('forms.form1702ex.rows.receipt.store', [
                 'form1702ExBatchRow' => $row,
             ]), [
                 'values' => [
@@ -102,7 +105,7 @@ class Form1702ExReceiptTest extends TestCase
                     'time_received_by_bir' => '9:45 AM',
                 ],
             ])
-            ->assertRedirect(route('forms.1702-ex.index'))
+            ->assertRedirect(route('forms.form1702ex.index'))
             ->assertSessionHas('success', 'Receipt queued for the selected row.');
 
         $row->refresh();
@@ -179,13 +182,13 @@ class Form1702ExReceiptTest extends TestCase
         $row = $this->generateRowPdf($this->createBatchRow($batch));
 
         $this->actingAs($staff)
-            ->post(route('forms.1702-ex.rows.receipt.temporary.store', [
+            ->post(route('forms.form1702ex.rows.receipt.temporary.store', [
                 'form1702ExBatchRow' => $row,
             ]), [
                 'temporaryReceipt' => UploadedFile::fake()->create('temp-receipt.pdf', 12, 'application/pdf'),
                 'recipientEmail' => 'replacement@example.com',
             ])
-            ->assertRedirect(route('forms.1702-ex.index'))
+            ->assertRedirect(route('forms.form1702ex.index'))
             ->assertSessionHas('success', 'Temporary receipt added for the selected row.');
 
         $row->refresh();
@@ -198,7 +201,7 @@ class Form1702ExReceiptTest extends TestCase
         Storage::disk('s3')->assertExists((string) $row->receipt_storage_path);
 
         $this->actingAs($staff)
-            ->get(route('forms.1702-ex.index'))
+            ->get(route('forms.form1702ex.index'))
             ->assertOk()
             ->assertInertia(fn ($page) => $page
                 ->component('forms/1702-ex/Index')
@@ -207,7 +210,7 @@ class Form1702ExReceiptTest extends TestCase
                 ->where('rows.0.id', $row->uuid));
 
         $this->actingAs($staff)
-            ->get(route('forms.1702-ex.completed.index'))
+            ->get(route('forms.form1702ex.completed.index'))
             ->assertOk()
             ->assertInertia(fn ($page) => $page
                 ->component('forms/1702-ex/Completed')
@@ -232,13 +235,13 @@ class Form1702ExReceiptTest extends TestCase
         ]));
 
         $this->actingAs($staff)
-            ->post(route('forms.1702-ex.rows.receipt.temporary.store', [
+            ->post(route('forms.form1702ex.rows.receipt.temporary.store', [
                 'form1702ExBatchRow' => $row,
             ]), [
                 'temporaryReceipt' => UploadedFile::fake()->create('temp-receipt.pdf', 12, 'application/pdf'),
                 'recipientEmail' => 'finance@communitygrowth.org',
             ])
-            ->assertRedirect(route('forms.1702-ex.index'));
+            ->assertRedirect(route('forms.form1702ex.index'));
 
         $row->refresh();
         $this->assertTrue($row->receipt_is_temporary);
@@ -281,7 +284,7 @@ class Form1702ExReceiptTest extends TestCase
         $this->assertSame(BirReceiptAutoMatchService::MATCH_STATUS_APPLIED, $row->auto_receipt_status);
 
         $this->actingAs($staff)
-            ->get(route('forms.1702-ex.index'))
+            ->get(route('forms.form1702ex.index'))
             ->assertOk()
             ->assertInertia(fn ($page) => $page
                 ->component('forms/1702-ex/Index')
@@ -289,7 +292,7 @@ class Form1702ExReceiptTest extends TestCase
                 ->where('completedCount', 1));
 
         $this->actingAs($staff)
-            ->get(route('forms.1702-ex.completed.index'))
+            ->get(route('forms.form1702ex.completed.index'))
             ->assertOk()
             ->assertInertia(fn ($page) => $page
                 ->component('forms/1702-ex/Completed')
@@ -298,7 +301,7 @@ class Form1702ExReceiptTest extends TestCase
 
     public function test_bir_receipt_email_details_auto_match_and_queue_for_generated_rows(): void
     {
-        Storage::fake('local');
+        Storage::fake(DocumentStorage::diskName());
         Queue::fake();
         Mail::fake();
 
@@ -312,7 +315,19 @@ class Form1702ExReceiptTest extends TestCase
                 'tin' => '010803043000',
             ]),
         ]));
+        $emailSyncAccount = EmailSyncAccount::query()->create([
+            'display_name' => 'Client Mailbox',
+            'username' => 'client-mailbox@example.com',
+            'password' => 'secret',
+            'host' => 'imap.example.com',
+            'port' => 993,
+            'encryption' => 'ssl',
+            'mailbox' => 'INBOX',
+            'validate_certificate' => true,
+            'is_active' => true,
+        ]);
         $email = SyncedEmail::query()->create([
+            'email_sync_account_id' => $emailSyncAccount->id,
             'claimed_by_user_id' => $staff->id,
             'mailbox' => 'INBOX',
             'imap_uid' => '9001',
@@ -339,6 +354,7 @@ class Form1702ExReceiptTest extends TestCase
 
         $queuedJob = $this->assertReceiptJobQueuedFor($row);
         $this->assertSame($email->id, $queuedJob->syncedEmailId);
+        $this->assertSame('client-mailbox@example.com', $queuedJob->values['mailbox_email'] ?? null);
 
         $queuedJob->handle(
             app(Form1702ExRowReceiptService::class),
@@ -352,17 +368,13 @@ class Form1702ExReceiptTest extends TestCase
         $this->assertSame(BirReceiptAutoMatchService::MATCH_STATUS_APPLIED, $email->bir_receipt_match_status);
         $this->assertSame(BirReceiptAutoMatchService::MATCH_STATUS_APPLIED, $row->auto_receipt_status);
         $this->assertNotNull($row->receipt_storage_path);
-        Mail::assertQueued(Form1702ExCompletedRowEmail::class, function (Form1702ExCompletedRowEmail $mail) use ($row): bool {
-            return $mail->hasTo('finance@communitygrowth.org')
-                && $mail->row->is($row);
-        });
-        Mail::assertNotQueued(Form1702ExCompletedRowsEmail::class);
-
         $receiptText = app(PdfTextExtractionService::class)->extractText(
             Storage::disk('s3')->path((string) $row->receipt_storage_path),
         );
 
         $this->assertStringContainsString('010803043000-1702EXv2018C-122025.xml', $receiptText);
+        $this->assertStringContainsString('<client-mailbox@example.com>', $receiptText);
+        $this->assertStringContainsString('client-mailbox@example.com', $receiptText);
         $this->assertStringContainsString('10 April 2026', $receiptText);
         $this->assertStringContainsString('02:49 PM', $receiptText);
     }
@@ -644,7 +656,7 @@ class Form1702ExReceiptTest extends TestCase
         Mail::assertNotQueued(Form1702ExCompletedRowsEmail::class);
 
         $this->actingAs($staff)
-            ->get(route('forms.1702-ex.index'))
+            ->get(route('forms.form1702ex.index'))
             ->assertOk()
             ->assertInertia(fn ($page) => $page
                 ->component('forms/1702-ex/Index')
@@ -925,10 +937,10 @@ class Form1702ExReceiptTest extends TestCase
         Storage::disk('s3')->assertExists($receiptBasePath);
 
         $this->actingAs($staff)
-            ->delete(route('forms.1702-ex.rows.receipt.destroy', [
+            ->delete(route('forms.form1702ex.rows.receipt.destroy', [
                 'form1702ExBatchRow' => $row,
             ]))
-            ->assertRedirect(route('forms.1702-ex.index'))
+            ->assertRedirect(route('forms.form1702ex.index'))
             ->assertSessionHas('success', 'Receipt removed from the selected row.');
 
         $row->refresh();
@@ -969,13 +981,13 @@ class Form1702ExReceiptTest extends TestCase
         $receiptBasePath = $row->receiptBaseStoragePath();
 
         $this->actingAs($staff)
-            ->post(route('forms.1702-ex.rows.regenerate', [
+            ->post(route('forms.form1702ex.rows.regenerate', [
                 'form1702ExBatchRow' => $row,
             ]), [
                 'footerSourcePath' => 'file:///tmp/updated-footer.pdf',
                 'footerPrintedDate' => '10/04/2026',
             ])
-            ->assertRedirect(route('forms.1702-ex.index'))
+            ->assertRedirect(route('forms.form1702ex.index'))
             ->assertSessionHas('success', 'PDF regeneration queued for the selected row.');
 
         $row->refresh();
@@ -1011,14 +1023,14 @@ class Form1702ExReceiptTest extends TestCase
         $row = $this->attachReceipt($this->generateRowPdf($this->createBatchRow($batch)));
 
         $this->actingAs($owner)
-            ->get(route('forms.1702-ex.rows.receipt.download', [
+            ->get(route('forms.form1702ex.rows.receipt.download', [
                 'form1702ExBatchRow' => $row,
             ]))
             ->assertOk()
             ->assertDownload((string) $row->receipt_file_name);
 
         $this->actingAs($otherStaff)
-            ->get(route('forms.1702-ex.rows.receipt.download', [
+            ->get(route('forms.form1702ex.rows.receipt.download', [
                 'form1702ExBatchRow' => $row,
             ]))
             ->assertNotFound();

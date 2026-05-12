@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Settings\ProfileController;
+use App\Http\Controllers\Settings\ConfirmationTemplateController;
 use App\Http\Controllers\Settings\FormFieldAliasController;
 use App\Http\Controllers\Settings\SecurityController;
 use Illuminate\Support\Facades\Route;
@@ -22,6 +23,13 @@ Route::middleware(['auth', 'verified'])->group(function () {
         ->name('user-password.update');
 
     Route::inertia('settings/appearance', 'settings/Appearance')->name('appearance.edit');
+});
+
+Route::middleware(['auth', 'verified', 'staff'])->group(function () {
+    Route::get('settings/confirmation-template', [ConfirmationTemplateController::class, 'edit'])
+        ->name('confirmation-template.edit');
+    Route::post('settings/confirmation-template', [ConfirmationTemplateController::class, 'update'])
+        ->name('confirmation-template.update');
 });
 
 Route::middleware(['auth', 'verified', 'superadmin'])->group(function () {

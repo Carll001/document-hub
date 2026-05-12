@@ -15,6 +15,7 @@ const page = usePage();
 const isSuperadmin = computed(
     () => page.props.auth?.user?.role === 'superadmin',
 );
+const isStaff = computed(() => page.props.auth?.user?.role === 'staff');
 const sidebarNavItems = computed<NavItem[]>(() => {
     const items: NavItem[] = [
         {
@@ -30,6 +31,13 @@ const sidebarNavItems = computed<NavItem[]>(() => {
             href: editAppearance(),
         },
     ];
+
+    if (isStaff.value) {
+        items.push({
+            title: 'Confirmation receipt',
+            href: '/settings/confirmation-template',
+        });
+    }
 
     if (isSuperadmin.value) {
         items.push({

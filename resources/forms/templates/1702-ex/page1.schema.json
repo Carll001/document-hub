@@ -415,8 +415,8 @@
     },
     {
       "section": "Signatory Details",
-      "key": "president_name",
-      "label": "President Name",
+      "key": "client_name",
+      "label": "Client Name",
       "type": "text",
       "x": 0.121,
       "y": 0.704,

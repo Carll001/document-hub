@@ -31,7 +31,7 @@ class Form1702ExReceiptTemplateController extends Controller
             'mockExportUrl' => route('forms.form1702ex.receipt-template.generate'),
             'payload' => $payload,
             'schema' => $schema,
-            'templatePdfUrl' => asset('form-assets/1702-ex/template-receipt.pdf'),
+            'templatePdfUrl' => asset($this->activeReceiptTemplateAsset()),
             'backgroundUrl' => asset('form-assets/1702-ex/receipt-template.png'),
         ]);
     }
@@ -117,5 +117,12 @@ class Form1702ExReceiptTemplateController extends Controller
         $latestExport['downloadUrl'] = route('forms.form1702ex.receipt-template.download');
 
         return $latestExport;
+    }
+
+    private function activeReceiptTemplateAsset(): string
+    {
+        return is_file(public_path('form-assets/1702-ex/template-receipt-fpdi.pdf'))
+            ? 'form-assets/1702-ex/template-receipt-fpdi.pdf'
+            : 'form-assets/1702-ex/template-receipt.pdf';
     }
 }

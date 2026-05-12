@@ -21,7 +21,9 @@ class ClientController extends Controller
 {
     use BuildsPaginationPayload;
 
-    private const COMPANIES_PER_PAGE = 25;
+    private const CLIENTS_PER_PAGE_DEFAULT = 15;
+
+    private const COMPANIES_PER_PAGE = 15;
 
     public function __construct(
         private readonly Form1702ExCompletedEmailService $form1702ExCompletedEmailService,
@@ -32,21 +34,41 @@ class ClientController extends Controller
     public function index(Request $request): Response
     {
         $user = $request->user();
-        $clients = Client::query()
+        $validated = $request->validate([
+            'page' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'min:5', 'max:100'],
+            'search' => ['nullable', 'string', 'max:120'],
+        ]);
+
+        $search = isset($validated['search']) ? trim((string) $validated['search']) : '';
+        $perPage = (int) ($validated['per_page'] ?? self::CLIENTS_PER_PAGE_DEFAULT);
+        $page = (int) ($validated['page'] ?? 1);
+
+        $clientsPage = Client::query()
             ->whereBelongsTo($user)
             ->withCount('companies')
             ->withCount([
                 'rows as completed_1702_ex_count' => fn ($query) => $this->applyCompleted1702ExScope($query),
             ])
+            ->when($search !== '', function ($query) use ($search): void {
+                $query->where('name', 'like', '%'.$search.'%');
+            })
             ->orderBy('name')
-            ->get();
+            ->paginate($perPage, ['*'], 'page', $page)
+            ->withQueryString();
 
         return Inertia::render('Clients', [
             'flash' => [
                 'success' => $request->session()->get('success'),
                 'error' => $request->session()->get('error'),
             ],
-            'clients' => $clients->map(fn (Client $client): array => [
+            'indexUrl' => route('clients.index'),
+            'filters' => [
+                'search' => $search,
+                'per_page' => $clientsPage->perPage(),
+            ],
+            'pagination' => $this->paginationPayload($clientsPage),
+            'clients' => collect($clientsPage->items())->map(fn (Client $client): array => [
                 'id' => $client->uuid,
                 'name' => $client->name,
                 'companyCount' => (int) $client->companies_count,

@@ -2,30 +2,14 @@ import { computed, ref, watch, type Ref } from 'vue';
 import type { ManagedUser } from '@/components/user-components/types';
 
 export function useUserSelection(storedUsers: Ref<ManagedUser[]>) {
-    const searchTerm = ref('');
     const selectedUserIds = ref<number[]>([]);
-
-    const filteredUsers = computed(() => {
-        const query = searchTerm.value.trim().toLowerCase();
-
-        if (query === '') {
-            return storedUsers.value;
-        }
-
-        return storedUsers.value.filter((user) =>
-            [user.name, user.email, user.roleLabel]
-                .join(' ')
-                .toLowerCase()
-                .includes(query),
-        );
-    });
 
     const selectedUserIdSet = computed(() => new Set(selectedUserIds.value));
     const selectedUsers = computed(() =>
         storedUsers.value.filter((user) => selectedUserIdSet.value.has(user.id)),
     );
     const visibleSelectableUserIds = computed(() =>
-        filteredUsers.value
+        storedUsers.value
             .filter((user) => user.deleteUrl !== null)
             .map((user) => user.id),
     );
@@ -104,9 +88,7 @@ export function useUserSelection(storedUsers: Ref<ManagedUser[]>) {
     }
 
     return {
-        filteredUsers,
         isUserSelected,
-        searchTerm,
         selectedUserIds,
         selectedUsers,
         selectAllUsersState,

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Head, useForm } from '@inertiajs/vue3';
+import { Head, router, useForm } from '@inertiajs/vue3';
 import { UserCog } from 'lucide-vue-next';
 import { computed, ref, watch } from 'vue';
 import { toast } from 'vue-sonner';
@@ -9,7 +9,6 @@ import EditUserDialog from '@/components/user-components/EditUserDialog.vue';
 import type {
     FlashState,
     ManagedUser,
-    UsersPayload,
 } from '@/components/user-components/types';
 import { useUserSelection } from '@/components/user-components/useUserSelection';
 import UsersTable from '@/components/user-components/UsersTable.vue';
@@ -25,12 +24,22 @@ import type { BreadcrumbItem } from '@/types';
 
 const props = defineProps<{
     flash: FlashState;
+    indexUrl: string;
     storeUrl: string;
-    usersPageUrl: string;
     bulkDestroyUrl: string;
+    filters: {
+        search: string;
+        per_page: number;
+    };
+    pagination: {
+        currentPage: number;
+        lastPage: number;
+        perPage: number;
+        total: number;
+        from: number | null;
+        to: number | null;
+    };
     users: ManagedUser[];
-    hasMoreUsers: boolean;
-    nextUsersCursor: string | null;
 }>();
 
 const breadcrumbs: BreadcrumbItem[] = [
@@ -41,10 +50,8 @@ const breadcrumbs: BreadcrumbItem[] = [
 ];
 
 const storedUsers = ref<ManagedUser[]>([...props.users]);
-const hasMoreUsers = ref(props.hasMoreUsers);
-const nextUsersCursor = ref(props.nextUsersCursor);
-const isLoadingMore = ref(false);
-const loadMoreError = ref<string | null>(null);
+const searchTerm = ref(props.filters.search ?? '');
+const searchTimeoutId = ref<number | null>(null);
 const isCreateDialogOpen = ref(false);
 const isEditDialogOpen = ref(false);
 const isDeleteDialogOpen = ref(false);
@@ -70,9 +77,7 @@ const deleteForm = useForm<{
 });
 
 const {
-    filteredUsers,
     isUserSelected,
-    searchTerm,
     selectedUserIds,
     selectedUsers,
     selectAllUsersState,
@@ -114,14 +119,17 @@ const deleteDialogDescription = computed(() => {
 });
 
 watch(
-    () => [props.users, props.hasMoreUsers, props.nextUsersCursor] as const,
-    ([users, hasMore, cursor]) => {
+    () => props.users,
+    (users) => {
         storedUsers.value = [...users];
-        hasMoreUsers.value = hasMore;
-        nextUsersCursor.value = cursor;
-        loadMoreError.value = null;
     },
     { deep: true },
+);
+watch(
+    () => props.filters.search,
+    (value) => {
+        searchTerm.value = value ?? '';
+    },
 );
 
 watch(
@@ -257,6 +265,8 @@ function submitCreate(): void {
             preserveScroll: true,
             onSuccess: () => {
                 isCreateDialogOpen.value = false;
+                createForm.reset();
+                createForm.clearErrors();
             },
         });
 }
@@ -322,47 +332,64 @@ function submitDelete(): void {
     });
 }
 
-async function loadMoreUsers(): Promise<void> {
-    if (!nextUsersCursor.value || isLoadingMore.value) {
+function visitIndex(overrides: {
+    page?: number;
+    perPage?: number;
+    search?: string;
+}): void {
+    const query: Record<string, string | number | undefined> = {
+        page: overrides.page ?? props.pagination.currentPage,
+        per_page: overrides.perPage ?? props.filters.per_page,
+        search: overrides.search ?? props.filters.search,
+    };
+
+    if (!query.search) {
+        delete query.search;
+    }
+
+    router.get(props.indexUrl, query, {
+        preserveScroll: true,
+        preserveState: true,
+        replace: true,
+        only: ['users', 'pagination', 'filters', 'flash'],
+    });
+}
+
+watch(searchTerm, (value) => {
+    if (searchTimeoutId.value !== null) {
+        window.clearTimeout(searchTimeoutId.value);
+    }
+
+    searchTimeoutId.value = window.setTimeout(() => {
+        visitIndex({
+            page: 1,
+            search: value.trim(),
+            perPage: props.filters.per_page,
+        });
+    }, 350);
+});
+
+function onPageChange(page: number): void {
+    if (page < 1 || page > props.pagination.lastPage) {
         return;
     }
 
-    isLoadingMore.value = true;
-    loadMoreError.value = null;
+    visitIndex({
+        page,
+        search: searchTerm.value.trim(),
+    });
+}
 
-    try {
-        const response = await fetch(
-            `${props.usersPageUrl}?cursor=${encodeURIComponent(nextUsersCursor.value)}`,
-            {
-                credentials: 'same-origin',
-                headers: {
-                    Accept: 'application/json',
-                    'X-Requested-With': 'XMLHttpRequest',
-                },
-            },
-        );
-
-        if (!response.ok) {
-            throw new Error('Unable to load more users right now.');
-        }
-
-        const payload = (await response.json()) as UsersPayload;
-        const seenIds = new Set(storedUsers.value.map((user) => user.id));
-
-        storedUsers.value = [
-            ...storedUsers.value,
-            ...payload.users.filter((user) => !seenIds.has(user.id)),
-        ];
-        hasMoreUsers.value = payload.hasMoreUsers;
-        nextUsersCursor.value = payload.nextUsersCursor;
-    } catch (error) {
-        loadMoreError.value =
-            error instanceof Error
-                ? error.message
-                : 'Unable to load more users right now.';
-    } finally {
-        isLoadingMore.value = false;
+function onPerPageChange(perPage: number): void {
+    if (!Number.isFinite(perPage) || perPage <= 0) {
+        return;
     }
+
+    visitIndex({
+        page: 1,
+        perPage,
+        search: searchTerm.value.trim(),
+    });
 }
 </script>
 
@@ -398,26 +425,25 @@ async function loadMoreUsers(): Promise<void> {
                         <div
                             class="rounded-full border px-3 py-1 text-sm text-muted-foreground"
                         >
-                            {{ storedUsers.length }} users loaded
+                            {{ props.pagination.total }} users
                         </div>
                     </div>
                 </CardHeader>
 
                 <UsersTable
                     :format-date-time="formatDateTime"
-                    :has-more-users="hasMoreUsers"
                     :has-selectable-users="visibleSelectableUserIds.length > 0"
                     :is-delete-processing="deleteForm.processing"
-                    :is-loading-more="isLoadingMore"
                     :is-user-selected="isUserSelected"
-                    :load-more-error="loadMoreError"
+                    :pagination="props.pagination"
                     :search-term="searchTerm"
                     :select-all-state="selectAllUsersState"
-                    :total-users="storedUsers.length"
-                    :users="filteredUsers"
+                    :users="storedUsers"
+                    :rows-per-page="props.filters.per_page"
                     @delete="openDeleteDialogForUser"
                     @edit="openEditDialog"
-                    @load-more="loadMoreUsers"
+                    @page-change="onPageChange"
+                    @per-page-change="onPerPageChange"
                     @toggle-all="toggleAllVisibleUsers"
                     @toggle-user="toggleUserSelection($event.user, $event.checked)"
                     @update:search-term="searchTerm = $event"

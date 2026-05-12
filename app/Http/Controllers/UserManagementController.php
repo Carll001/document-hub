@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers;
 
 use App\Enums\UserRole;
+use App\Http\Controllers\Concerns\BuildsPaginationPayload;
 use App\Models\User;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Http\JsonResponse;
@@ -17,6 +18,8 @@ use Inertia\Response;
 
 class UserManagementController extends Controller
 {
+    use BuildsPaginationPayload;
+
     private const USERS_PER_PAGE = 25;
 
     /**
@@ -24,16 +27,29 @@ class UserManagementController extends Controller
      */
     public function index(Request $request): Response
     {
-        $userPage = $this->userPage(1);
+        $validated = $request->validate([
+            'page' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'min:5', 'max:100'],
+            'search' => ['nullable', 'string', 'max:120'],
+        ]);
+        $search = isset($validated['search']) ? trim((string) $validated['search']) : '';
+        $perPage = (int) ($validated['per_page'] ?? self::USERS_PER_PAGE);
+        $page = (int) ($validated['page'] ?? 1);
+        $userPage = $this->userPage($page, $perPage, $search);
 
         return Inertia::render('Users', [
             'flash' => [
                 'success' => $request->session()->get('success'),
                 'error' => $request->session()->get('error'),
             ],
+            'indexUrl' => route('users.index'),
             'storeUrl' => route('users.store'),
-            'usersPageUrl' => route('users.list'),
             'bulkDestroyUrl' => route('users.destroy-many'),
+            'filters' => [
+                'search' => $search,
+                'per_page' => $userPage->perPage(),
+            ],
+            'pagination' => $this->paginationPayload($userPage),
             ...$this->userPagePayload($userPage, $request->user()),
         ]);
     }
@@ -45,11 +61,15 @@ class UserManagementController extends Controller
     {
         $validated = $request->validate([
             'cursor' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'min:5', 'max:100'],
+            'search' => ['nullable', 'string', 'max:120'],
         ]);
+        $search = isset($validated['search']) ? trim((string) $validated['search']) : '';
+        $perPage = (int) ($validated['per_page'] ?? self::USERS_PER_PAGE);
 
         return response()->json(
             $this->userPagePayload(
-                $this->userPage((int) ($validated['cursor'] ?? 1)),
+                $this->userPage((int) ($validated['cursor'] ?? 1), $perPage, $search),
                 $request->user(),
             ),
         );
@@ -148,7 +168,7 @@ class UserManagementController extends Controller
 
         $users = User::query()
             ->whereIn('id', $userIds)
-            ->where('role', UserRole::Staff)
+            ->whereIn('role', [UserRole::Staff, UserRole::Client])
             ->orderBy('id')
             ->get();
 
@@ -171,13 +191,22 @@ class UserManagementController extends Controller
             );
     }
 
-    private function userPage(int $page): LengthAwarePaginator
+    private function userPage(int $page, int $perPage, string $search = ''): LengthAwarePaginator
     {
         return User::query()
             ->whereIn('role', [UserRole::Staff, UserRole::Client])
+            ->when($search !== '', function ($query) use ($search): void {
+                $like = '%'.$search.'%';
+                $query->where(function ($innerQuery) use ($like): void {
+                    $innerQuery
+                        ->where('name', 'like', $like)
+                        ->orWhere('email', 'like', $like);
+                });
+            })
             ->orderByDesc('created_at')
             ->orderByDesc('id')
-            ->paginate(self::USERS_PER_PAGE, ['*'], 'page', $page);
+            ->paginate($perPage, ['*'], 'page', $page)
+            ->withQueryString();
     }
 
     /**

@@ -1,10 +1,16 @@
 <script setup lang="ts">
-import { LoaderCircle, Search } from 'lucide-vue-next';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Search } from 'lucide-vue-next';
 import { Button } from '@/components/ui/button';
 import { CardContent } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from '@/components/ui/select';
 import {
     Table,
     TableBody,
@@ -18,22 +24,28 @@ import type { ManagedUser } from '@/components/user-components/types';
 
 const props = defineProps<{
     users: ManagedUser[];
-    totalUsers: number;
+    rowsPerPage: number;
     searchTerm: string;
     selectAllState: boolean | 'indeterminate';
     hasSelectableUsers: boolean;
-    hasMoreUsers: boolean;
+    pagination: {
+        currentPage: number;
+        lastPage: number;
+        perPage: number;
+        total: number;
+        from: number | null;
+        to: number | null;
+    };
     isDeleteProcessing: boolean;
-    isLoadingMore: boolean;
     isUserSelected: (user: ManagedUser) => boolean;
-    loadMoreError: string | null;
     formatDateTime: (value: string | null) => string;
 }>();
 
 const emit = defineEmits<{
     edit: [user: ManagedUser];
     delete: [user: ManagedUser];
-    loadMore: [];
+    pageChange: [page: number];
+    perPageChange: [value: number];
     toggleAll: [checked: boolean | 'indeterminate'];
     toggleUser: [payload: { user: ManagedUser; checked: boolean | 'indeterminate' }];
     'update:searchTerm': [value: string];
@@ -89,7 +101,9 @@ const emit = defineEmits<{
                                 "
                             />
                         </TableCell>
-                        <TableCell>{{ index + 1 }}</TableCell>
+                        <TableCell>
+                            {{ ((props.pagination.currentPage - 1) * props.pagination.perPage) + index + 1 }}
+                        </TableCell>
                         <TableCell>
                             <div class="space-y-1">
                                 <p class="font-medium text-foreground">
@@ -137,9 +151,9 @@ const emit = defineEmits<{
                         </TableCell>
                     </TableRow>
 
-                    <TableEmpty v-if="props.users.length === 0" :colspan="6">
+                    <TableEmpty v-if="props.users.length === 0" :colspan="7">
                         {{
-                            props.totalUsers === 0
+                            props.pagination.total === 0
                                 ? 'No users found.'
                                 : 'No users match your search.'
                         }}
@@ -147,30 +161,51 @@ const emit = defineEmits<{
                 </TableBody>
             </Table>
         </div>
-
-        <Alert v-if="props.loadMoreError" variant="destructive">
-            <AlertTitle>Load more failed</AlertTitle>
-            <AlertDescription>
-                {{ props.loadMoreError }}
-            </AlertDescription>
-        </Alert>
-
-        <Button
-            v-if="props.hasMoreUsers"
-            type="button"
-            variant="outline"
-            size="sm"
-            class="w-full rounded-full text-xs"
-            :disabled="props.isLoadingMore"
-            @click="emit('loadMore')"
+        <div
+            v-if="props.pagination.total > 0"
+            class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between"
         >
-            <LoaderCircle
-                v-if="props.isLoadingMore"
-                class="mr-2 size-4 animate-spin"
-            />
-            {{
-                props.isLoadingMore ? 'Loading more users...' : 'Load more'
-            }}
-        </Button>
+            <p class="text-sm text-muted-foreground">
+                Showing {{ props.pagination.from ?? 0 }} to {{ props.pagination.to ?? 0 }} of {{ props.pagination.total }} users
+            </p>
+            <div class="flex items-center gap-2">
+                <span class="text-sm text-muted-foreground">Rows per page</span>
+                <Select
+                    :model-value="String(props.rowsPerPage)"
+                    @update:model-value="emit('perPageChange', Number.parseInt(String($event), 10))"
+                >
+                    <SelectTrigger class="w-[96px]">
+                        <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="10">10</SelectItem>
+                        <SelectItem value="25">25</SelectItem>
+                        <SelectItem value="50">50</SelectItem>
+                        <SelectItem value="100">100</SelectItem>
+                    </SelectContent>
+                </Select>
+                <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    :disabled="props.pagination.currentPage <= 1"
+                    @click="emit('pageChange', props.pagination.currentPage - 1)"
+                >
+                    Previous
+                </Button>
+                <span class="text-sm">
+                    Page {{ props.pagination.currentPage }} / {{ props.pagination.lastPage }}
+                </span>
+                <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    :disabled="props.pagination.currentPage >= props.pagination.lastPage"
+                    @click="emit('pageChange', props.pagination.currentPage + 1)"
+                >
+                    Next
+                </Button>
+            </div>
+        </div>
     </CardContent>
 </template>

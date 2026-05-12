@@ -431,8 +431,8 @@
                             <div class="alignment-note">
                                 <strong>Template source</strong>
                                 <span>
-                                    The receipt layout comes from the committed
-                                    <code>template-receipt.pdf</code> asset.
+                                    The receipt layout comes from the active PDF
+                                    configured in Settings.
                                 </span>
                             </div>
                             <div class="alignment-note">

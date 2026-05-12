@@ -56,7 +56,7 @@ class Form1702ExRowReceiptService
                 'The generated 1702-EX receipt PDF could not be stored.',
             );
 
-            $this->pdfMergeService->attachForm1702ExReceipt($row, $disk->path($storagePath));
+            $this->pdfMergeService->attachForm1702ExReceipt($row, $storagePath);
 
             $row->forceFill([
                 'receipt_file_name' => $outputName,
@@ -133,7 +133,7 @@ class Form1702ExRowReceiptService
                 throw new RuntimeException('The temporary receipt file could not be stored.');
             }
 
-            $this->pdfMergeService->attachForm1702ExReceipt($row, $disk->path($storagePath));
+            $this->pdfMergeService->attachForm1702ExReceipt($row, $storagePath);
 
             $row->forceFill([
                 'receipt_file_name' => $outputName,

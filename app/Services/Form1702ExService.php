@@ -962,6 +962,8 @@ class Form1702ExService
             $fontStyle,
         );
 
+        $this->fillFieldBackground($pdf, $field, $x, $y, $width, $height);
+
         if ($type === 'checkbox') {
             if (! $this->fieldValueFormatter->isChecked($field, $payload)) {
                 return;
@@ -1032,6 +1034,37 @@ class Form1702ExService
             0,
             0,
             $align,
+        );
+    }
+
+    /**
+     * @param  array<string, mixed>  $field
+     */
+    private function fillFieldBackground(
+        FormPdfFpdi $pdf,
+        array $field,
+        float $x,
+        float $y,
+        float $width,
+        float $height,
+    ): void {
+        $backgroundFill = $field['backgroundFill'] ?? null;
+
+        if (! is_string($backgroundFill) || ! preg_match('/^#?([a-f0-9]{6})$/i', trim($backgroundFill), $matches)) {
+            return;
+        }
+
+        $hex = $matches[1];
+        $red = hexdec(substr($hex, 0, 2));
+        $green = hexdec(substr($hex, 2, 2));
+        $blue = hexdec(substr($hex, 4, 2));
+
+        $pdf->SetFillColor($red, $green, $blue);
+        $pdf->Rect($x, $y, $width, $height, 'F');
+        $pdf->SetFillColor(
+            self::PDF_MARKER_FILL_RED,
+            self::PDF_MARKER_FILL_GREEN,
+            self::PDF_MARKER_FILL_BLUE,
         );
     }
 
