@@ -1179,13 +1179,73 @@ class Form1702ExImportService
 
     private function normalizeMonthValue(string $value, string $fallback): string
     {
-        $digits = preg_replace('/\D+/', '', $value) ?? '';
+        $normalized = $this->normalizeMonthFromCandidate($value);
 
-        if ($digits === '') {
-            return str_pad(preg_replace('/\D+/', '', $fallback) ?? '', 2, '0', STR_PAD_LEFT);
+        if ($normalized !== '') {
+            return $normalized;
         }
 
-        return str_pad(substr($digits, -2), 2, '0', STR_PAD_LEFT);
+        $fallbackNormalized = $this->normalizeMonthFromCandidate($fallback);
+
+        return $fallbackNormalized !== '' ? $fallbackNormalized : '01';
+    }
+
+    private function normalizeMonthFromCandidate(string $value): string
+    {
+        $trimmed = $this->cleanCellText($value);
+
+        if ($trimmed === '') {
+            return '';
+        }
+
+        // Explicit year/month formats from imports (e.g. 2025/12 or 2025-12).
+        if (preg_match('/^\s*(?<year>\d{4})\s*[-\/]\s*(?<month>\d{1,2})\s*$/', $trimmed, $matches) === 1) {
+            $month = (int) ($matches['month'] ?? 0);
+
+            return ($month >= 1 && $month <= 12)
+                ? str_pad((string) $month, 2, '0', STR_PAD_LEFT)
+                : '';
+        }
+
+        // Also support month/year format (e.g. 12/2025).
+        if (preg_match('/^\s*(?<month>\d{1,2})\s*[-\/]\s*(?<year>\d{4})\s*$/', $trimmed, $matches) === 1) {
+            $month = (int) ($matches['month'] ?? 0);
+
+            return ($month >= 1 && $month <= 12)
+                ? str_pad((string) $month, 2, '0', STR_PAD_LEFT)
+                : '';
+        }
+
+        if (is_numeric($trimmed) && strlen($trimmed) > 2) {
+            $excelDate = $this->excelSerialDateToCarbon((float) $trimmed);
+
+            if ($excelDate instanceof Carbon) {
+                return $excelDate->format('m');
+            }
+        }
+
+        try {
+            return Carbon::parse($trimmed)->format('m');
+        } catch (\Throwable) {
+        }
+
+        $digits = preg_replace('/\D+/', '', $trimmed) ?? '';
+
+        if ($digits === '') {
+            return '';
+        }
+
+        if (strlen($digits) <= 2) {
+            $month = (int) $digits;
+
+            if ($month >= 1 && $month <= 12) {
+                return str_pad((string) $month, 2, '0', STR_PAD_LEFT);
+            }
+
+            return '';
+        }
+
+        return '';
     }
 
     private function normalizeFourDigitYear(string $yearValue, string $twoDigitYearValue, string $fallback): string
