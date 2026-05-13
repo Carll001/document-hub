@@ -1146,6 +1146,7 @@ class Form1702ExService
 
         try {
             $processedPath = $this->signatureImageService->processToTransparentPng($sourcePath);
+            $this->signatureImageService->normalizePngForFpdf($processedPath);
             $cleanupPaths[] = $processedPath;
         } catch (\Throwable $exception) {
             report($exception);

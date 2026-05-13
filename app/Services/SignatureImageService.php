@@ -37,6 +37,7 @@ class SignatureImageService
         $image->setImageFormat('png');
         $image->trimImage(0.0);
         $image->setImagePage(0, 0, 0, 0);
+        $this->applyImagickPng8BitSettings($image);
 
         $targetPath = $this->tempPath('signature-processed-', '.png');
         if (! $image->writeImage($targetPath)) {
@@ -111,6 +112,95 @@ class SignatureImageService
         imagedestroy($processed);
 
         return $targetPath;
+    }
+
+    public function normalizePngForFpdf(string $pngPath): string
+    {
+        if (! is_file($pngPath)) {
+            throw new RuntimeException('Signature PNG normalization failed: image file does not exist.');
+        }
+
+        $bitDepth = $this->pngBitDepth($pngPath);
+        if ($bitDepth === 8) {
+            return $pngPath;
+        }
+
+        if (extension_loaded('imagick')) {
+            $this->normalizePngWithImagick($pngPath);
+
+            return $pngPath;
+        }
+
+        if (function_exists('imagecreatefrompng')) {
+            $this->normalizePngWithGd($pngPath);
+
+            return $pngPath;
+        }
+
+        throw new RuntimeException('Signature PNG normalization failed: no supported image extension found.');
+    }
+
+    private function normalizePngWithImagick(string $pngPath): void
+    {
+        $image = new \Imagick($pngPath);
+        $this->applyImagickPng8BitSettings($image);
+
+        if (! $image->writeImage($pngPath)) {
+            $image->clear();
+            $image->destroy();
+            throw new RuntimeException('Signature PNG normalization failed: unable to write normalized PNG.');
+        }
+
+        $image->clear();
+        $image->destroy();
+
+        if ($this->pngBitDepth($pngPath) !== 8) {
+            throw new RuntimeException('Signature PNG normalization failed: normalized PNG is not 8-bit depth.');
+        }
+    }
+
+    private function normalizePngWithGd(string $pngPath): void
+    {
+        $image = imagecreatefrompng($pngPath);
+        if (! is_resource($image) && ! ($image instanceof \GdImage)) {
+            throw new RuntimeException('Signature PNG normalization failed: unable to decode PNG.');
+        }
+
+        imagesavealpha($image, true);
+        if (! imagepng($image, $pngPath)) {
+            imagedestroy($image);
+            throw new RuntimeException('Signature PNG normalization failed: unable to write normalized PNG.');
+        }
+
+        imagedestroy($image);
+
+        if ($this->pngBitDepth($pngPath) !== 8) {
+            throw new RuntimeException('Signature PNG normalization failed: normalized PNG is not 8-bit depth.');
+        }
+    }
+
+    private function applyImagickPng8BitSettings(\Imagick $image): void
+    {
+        $image->setImageColorspace(\Imagick::COLORSPACE_SRGB);
+        $image->setImageAlphaChannel(\Imagick::ALPHACHANNEL_ACTIVATE);
+        $image->setImageType(\Imagick::IMGTYPE_TRUECOLORMATTE);
+        $image->setImageDepth(8);
+        $image->setImageFormat('png');
+    }
+
+    private function pngBitDepth(string $pngPath): ?int
+    {
+        $header = @file_get_contents($pngPath, false, null, 0, 33);
+        if (! is_string($header) || strlen($header) < 33) {
+            return null;
+        }
+
+        $signature = "\x89PNG\x0D\x0A\x1A\x0A";
+        if (substr($header, 0, 8) !== $signature) {
+            return null;
+        }
+
+        return ord($header[24]);
     }
 
     private function tempPath(string $prefix, string $extension): string

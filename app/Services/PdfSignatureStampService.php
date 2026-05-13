@@ -7,6 +7,10 @@ use setasign\Fpdi\Fpdi;
 
 class PdfSignatureStampService
 {
+    public function __construct(
+        private readonly SignatureImageService $signatureImageService,
+    ) {}
+
     /**
      * @param  array<int, array{anchor: string, offset_x: float, offset_y: float, width: float, height: float}>  $pageLayouts
      */
@@ -21,6 +25,16 @@ class PdfSignatureStampService
 
         if (! file_exists($signatureImagePath)) {
             throw new RuntimeException('Signature image does not exist.');
+        }
+
+        try {
+            $this->signatureImageService->normalizePngForFpdf($signatureImagePath);
+        } catch (\Throwable $exception) {
+            throw new RuntimeException(
+                'Signature PNG normalization failed before PDF stamping.',
+                0,
+                $exception,
+            );
         }
 
         $pdf = new Fpdi;
