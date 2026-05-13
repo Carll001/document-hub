@@ -99,6 +99,7 @@ const companySearch = ref(props.initialFilters.search ?? '');
 const pollingActive = ref(false);
 const deletingItems = ref(false);
 const selectedItemIds = ref<number[]>([]);
+const exportMissingDataBusy = ref(false);
 
 const editDialogOpen = ref(false);
 const editingItem = ref<UnifiedItem | null>(null);
@@ -185,6 +186,9 @@ const canBulkSignSelected = computed(() => {
     );
 });
 const hasPreparingSignatures = computed(() => preparingSignatureItemIds.value.length > 0);
+const hasMissingDataItems = computed(() =>
+    itemsData.value.data.some((item) => itemHasMissingData(item)),
+);
 const signingProgressNotice = computed<string | null>(() => {
     if (preparingSignatureItemIds.value.length === 0) {
         return null;
@@ -558,6 +562,69 @@ const extractTin = (item: UnifiedItem): string => {
     }
 
     return resolveTin(item.row_data, 'afs') ?? '-';
+};
+
+const itemHasMissingData = (item: UnifiedItem): boolean => {
+    if (item.status !== 'failed') {
+        return false;
+    }
+
+    const details = item.error_details && typeof item.error_details === 'object'
+        ? item.error_details
+        : {};
+    const missingRaw = (details as Record<string, unknown>).missing_data;
+
+    return Array.isArray(missingRaw) && missingRaw.some((value) => typeof value === 'string' && value.trim() !== '');
+};
+
+const exportMissingData = async () => {
+    if (exportMissingDataBusy.value) {
+        return;
+    }
+
+    exportMissingDataBusy.value = true;
+
+    try {
+        const response = await fetch(documentGeneratorRoutes.items.exportMissingData.url(), {
+            method: 'GET',
+            credentials: 'same-origin',
+            headers: {
+                Accept: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/json',
+                'X-Requested-With': 'XMLHttpRequest',
+            },
+        });
+
+        const contentType = response.headers.get('Content-Type') ?? '';
+
+        if (!response.ok) {
+            let message = 'Unable to export missing-data rows.';
+
+            if (contentType.includes('application/json')) {
+                const payload = (await response.json()) as { message?: string };
+                message = payload.message ?? message;
+            }
+
+            throw new Error(message);
+        }
+
+        if (!contentType.includes('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')) {
+            throw new Error('Missing-data export is unavailable right now.');
+        }
+
+        const blob = await response.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = blobUrl;
+        link.download = 'afs-filing-missing-data.xlsx';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(blobUrl);
+    } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Unable to export missing-data rows.');
+    } finally {
+        exportMissingDataBusy.value = false;
+    }
 };
 
 const confirmDelete = (ids: number[]) => {
@@ -1053,6 +1120,16 @@ onMounted(() => {
                     <div class="flex flex-wrap gap-2 justify-end">
                         <Button variant="secondary" as-child>
                             <a :href="generatedFilesRoutes.index().url">Completed Files</a>
+                        </Button>
+                        <Button
+                            v-if="hasMissingDataItems"
+                            variant="outline"
+                            :disabled="exportMissingDataBusy"
+                            @click="void exportMissingData()"
+                        >
+                            <LoaderCircle v-if="exportMissingDataBusy" class="mr-2 size-4 animate-spin" />
+                            <Download v-else class="mr-2 size-4" />
+                            {{ exportMissingDataBusy ? 'Exporting...' : 'Export Missing Data (Excel)' }}
                         </Button>
                         <Button variant="outline" @click="settingsDialogOpen = true">
                             <Settings2 class="mr-2 size-4" />

@@ -127,6 +127,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
             ->group(function (): void {
                 Route::post('upload', 'store')->name('upload');
                 Route::get('/', 'items')->name('index');
+                Route::get('export-missing-data', 'exportMissingData')->name('export-missing-data');
                 Route::post('signature/bulk', 'signBulk')->name('signature.bulk');
                 Route::get('{item}', 'show')->name('show');
                 Route::get('{item}/signature/preflight', 'preflightAnchorCheck')->name('signature.preflight');

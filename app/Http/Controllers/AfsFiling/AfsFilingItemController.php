@@ -17,6 +17,7 @@ use App\Jobs\AfsFiling\GenerateAfsFilingItemJob;
 use App\Jobs\AfsFiling\ProcessAfsFilingUploadJob;
 use App\Models\AfsFilingItem;
 use App\Models\DocumentGeneratorTemplate;
+use App\Services\AfsFiling\AfsFilingMissingDataExportService;
 use App\Models\User;
 use App\Services\AfsFiling\AfsFilingItemSigningService;
 use App\Services\AfsFiling\AfsFilingImportStateService;
@@ -97,6 +98,34 @@ class AfsFilingItemController extends Controller
             'per_page' => $paginator->perPage(),
             'total' => $paginator->total(),
         ]);
+    }
+
+    public function exportMissingData(Request $request, AfsFilingMissingDataExportService $exportService): BinaryFileResponse|JsonResponse
+    {
+        /** @var User $user */
+        $user = $request->user();
+
+        $items = AfsFilingItem::query()
+            ->where('user_id', (int) $user->getKey())
+            ->where('status', 'failed')
+            ->whereNotNull('error_details')
+            ->whereJsonLength('error_details->missing_data', '>', 0)
+            ->orderBy('row_number')
+            ->get();
+
+        if ($items->isEmpty()) {
+            return response()->json([
+                'message' => 'No AFS rows with missing data are available to export.',
+            ], 422);
+        }
+
+        $filePath = $exportService->buildXlsx($items);
+
+        return response()->download(
+            $filePath,
+            'afs-filing-missing-data.xlsx',
+            ['Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+        )->deleteFileAfterSend(true);
     }
 
     public function show(Request $request, AfsFilingItem $item): JsonResponse
