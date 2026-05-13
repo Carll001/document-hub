@@ -35,11 +35,11 @@ class AfsFilingItemRepository implements AfsFilingItemRepositoryContract
 
         if (is_string($filters['company_search'] ?? null) && trim($filters['company_search']) !== '') {
             $search = trim($filters['company_search']);
-            $needle = '%'.mb_strtolower($search).'%';
+            $needle = '%'.$search.'%';
             $query->where(function ($builder) use ($needle): void {
-                $builder->whereRaw('LOWER(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(row_data, "$.COMPANY")), "")) like ?', [$needle])
-                    ->orWhereRaw('LOWER(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(row_data, "$.company")), "")) like ?', [$needle])
-                    ->orWhereRaw('LOWER(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(row_data, "$.Company Name")), "")) like ?', [$needle]);
+                $builder->where('row_data->COMPANY', 'like', $needle)
+                    ->orWhere('row_data->company', 'like', $needle)
+                    ->orWhere('row_data->Company Name', 'like', $needle);
             });
         }
 

@@ -154,8 +154,13 @@ class AfsFilingPageController extends Controller
         }
 
         if (is_string($filters['company_search'] ?? null) && trim((string) $filters['company_search']) !== '') {
-            $search = mb_strtolower(trim((string) $filters['company_search']));
-            $query->whereRaw('LOWER(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(row_data, "$.COMPANY")), "")) LIKE ?', ["%{$search}%"]);
+            $search = '%'.trim((string) $filters['company_search']).'%';
+            $query->where(function ($searchQuery) use ($search): void {
+                $searchQuery
+                    ->where('row_data->COMPANY', 'like', $search)
+                    ->orWhere('row_data->company', 'like', $search)
+                    ->orWhere('row_data->Company Name', 'like', $search);
+            });
         }
 
         $sortBy = (string) ($filters['sort_by'] ?? 'created_at');

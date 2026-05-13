@@ -45,8 +45,13 @@ class AfsFilingExportController extends Controller
             ->whereNotNull('signature_applied_at');
 
         if (is_string($validated['company_search'] ?? null) && trim((string) $validated['company_search']) !== '') {
-            $search = mb_strtolower(trim((string) $validated['company_search']));
-            $query->whereRaw('LOWER(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(row_data, "$.COMPANY")), "")) LIKE ?', ["%{$search}%"]);
+            $search = '%'.trim((string) $validated['company_search']).'%';
+            $query->where(function ($searchQuery) use ($search): void {
+                $searchQuery
+                    ->where('row_data->COMPANY', 'like', $search)
+                    ->orWhere('row_data->company', 'like', $search)
+                    ->orWhere('row_data->Company Name', 'like', $search);
+            });
         }
 
         $itemIds = collect($validated['item_ids'] ?? [])->map(static fn (mixed $id): int => (int) $id)->unique()->values()->all();
