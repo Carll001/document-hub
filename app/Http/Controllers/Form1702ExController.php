@@ -62,7 +62,7 @@ class Form1702ExController extends Controller
             'search' => ['nullable', 'string', 'max:120'],
             'sort' => ['nullable', 'string', 'in:uploadedAt,generatedAt,pdfStatus,sourceRowNumber'],
             'direction' => ['nullable', 'string', 'in:asc,desc'],
-            'status' => ['nullable', 'string', 'in:all,generated,processing,signed,receipt_attached'],
+            'status' => ['nullable', 'string', 'in:all,generated,processing,signed,not_signed,receipt_attached'],
         ]);
         $user = $request->user();
         $rowPage = $this->rowPage(
@@ -132,7 +132,7 @@ class Form1702ExController extends Controller
             'search' => ['nullable', 'string', 'max:120'],
             'sort' => ['nullable', 'string', 'in:uploadedAt,generatedAt,pdfStatus,sourceRowNumber'],
             'direction' => ['nullable', 'string', 'in:asc,desc'],
-            'status' => ['nullable', 'string', 'in:all,generated,processing,signed,receipt_attached'],
+            'status' => ['nullable', 'string', 'in:all,generated,processing,signed,not_signed,receipt_attached'],
         ]);
         $user = $request->user();
         $rowPage = $this->rowPage(
@@ -267,7 +267,7 @@ class Form1702ExController extends Controller
             'search' => ['nullable', 'string', 'max:120'],
             'sort' => ['nullable', 'string', 'in:uploadedAt,generatedAt,pdfStatus,sourceRowNumber'],
             'direction' => ['nullable', 'string', 'in:asc,desc'],
-            'status' => ['nullable', 'string', 'in:all,generated,processing,signed,receipt_attached'],
+            'status' => ['nullable', 'string', 'in:all,generated,processing,signed,not_signed,receipt_attached'],
             'rowIds' => ['nullable', 'array', 'min:1'],
             'rowIds.*' => ['required', 'string', 'uuid'],
         ]);
@@ -347,7 +347,7 @@ class Form1702ExController extends Controller
             'search' => ['nullable', 'string', 'max:120'],
             'sort' => ['nullable', 'string', 'in:uploadedAt,generatedAt,pdfStatus,sourceRowNumber'],
             'direction' => ['nullable', 'string', 'in:asc,desc'],
-            'status' => ['nullable', 'string', 'in:all,generated,processing,signed,receipt_attached'],
+            'status' => ['nullable', 'string', 'in:all,generated,processing,signed,not_signed,receipt_attached'],
         ]);
 
         $query = $this->unmatchedRowsQuery(
@@ -2271,6 +2271,13 @@ class Form1702ExController extends Controller
                 $query
                     ->whereNotNull('payload->signature')
                     ->where('payload->signature', '!=', '');
+                break;
+            case 'not_signed':
+                $query->where(function ($signatureQuery): void {
+                    $signatureQuery
+                        ->whereNull('payload->signature')
+                        ->orWhere('payload->signature', '=', '');
+                });
                 break;
             case 'receipt_attached':
                 $query

@@ -333,6 +333,7 @@ function autoReceiptLabel(row: Form1702ExBatchRow): string | null {
                         <SelectItem value="generated">Generated</SelectItem>
                         <SelectItem value="processing">Processing</SelectItem>
                         <SelectItem value="signed">Signed</SelectItem>
+                        <SelectItem value="not_signed">Not signed</SelectItem>
                         <SelectItem value="receipt_attached">Receipt attached</SelectItem>
                     </SelectContent>
                 </Select>

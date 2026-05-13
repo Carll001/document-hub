@@ -111,6 +111,13 @@ class ProcessForm1702ExRowsExport implements ShouldQueue
                         ->whereNotNull('payload->signature')
                         ->where('payload->signature', '!=', '');
                     break;
+                case 'not_signed':
+                    $query->where(function ($signatureQuery): void {
+                        $signatureQuery
+                            ->whereNull('payload->signature')
+                            ->orWhere('payload->signature', '=', '');
+                    });
+                    break;
                 case 'receipt_attached':
                     $query
                         ->whereNotNull('receipt_storage_path')
