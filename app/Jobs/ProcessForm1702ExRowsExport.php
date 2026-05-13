@@ -89,7 +89,9 @@ class ProcessForm1702ExRowsExport implements ShouldQueue
                     ->orWhereNull('generated_pdf_storage_path')
                     ->orWhereNull('receipt_storage_path')
                     ->orWhereNull('receipt_file_name')
-                    ->orWhere('receipt_is_temporary', true);
+                    ->orWhere('receipt_is_temporary', true)
+                    ->orWhereNull('payload->signature')
+                    ->orWhere('payload->signature', '=', '');
             });
 
         $search = trim($this->search);
