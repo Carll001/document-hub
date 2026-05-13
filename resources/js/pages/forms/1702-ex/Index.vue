@@ -127,6 +127,7 @@ const signatureUploadProcessing = ref(false);
 const signatureUploadError = ref<string | null>(null);
 const uploadedSignaturePath = ref<string | null>(null);
 const uploadedSignatureUrl = ref<string | null>(null);
+const lastRowsExportErrorShown = ref<string | null>(null);
 
 const canSubmitImport = computed(
     () => importForm.spreadsheet instanceof File && !importForm.processing,
@@ -253,6 +254,26 @@ watch(
         if (error) {
             toast.error(error);
         }
+    },
+    { immediate: true },
+);
+
+watch(
+    () => [props.rowsExportState.status, props.rowsExportState.error] as const,
+    ([status, error]) => {
+        if (status !== 'failed' || !error) {
+            if (status !== 'failed') {
+                lastRowsExportErrorShown.value = null;
+            }
+            return;
+        }
+
+        if (lastRowsExportErrorShown.value === error) {
+            return;
+        }
+
+        lastRowsExportErrorShown.value = error;
+        toast.error(error);
     },
     { immediate: true },
 );
@@ -1063,14 +1084,6 @@ function submitRemoveReceipt(): void {
                             Download ready
                         </a>
                     </Button>
-                </AlertDescription>
-            </Alert>
-
-            <Alert v-if="props.rowsExportState.status === 'failed' && props.rowsExportState.error"
-                variant="destructive">
-                <AlertTitle>Rows Export Failed</AlertTitle>
-                <AlertDescription>
-                    {{ props.rowsExportState.error }}
                 </AlertDescription>
             </Alert>
 
