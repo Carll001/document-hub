@@ -127,6 +127,7 @@ export type Form1702ExRowFilters = {
     search: string;
     sort: 'uploadedAt' | 'generatedAt' | 'pdfStatus' | 'sourceRowNumber';
     direction: 'asc' | 'desc';
+    status: 'all' | 'generated' | 'processing' | 'signed' | 'receipt_attached';
 };
 
 export type Form1702ExCompletedPageProps = {

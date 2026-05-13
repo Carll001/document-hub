@@ -30,6 +30,7 @@ class ProcessForm1702ExCompletedExport implements ShouldQueue
         public readonly string $search,
         public readonly string $sort,
         public readonly string $direction,
+        public readonly string $status = 'all',
         public readonly array $rowUuids = [],
     ) {
         $this->onQueue('filing-1702');
@@ -92,6 +93,31 @@ class ProcessForm1702ExCompletedExport implements ShouldQueue
             ->where('receipt_is_temporary', false);
 
         $search = trim($this->search);
+        $status = trim($this->status);
+
+        if ($status !== '' && $status !== 'all') {
+            switch ($status) {
+                case 'generated':
+                    $query->where('pdf_status', Form1702ExBatchRow::PDF_STATUS_GENERATED);
+                    break;
+                case 'processing':
+                    $query->whereIn('pdf_status', [
+                        Form1702ExBatchRow::PDF_STATUS_QUEUED,
+                        Form1702ExBatchRow::PDF_STATUS_PROCESSING,
+                    ]);
+                    break;
+                case 'signed':
+                    $query
+                        ->whereNotNull('payload->signature')
+                        ->where('payload->signature', '!=', '');
+                    break;
+                case 'receipt_attached':
+                    $query
+                        ->whereNotNull('receipt_storage_path')
+                        ->whereNotNull('receipt_file_name');
+                    break;
+            }
+        }
 
         if ($search !== '') {
             $like = '%'.$search.'%';

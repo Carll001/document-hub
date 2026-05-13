@@ -62,6 +62,7 @@ class Form1702ExController extends Controller
             'search' => ['nullable', 'string', 'max:120'],
             'sort' => ['nullable', 'string', 'in:uploadedAt,generatedAt,pdfStatus,sourceRowNumber'],
             'direction' => ['nullable', 'string', 'in:asc,desc'],
+            'status' => ['nullable', 'string', 'in:all,generated,processing,signed,receipt_attached'],
         ]);
         $user = $request->user();
         $rowPage = $this->rowPage(
@@ -70,6 +71,7 @@ class Form1702ExController extends Controller
             isset($validated['search']) ? (string) $validated['search'] : '',
             isset($validated['sort']) ? (string) $validated['sort'] : 'uploadedAt',
             isset($validated['direction']) ? (string) $validated['direction'] : 'desc',
+            isset($validated['status']) ? (string) $validated['status'] : 'all',
         );
 
         return Inertia::render('forms/1702-ex/Index', [
@@ -113,6 +115,7 @@ class Form1702ExController extends Controller
                 'search' => isset($validated['search']) ? trim((string) $validated['search']) : '',
                 'sort' => isset($validated['sort']) ? (string) $validated['sort'] : 'uploadedAt',
                 'direction' => isset($validated['direction']) ? (string) $validated['direction'] : 'desc',
+                'status' => isset($validated['status']) ? (string) $validated['status'] : 'all',
             ],
             'importStatus' => $this->indexImportStatus($user),
             'importError' => $this->indexImportError($user),
@@ -129,6 +132,7 @@ class Form1702ExController extends Controller
             'search' => ['nullable', 'string', 'max:120'],
             'sort' => ['nullable', 'string', 'in:uploadedAt,generatedAt,pdfStatus,sourceRowNumber'],
             'direction' => ['nullable', 'string', 'in:asc,desc'],
+            'status' => ['nullable', 'string', 'in:all,generated,processing,signed,receipt_attached'],
         ]);
         $user = $request->user();
         $rowPage = $this->rowPage(
@@ -137,6 +141,7 @@ class Form1702ExController extends Controller
             isset($validated['search']) ? (string) $validated['search'] : '',
             isset($validated['sort']) ? (string) $validated['sort'] : 'generatedAt',
             isset($validated['direction']) ? (string) $validated['direction'] : 'desc',
+            isset($validated['status']) ? (string) $validated['status'] : 'all',
             true,
         );
 
@@ -159,6 +164,7 @@ class Form1702ExController extends Controller
                 'search' => isset($validated['search']) ? trim((string) $validated['search']) : '',
                 'sort' => isset($validated['sort']) ? (string) $validated['sort'] : 'generatedAt',
                 'direction' => isset($validated['direction']) ? (string) $validated['direction'] : 'desc',
+                'status' => isset($validated['status']) ? (string) $validated['status'] : 'all',
             ],
             'exportState' => $this->completedExportState($user),
         ]);
@@ -261,6 +267,7 @@ class Form1702ExController extends Controller
             'search' => ['nullable', 'string', 'max:120'],
             'sort' => ['nullable', 'string', 'in:uploadedAt,generatedAt,pdfStatus,sourceRowNumber'],
             'direction' => ['nullable', 'string', 'in:asc,desc'],
+            'status' => ['nullable', 'string', 'in:all,generated,processing,signed,receipt_attached'],
             'rowIds' => ['nullable', 'array', 'min:1'],
             'rowIds.*' => ['required', 'string', 'uuid'],
         ]);
@@ -270,6 +277,7 @@ class Form1702ExController extends Controller
             isset($validated['search']) ? (string) $validated['search'] : '',
             isset($validated['sort']) ? (string) $validated['sort'] : 'generatedAt',
             isset($validated['direction']) ? (string) $validated['direction'] : 'desc',
+            isset($validated['status']) ? (string) $validated['status'] : 'all',
         );
 
         $rowUuids = collect($validated['rowIds'] ?? [])
@@ -302,6 +310,7 @@ class Form1702ExController extends Controller
             isset($validated['search']) ? (string) $validated['search'] : '',
             isset($validated['sort']) ? (string) $validated['sort'] : 'generatedAt',
             isset($validated['direction']) ? (string) $validated['direction'] : 'desc',
+            isset($validated['status']) ? (string) $validated['status'] : 'all',
             $rowUuids,
         );
 
@@ -338,6 +347,7 @@ class Form1702ExController extends Controller
             'search' => ['nullable', 'string', 'max:120'],
             'sort' => ['nullable', 'string', 'in:uploadedAt,generatedAt,pdfStatus,sourceRowNumber'],
             'direction' => ['nullable', 'string', 'in:asc,desc'],
+            'status' => ['nullable', 'string', 'in:all,generated,processing,signed,receipt_attached'],
         ]);
 
         $query = $this->unmatchedRowsQuery(
@@ -345,6 +355,7 @@ class Form1702ExController extends Controller
             isset($validated['search']) ? (string) $validated['search'] : '',
             isset($validated['sort']) ? (string) $validated['sort'] : 'uploadedAt',
             isset($validated['direction']) ? (string) $validated['direction'] : 'desc',
+            isset($validated['status']) ? (string) $validated['status'] : 'all',
         );
 
         if ($this->rowsExportIsBusy($request->user())) {
@@ -372,6 +383,7 @@ class Form1702ExController extends Controller
             isset($validated['search']) ? (string) $validated['search'] : '',
             isset($validated['sort']) ? (string) $validated['sort'] : 'uploadedAt',
             isset($validated['direction']) ? (string) $validated['direction'] : 'desc',
+            isset($validated['status']) ? (string) $validated['status'] : 'all',
         );
 
         return to_route('forms.form1702ex.index', $this->indexRouteParameters($request))
@@ -1756,6 +1768,7 @@ class Form1702ExController extends Controller
         string $search,
         string $sort,
         string $direction,
+        string $status = 'all',
         bool $completed = false,
     ): LengthAwarePaginator {
         $query = Form1702ExBatchRow::query()
@@ -1765,6 +1778,7 @@ class Form1702ExController extends Controller
         $this->applyVisibleRowScope($query);
 
         $this->applyCompletedScope($query, $completed);
+        $this->applyStatusScope($query, $status);
 
         $search = trim($search);
 
@@ -1906,7 +1920,7 @@ class Form1702ExController extends Controller
     }
 
     /**
-     * @return array{page?: int, search?: string, sort?: string, direction?: string}
+     * @return array{page?: int, search?: string, sort?: string, direction?: string, status?: string}
      */
     private function indexRouteParameters(Request $request): array
     {
@@ -1927,12 +1941,15 @@ class Form1702ExController extends Controller
         if ($request->filled('direction')) {
             $parameters['direction'] = (string) $request->input('direction');
         }
+        if ($request->filled('status')) {
+            $parameters['status'] = (string) $request->input('status');
+        }
 
         return $parameters;
     }
 
     /**
-     * @return array{page?: int, search?: string, sort?: string, direction?: string}
+     * @return array{page?: int, search?: string, sort?: string, direction?: string, status?: string}
      */
     private function completedRouteParameters(Request $request): array
     {
@@ -2170,17 +2187,17 @@ class Form1702ExController extends Controller
         });
     }
 
-    private function unmatchedRowsQuery($user, string $search, string $sort, string $direction)
+    private function unmatchedRowsQuery($user, string $search, string $sort, string $direction, string $status = 'all')
     {
-        return $this->filteredRowsQuery($user, $search, $sort, $direction, false);
+        return $this->filteredRowsQuery($user, $search, $sort, $direction, $status, false);
     }
 
-    private function completedRowsQuery($user, string $search, string $sort, string $direction)
+    private function completedRowsQuery($user, string $search, string $sort, string $direction, string $status = 'all')
     {
-        return $this->filteredRowsQuery($user, $search, $sort, $direction, true);
+        return $this->filteredRowsQuery($user, $search, $sort, $direction, $status, true);
     }
 
-    private function filteredRowsQuery($user, string $search, string $sort, string $direction, bool $completed)
+    private function filteredRowsQuery($user, string $search, string $sort, string $direction, string $status, bool $completed)
     {
         $query = Form1702ExBatchRow::query()
             ->with(['batch', 'client', 'company'])
@@ -2188,6 +2205,7 @@ class Form1702ExController extends Controller
 
         $this->applyVisibleRowScope($query);
         $this->applyCompletedScope($query, $completed);
+        $this->applyStatusScope($query, $status);
 
         $search = trim($search);
 
@@ -2229,6 +2247,39 @@ class Form1702ExController extends Controller
         return $query
             ->orderBy($sortColumn, $direction)
             ->orderByDesc('id');
+    }
+
+    private function applyStatusScope($query, string $status): void
+    {
+        $normalized = trim($status);
+
+        if ($normalized === '' || $normalized === 'all') {
+            return;
+        }
+
+        switch ($normalized) {
+            case 'generated':
+                $query->where('pdf_status', Form1702ExBatchRow::PDF_STATUS_GENERATED);
+                break;
+            case 'processing':
+                $query->whereIn('pdf_status', [
+                    Form1702ExBatchRow::PDF_STATUS_QUEUED,
+                    Form1702ExBatchRow::PDF_STATUS_PROCESSING,
+                ]);
+                break;
+            case 'signed':
+                $query
+                    ->whereNotNull('payload->signature')
+                    ->where('payload->signature', '!=', '');
+                break;
+            case 'receipt_attached':
+                $query
+                    ->whereNotNull('receipt_storage_path')
+                    ->whereNotNull('receipt_file_name');
+                break;
+            default:
+                break;
+        }
     }
 
     /**

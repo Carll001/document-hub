@@ -24,6 +24,13 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from '@/components/ui/select';
+import {
     Table,
     TableBody,
     TableCell,
@@ -75,6 +82,7 @@ const emit = defineEmits<{
 }>();
 
 const searchValue = ref(props.filters.search);
+const statusValue = ref(props.filters.status);
 const searchTimeoutId = ref<number | null>(null);
 const selectedRowIds = ref<string[]>([]);
 const tableTop = ref<HTMLElement | null>(null);
@@ -118,6 +126,12 @@ watch(
         searchValue.value = value;
     },
 );
+watch(
+    () => props.filters.status,
+    (value) => {
+        statusValue.value = value;
+    },
+);
 
 watch(
     () => props.rows.map((row) => row.id),
@@ -143,6 +157,12 @@ watch(searchValue, (value) => {
         });
     }, 300);
 });
+watch(statusValue, (value) => {
+    visitIndex({
+        page: 1,
+        status: value,
+    });
+});
 
 onBeforeUnmount(() => {
     if (searchTimeoutId.value !== null) {
@@ -150,7 +170,7 @@ onBeforeUnmount(() => {
     }
 });
 
-function visitIndex(overrides: Partial<{ page: number; search: string; sort: Form1702ExRowFilters['sort']; direction: Form1702ExRowFilters['direction'] }>): void {
+function visitIndex(overrides: Partial<{ page: number; search: string; sort: Form1702ExRowFilters['sort']; direction: Form1702ExRowFilters['direction']; status: Form1702ExRowFilters['status'] }>): void {
     router.get(
         props.pageUrl,
         {
@@ -158,6 +178,7 @@ function visitIndex(overrides: Partial<{ page: number; search: string; sort: For
             search: overrides.search ?? props.filters.search,
             sort: overrides.sort ?? props.filters.sort,
             direction: overrides.direction ?? props.filters.direction,
+            status: overrides.status ?? props.filters.status,
         },
         {
             preserveScroll: true,
@@ -291,16 +312,30 @@ function autoReceiptLabel(row: Form1702ExBatchRow): string | null {
 <template>
     <div class="space-y-4">
         <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div class="relative flex-1">
-                <Search
-                    class="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
-                />
-                <Input
-                    v-model="searchValue"
-                    type="search"
-                    placeholder="Search company, client, TIN, recipient, or status"
-                    class="pl-10"
-                />
+            <div class="flex flex-1 flex-col gap-2 md:flex-row">
+                <div class="relative flex-1">
+                    <Search
+                        class="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
+                    />
+                    <Input
+                        v-model="searchValue"
+                        type="search"
+                        placeholder="Search company, client, TIN, recipient, or status"
+                        class="pl-10"
+                    />
+                </div>
+                <Select v-model="statusValue">
+                    <SelectTrigger class="w-full md:w-[220px]">
+                        <SelectValue placeholder="Filter status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="all">All statuses</SelectItem>
+                        <SelectItem value="generated">Generated</SelectItem>
+                        <SelectItem value="processing">Processing</SelectItem>
+                        <SelectItem value="signed">Signed</SelectItem>
+                        <SelectItem value="receipt_attached">Receipt attached</SelectItem>
+                    </SelectContent>
+                </Select>
             </div>
 
             <div class="flex flex-wrap gap-2 self-end md:self-auto">
