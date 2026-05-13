@@ -15,6 +15,7 @@ use App\Services\DocumentGeneratorCompletedExportService;
 use App\Support\DocumentStorage;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
@@ -46,11 +47,17 @@ class AfsFilingExportController extends Controller
 
         if (is_string($validated['company_search'] ?? null) && trim((string) $validated['company_search']) !== '') {
             $search = '%'.trim((string) $validated['company_search']).'%';
-            $query->where(function ($searchQuery) use ($search): void {
+            $isPostgres = DB::connection()->getDriverName() === 'pgsql';
+            $operator = $isPostgres ? 'ilike' : 'like';
+            $query->where(function ($searchQuery) use ($search, $operator, $isPostgres): void {
                 $searchQuery
-                    ->where('row_data->COMPANY', 'like', $search)
-                    ->orWhere('row_data->company', 'like', $search)
-                    ->orWhere('row_data->Company Name', 'like', $search);
+                    ->where('row_data->COMPANY', $operator, $search)
+                    ->orWhere('row_data->company', $operator, $search)
+                    ->orWhere('row_data->Company Name', $operator, $search)
+                    ->orWhere('row_data->TIN', $operator, $search)
+                    ->orWhere('row_data->tin', $operator, $search)
+                    ->orWhere('row_data->Taxpayer TIN', $operator, $search)
+                    ->orWhereRaw($isPostgres ? 'CAST(row_data AS TEXT) ILIKE ?' : 'CAST(row_data AS CHAR) LIKE ?', [$search]);
             });
         }
 

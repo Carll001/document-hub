@@ -7,6 +7,7 @@ namespace App\Repositories\Eloquent;
 use App\Contracts\Repositories\AfsFilingItemRepository as AfsFilingItemRepositoryContract;
 use App\Models\AfsFilingItem;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Facades\DB;
 
 class AfsFilingItemRepository implements AfsFilingItemRepositoryContract
 {
@@ -36,10 +37,16 @@ class AfsFilingItemRepository implements AfsFilingItemRepositoryContract
         if (is_string($filters['company_search'] ?? null) && trim($filters['company_search']) !== '') {
             $search = trim($filters['company_search']);
             $needle = '%'.$search.'%';
-            $query->where(function ($builder) use ($needle): void {
-                $builder->where('row_data->COMPANY', 'like', $needle)
-                    ->orWhere('row_data->company', 'like', $needle)
-                    ->orWhere('row_data->Company Name', 'like', $needle);
+            $isPostgres = DB::connection()->getDriverName() === 'pgsql';
+            $operator = $isPostgres ? 'ilike' : 'like';
+            $query->where(function ($builder) use ($needle, $operator, $isPostgres): void {
+                $builder->where('row_data->COMPANY', $operator, $needle)
+                    ->orWhere('row_data->company', $operator, $needle)
+                    ->orWhere('row_data->Company Name', $operator, $needle)
+                    ->orWhere('row_data->TIN', $operator, $needle)
+                    ->orWhere('row_data->tin', $operator, $needle)
+                    ->orWhere('row_data->Taxpayer TIN', $operator, $needle)
+                    ->orWhereRaw($isPostgres ? 'CAST(row_data AS TEXT) ILIKE ?' : 'CAST(row_data AS CHAR) LIKE ?', [$needle]);
             });
         }
 
