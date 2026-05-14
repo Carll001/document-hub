@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Head, router, useForm } from '@inertiajs/vue3';
-import { Copy, LoaderCircle, Settings2, Upload } from 'lucide-vue-next';
+import { Copy, LoaderCircle, Settings2, Upload, X } from 'lucide-vue-next';
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { toast } from 'vue-sonner';
 import InputError from '@/components/InputError.vue';
@@ -129,6 +129,7 @@ const uploadedSignaturePath = ref<string | null>(null);
 const uploadedSignatureUrl = ref<string | null>(null);
 const lastRowsExportErrorShown = ref<string | null>(null);
 const lastRowsPdfExportErrorShown = ref<string | null>(null);
+const dismissRowsPdfReadyCard = ref(false);
 
 const canSubmitImport = computed(
     () => importForm.spreadsheet instanceof File && !importForm.processing,
@@ -211,6 +212,12 @@ const isRowsPdfExportBusy = computed(
 const shouldPoll = computed(
     () => props.hasActiveJobs || isRowsExportBusy.value || isRowsPdfExportBusy.value,
 );
+const showRowsPdfReadyCard = computed(
+    () =>
+        !dismissRowsPdfReadyCard.value
+        && props.rowsPdfExportState.status === 'ready'
+        && !!props.rowsPdfExportState.downloadUrl,
+);
 
 watch(
     () => props.settings,
@@ -287,6 +294,10 @@ watch(
 watch(
     () => [props.rowsPdfExportState.status, props.rowsPdfExportState.error] as const,
     ([status, error]) => {
+        if (status !== 'ready') {
+            dismissRowsPdfReadyCard.value = false;
+        }
+
         if (status !== 'failed' || !error) {
             if (status !== 'failed') {
                 lastRowsPdfExportErrorShown.value = null;
@@ -1125,7 +1136,15 @@ function submitRemoveReceipt(): void {
                 </AlertDescription>
             </Alert>
 
-            <Alert v-if="props.rowsPdfExportState.status === 'ready' && props.rowsPdfExportState.downloadUrl">
+            <Alert v-if="showRowsPdfReadyCard" class="relative pr-14">
+                <Button
+                    size="icon"
+                    variant="ghost"
+                    class="absolute top-3 right-3 h-7 w-7"
+                    @click="dismissRowsPdfReadyCard = true"
+                >
+                    <X class="size-4" />
+                </Button>
                 <AlertTitle>Rows PDF Export Ready</AlertTitle>
                 <AlertDescription class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <span>
@@ -1136,11 +1155,13 @@ function submitRemoveReceipt(): void {
                                 : 'Your PDF ZIP export is ready to download.'
                         }}
                     </span>
-                    <Button as-child size="sm" class="self-start sm:self-auto">
-                        <a :href="props.rowsPdfExportState.downloadUrl">
-                            Download ready
-                        </a>
-                    </Button>
+                    <div class="flex items-center gap-2 self-start sm:self-auto">
+                        <Button as-child size="sm">
+                            <a :href="props.rowsPdfExportState.downloadUrl">
+                                Download ready
+                            </a>
+                        </Button>
+                    </div>
                 </AlertDescription>
             </Alert>
 
