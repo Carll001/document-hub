@@ -2817,6 +2817,7 @@ XML;
         return in_array($state['status'], [
             Form1702ExRowsPdfExportService::STATUS_QUEUED,
             Form1702ExRowsPdfExportService::STATUS_PROCESSING,
+            Form1702ExRowsPdfExportService::STATUS_CANCELLING,
         ], true);
     }
 }

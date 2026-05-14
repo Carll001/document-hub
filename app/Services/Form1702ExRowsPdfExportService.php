@@ -18,6 +18,7 @@ class Form1702ExRowsPdfExportService
     public const STATUS_QUEUED = 'queued';
 
     public const STATUS_PROCESSING = 'processing';
+    public const STATUS_CANCELLING = 'cancelling';
 
     public const STATUS_FAILED = 'failed';
 
@@ -42,13 +43,14 @@ class Form1702ExRowsPdfExportService
         if (! in_array($status, [
             self::STATUS_QUEUED,
             self::STATUS_PROCESSING,
+            self::STATUS_CANCELLING,
             self::STATUS_FAILED,
             self::STATUS_READY,
         ], true)) {
             return $this->emptyState();
         }
 
-        if (in_array($status, [self::STATUS_QUEUED, self::STATUS_PROCESSING], true)) {
+        if (in_array($status, [self::STATUS_QUEUED, self::STATUS_PROCESSING, self::STATUS_CANCELLING], true)) {
             $updatedAtRaw = $state['updatedAt'] ?? null;
             $updatedAt = is_string($updatedAtRaw) ? strtotime($updatedAtRaw) : false;
 
@@ -110,10 +112,11 @@ class Form1702ExRowsPdfExportService
         }
 
         $status = $state['status'] ?? null;
-        if (! in_array($status, [self::STATUS_QUEUED, self::STATUS_PROCESSING], true)) {
+        if (! in_array($status, [self::STATUS_QUEUED, self::STATUS_PROCESSING, self::STATUS_CANCELLING], true)) {
             return false;
         }
 
+        $state['status'] = self::STATUS_CANCELLING;
         $state['cancelRequested'] = true;
         $state['updatedAt'] = now()->toIso8601String();
         Cache::put($this->cacheKey($userId), $state, now()->addSeconds(self::CACHE_TTL_SECONDS));
@@ -154,12 +157,14 @@ class Form1702ExRowsPdfExportService
         $includedRows = 0;
         $chunkSize = max(1, $chunkSize);
 
+        $temporaryEntryPaths = [];
+
         try {
             $rowsQuery
                 ->clone()
                 ->reorder()
                 ->select('id', 'uuid', 'pdf_status', 'generated_pdf_storage_path', 'generated_pdf_file_name')
-                ->chunkById($chunkSize, function ($rows) use (&$usedPaths, &$includedRows, $archive, $disk, $userId): void {
+                ->chunkById($chunkSize, function ($rows) use (&$usedPaths, &$includedRows, &$temporaryEntryPaths, $archive, $disk, $userId): void {
                     if ($this->cancellationRequested($userId)) {
                         throw new \RuntimeException(self::CANCEL_MESSAGE);
                     }
@@ -185,22 +190,48 @@ class Form1702ExRowsPdfExportService
                             continue;
                         }
 
-                        try {
-                            $contents = stream_get_contents($stream);
-                        } finally {
+                        $localEntryPath = tempnam(sys_get_temp_dir(), 'f1702pdf-');
+                        if ($localEntryPath === false) {
                             fclose($stream);
-                        }
-
-                        if (! is_string($contents) || $contents === '') {
                             continue;
                         }
 
-                        $archive->addFromString($zipPath, $contents);
+                        $target = @fopen($localEntryPath, 'wb');
+                        if (! is_resource($target)) {
+                            fclose($stream);
+                            @unlink($localEntryPath);
+                            continue;
+                        }
+
+                        try {
+                            stream_copy_to_stream($stream, $target);
+                        } finally {
+                            fclose($stream);
+                            fclose($target);
+                        }
+
+                        if ((@filesize($localEntryPath) ?: 0) <= 0) {
+                            @unlink($localEntryPath);
+                            continue;
+                        }
+
+                        if (! $archive->addFile($localEntryPath, $zipPath)) {
+                            @unlink($localEntryPath);
+                            continue;
+                        }
+
+                        $temporaryEntryPaths[] = $localEntryPath;
                         $includedRows++;
                     }
                 }, 'id');
         } finally {
             $archive->close();
+
+            foreach ($temporaryEntryPaths as $temporaryEntryPath) {
+                if (is_string($temporaryEntryPath) && is_file($temporaryEntryPath)) {
+                    @unlink($temporaryEntryPath);
+                }
+            }
         }
 
         if ($includedRows === 0) {

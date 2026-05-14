@@ -42,13 +42,28 @@ class ProcessForm1702ExRowsPdfExport implements ShouldQueue
             return;
         }
 
+        $cancelRequested = $rowsPdfExportService->cancellationRequested($this->userId);
+
+        if ($cancelRequested) {
+            $rowsPdfExportService->putState($this->userId, [
+                'status' => Form1702ExRowsPdfExportService::STATUS_FAILED,
+                'error' => null,
+                'rowCount' => null,
+                'downloadUrl' => null,
+                'storagePath' => null,
+                'cancelRequested' => false,
+            ]);
+
+            return;
+        }
+
         $rowsPdfExportService->putState($this->userId, [
             'status' => Form1702ExRowsPdfExportService::STATUS_PROCESSING,
             'error' => null,
             'rowCount' => null,
             'downloadUrl' => null,
             'storagePath' => null,
-            'cancelRequested' => false,
+            'cancelRequested' => $cancelRequested,
         ]);
 
         try {

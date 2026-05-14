@@ -164,12 +164,14 @@ class DocumentGeneratorCompletedExportService
         $disk = DocumentStorage::disk();
         $includedItems = 0;
 
+        $temporaryEntryPaths = [];
+
         try {
             $query
                 ->clone()
                 ->reorder()
                 ->select(['id', 'row_number', 'row_data', 'pdf_path'])
-                ->chunkById(max(1, $chunkSize), function ($items) use ($disk, $archive, &$usedPaths, &$includedItems, $userId): void {
+                ->chunkById(max(1, $chunkSize), function ($items) use ($disk, $archive, &$usedPaths, &$includedItems, &$temporaryEntryPaths, $userId): void {
                     if ($this->cancellationRequested($userId)) {
                         throw new \RuntimeException(self::CANCEL_MESSAGE);
                     }
@@ -185,20 +187,49 @@ class DocumentGeneratorCompletedExportService
                             continue;
                         }
 
-                        $contents = stream_get_contents($stream);
-                        fclose($stream);
-                        if (! is_string($contents) || $contents === '') {
+                        $localEntryPath = tempnam(sys_get_temp_dir(), 'afspdf-');
+                        if ($localEntryPath === false) {
+                            fclose($stream);
+                            continue;
+                        }
+
+                        $target = @fopen($localEntryPath, 'wb');
+                        if (! is_resource($target)) {
+                            fclose($stream);
+                            @unlink($localEntryPath);
+                            continue;
+                        }
+
+                        try {
+                            stream_copy_to_stream($stream, $target);
+                        } finally {
+                            fclose($stream);
+                            fclose($target);
+                        }
+
+                        if ((@filesize($localEntryPath) ?: 0) <= 0) {
+                            @unlink($localEntryPath);
                             continue;
                         }
 
                         $zipPath = $this->uniqueZipPath($this->zipEntryFileName($item), $usedPaths);
+                        if (! $archive->addFile($localEntryPath, $zipPath)) {
+                            @unlink($localEntryPath);
+                            continue;
+                        }
 
-                        $archive->addFromString($zipPath, $contents);
+                        $temporaryEntryPaths[] = $localEntryPath;
                         $includedItems++;
                     }
                 }, 'id');
         } finally {
             $archive->close();
+
+            foreach ($temporaryEntryPaths as $temporaryEntryPath) {
+                if (is_string($temporaryEntryPath) && is_file($temporaryEntryPath)) {
+                    @unlink($temporaryEntryPath);
+                }
+            }
         }
 
         if ($includedItems === 0) {

@@ -78,6 +78,7 @@ export type Form1702ExImportStatus = 'queued' | 'processing' | 'failed' | 'cance
 export type Form1702ExCompletedExportStatus =
     | 'queued'
     | 'processing'
+    | 'cancelling'
     | 'failed'
     | 'ready'
     | null;

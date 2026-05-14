@@ -39,13 +39,28 @@ class ProcessAfsFilingCompletedExport implements ShouldQueue
             return;
         }
 
+        $cancelRequested = $completedExportService->cancellationRequested($this->userId);
+
+        if ($cancelRequested) {
+            $completedExportService->putState($this->userId, [
+                'status' => DocumentGeneratorCompletedExportService::STATUS_FAILED,
+                'error' => null,
+                'itemCount' => null,
+                'downloadUrl' => null,
+                'storagePath' => null,
+                'cancelRequested' => false,
+            ]);
+
+            return;
+        }
+
         $completedExportService->putState($this->userId, [
             'status' => DocumentGeneratorCompletedExportService::STATUS_PROCESSING,
             'error' => null,
             'itemCount' => null,
             'downloadUrl' => null,
             'storagePath' => null,
-            'cancelRequested' => false,
+            'cancelRequested' => $cancelRequested,
         ]);
 
         try {

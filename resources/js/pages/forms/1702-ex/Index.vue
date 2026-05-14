@@ -209,7 +209,8 @@ const isRowsExportBusy = computed(
 const isRowsPdfExportBusy = computed(
     () =>
         props.rowsPdfExportState.status === 'queued'
-        || props.rowsPdfExportState.status === 'processing',
+        || props.rowsPdfExportState.status === 'processing'
+        || props.rowsPdfExportState.status === 'cancelling',
 );
 const shouldPoll = computed(
     () => props.hasActiveJobs || isRowsExportBusy.value || isRowsPdfExportBusy.value,
@@ -1135,7 +1136,9 @@ function submitRemoveReceipt(): void {
                         {{
                             props.rowsPdfExportState.status === 'queued'
                                 ? 'Your PDF ZIP export is queued and will start shortly.'
-                                : 'Your PDF ZIP export is being prepared in the background.'
+                                : props.rowsPdfExportState.status === 'cancelling'
+                                    ? 'Cancelling your PDF ZIP export...'
+                                    : 'Your PDF ZIP export is being prepared in the background.'
                         }}
                     </span>
                     <Button
@@ -1143,10 +1146,14 @@ function submitRemoveReceipt(): void {
                         size="sm"
                         variant="outline"
                         class="self-start sm:self-auto"
-                        :disabled="cancelRowsPdfExportForm.processing"
+                        :disabled="cancelRowsPdfExportForm.processing || props.rowsPdfExportState.status === 'cancelling'"
                         @click="cancelRowsPdfExport"
                     >
-                        {{ cancelRowsPdfExportForm.processing ? 'Cancelling...' : 'Cancel' }}
+                        {{
+                            cancelRowsPdfExportForm.processing || props.rowsPdfExportState.status === 'cancelling'
+                                ? 'Cancelling...'
+                                : 'Cancel'
+                        }}
                     </Button>
                 </AlertDescription>
             </Alert>
