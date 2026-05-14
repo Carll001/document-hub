@@ -142,6 +142,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
             ->name('afs-filing.completed.')
             ->group(function (): void {
                 Route::post('download', 'queue')->name('download');
+                Route::post('download/cancel', 'cancel')->name('download.cancel');
                 Route::get('download/state', 'state')->name('download.state');
                 Route::get('download/file', 'download')->name('download.file');
                 Route::delete('items', 'destroyCompletedItems')->name('items.destroy.bulk');
@@ -178,6 +179,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
                         Route::get('rows/export', 'downloadRowsList')->name('rows.export');
                         Route::get('rows/export/file', 'downloadRowsListPrepared')->name('rows.export.file');
                         Route::get('rows/export/pdf', 'downloadRowsPdfList')->name('rows.export.pdf');
+                        Route::post('rows/export/pdf/cancel', 'cancelRowsPdfList')->name('rows.export.pdf.cancel');
                         Route::get('rows/export/pdf/file', 'downloadRowsPdfListPrepared')->name('rows.export.pdf.file');
                         Route::get('rows/{form1702ExBatchRow}/preview', 'previewRowDirect')->name('rows.preview');
                         Route::get('rows/{form1702ExBatchRow}/download', 'downloadRowDirect')->name('rows.download');

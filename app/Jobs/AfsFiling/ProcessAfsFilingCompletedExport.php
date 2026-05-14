@@ -45,20 +45,20 @@ class ProcessAfsFilingCompletedExport implements ShouldQueue
             'itemCount' => null,
             'downloadUrl' => null,
             'storagePath' => null,
+            'cancelRequested' => false,
         ]);
 
         try {
-            $items = AfsFilingItem::query()
+            $itemsQuery = AfsFilingItem::query()
                 ->where('user_id', (int) $user->getKey())
                 ->whereIn('id', $this->itemIds)
-                ->whereNotNull('pdf_path')
-                ->get();
+                ->whereNotNull('pdf_path');
 
-            if ($items->isEmpty()) {
+            if (! (clone $itemsQuery)->exists()) {
                 throw new \RuntimeException('No completed files matched this export request.');
             }
 
-            $export = $completedExportService->buildZip($items, $this->userId);
+            $export = $completedExportService->buildZipFromQuery($itemsQuery, $this->userId, 10);
 
             $completedExportService->putState($this->userId, [
                 'status' => DocumentGeneratorCompletedExportService::STATUS_READY,
@@ -70,12 +70,26 @@ class ProcessAfsFilingCompletedExport implements ShouldQueue
                 'expiresAt' => now()->addSeconds(30)->toIso8601String(),
             ]);
         } catch (\Throwable $exception) {
+            if ($exception->getMessage() === DocumentGeneratorCompletedExportService::CANCEL_MESSAGE) {
+                $completedExportService->putState($this->userId, [
+                    'status' => DocumentGeneratorCompletedExportService::STATUS_FAILED,
+                    'error' => null,
+                    'itemCount' => null,
+                    'downloadUrl' => null,
+                    'storagePath' => null,
+                    'cancelRequested' => false,
+                ]);
+
+                return;
+            }
+
             $completedExportService->putState($this->userId, [
                 'status' => DocumentGeneratorCompletedExportService::STATUS_FAILED,
                 'error' => $exception->getMessage() !== '' ? $exception->getMessage() : 'The completed files ZIP could not be prepared right now.',
                 'itemCount' => null,
                 'downloadUrl' => null,
                 'storagePath' => null,
+                'cancelRequested' => false,
             ]);
 
             throw $exception;

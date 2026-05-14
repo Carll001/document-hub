@@ -7,7 +7,7 @@ namespace App\Services;
 use App\Models\AfsFilingItem;
 use App\Support\DocumentStorage;
 use App\Support\FormFieldAliasResolver;
-use Illuminate\Support\Collection;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Str;
 use ZipArchive;
@@ -15,6 +15,7 @@ use ZipArchive;
 class DocumentGeneratorCompletedExportService
 {
     private const CACHE_TTL_SECONDS = 21600;
+    public const CANCEL_MESSAGE = 'Export cancelled by user.';
 
     public const STATUS_QUEUED = 'queued';
 
@@ -114,11 +115,34 @@ class DocumentGeneratorCompletedExportService
         Cache::forget($this->cacheKey($userId));
     }
 
+    public function requestCancel(int $userId): bool
+    {
+        $state = Cache::get($this->cacheKey($userId));
+        if (! is_array($state)) {
+            return false;
+        }
+
+        $status = $state['status'] ?? null;
+        if (! in_array($status, [self::STATUS_QUEUED, self::STATUS_PROCESSING], true)) {
+            return false;
+        }
+
+        $state['cancelRequested'] = true;
+        Cache::put($this->cacheKey($userId), $state, now()->addSeconds(self::CACHE_TTL_SECONDS));
+
+        return true;
+    }
+
+    public function cancellationRequested(int $userId): bool
+    {
+        $state = Cache::get($this->cacheKey($userId));
+        return is_array($state) && ($state['cancelRequested'] ?? false) === true;
+    }
+
     /**
-     * @param  Collection<int, AfsFilingItem>  $items
      * @return array{storagePath: string, downloadFileName: string, itemCount: int}
      */
-    public function buildZip(Collection $items, int $userId): array
+    public function buildZipFromQuery(Builder $query, int $userId, int $chunkSize = 10): array
     {
         $directory = "tmp/afs_filing-completed-exports/user-{$userId}";
         DocumentStorage::disk()->makeDirectory($directory);
@@ -141,28 +165,38 @@ class DocumentGeneratorCompletedExportService
         $includedItems = 0;
 
         try {
-            foreach ($items as $item) {
-                $pdfStoragePath = (string) ($item->pdf_path ?? '');
-                if ($pdfStoragePath === '' || ! $disk->exists($pdfStoragePath)) {
-                    continue;
-                }
+            $query
+                ->clone()
+                ->reorder()
+                ->select(['id', 'row_number', 'row_data', 'pdf_path'])
+                ->chunkById(max(1, $chunkSize), function ($items) use ($disk, $archive, &$usedPaths, &$includedItems, $userId): void {
+                    if ($this->cancellationRequested($userId)) {
+                        throw new \RuntimeException(self::CANCEL_MESSAGE);
+                    }
 
-                $stream = $disk->readStream($pdfStoragePath);
-                if (! is_resource($stream)) {
-                    continue;
-                }
+                    foreach ($items as $item) {
+                        $pdfStoragePath = (string) ($item->pdf_path ?? '');
+                        if ($pdfStoragePath === '' || ! $disk->exists($pdfStoragePath)) {
+                            continue;
+                        }
 
-                $contents = stream_get_contents($stream);
-                fclose($stream);
-                if (! is_string($contents) || $contents === '') {
-                    continue;
-                }
+                        $stream = $disk->readStream($pdfStoragePath);
+                        if (! is_resource($stream)) {
+                            continue;
+                        }
 
-                $zipPath = $this->uniqueZipPath($this->zipEntryFileName($item), $usedPaths);
+                        $contents = stream_get_contents($stream);
+                        fclose($stream);
+                        if (! is_string($contents) || $contents === '') {
+                            continue;
+                        }
 
-                $archive->addFromString($zipPath, $contents);
-                $includedItems++;
-            }
+                        $zipPath = $this->uniqueZipPath($this->zipEntryFileName($item), $usedPaths);
+
+                        $archive->addFromString($zipPath, $contents);
+                        $includedItems++;
+                    }
+                }, 'id');
         } finally {
             $archive->close();
         }

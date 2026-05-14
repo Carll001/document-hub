@@ -101,6 +101,7 @@ const temporaryReceiptForm = useForm<{
     temporaryReceipt: null,
     recipientEmail: '',
 });
+const cancelRowsPdfExportForm = useForm<Record<string, never>>({});
 const isUploadDialogOpen = ref(false);
 const isSettingsDialogOpen = ref(false);
 const isSignatureDialogOpen = ref(false);
@@ -551,6 +552,16 @@ function cancelQueuedImport(): void {
     }
 
     cancelImportForm.post(props.importCancelUrl, {
+        preserveScroll: true,
+    });
+}
+
+function cancelRowsPdfExport(): void {
+    if (cancelRowsPdfExportForm.processing) {
+        return;
+    }
+
+    cancelRowsPdfExportForm.post(props.rowsPdfExportCancelUrl, {
         preserveScroll: true,
     });
 }
@@ -1119,12 +1130,24 @@ function submitRemoveReceipt(): void {
             <Alert v-if="isRowsPdfExportBusy">
                 <LoaderCircle class="size-4 animate-spin" />
                 <AlertTitle>Rows PDF Export In Progress</AlertTitle>
-                <AlertDescription>
-                    {{
-                        props.rowsPdfExportState.status === 'queued'
-                            ? 'Your PDF ZIP export is queued and will start shortly.'
-                            : 'Your PDF ZIP export is being prepared in the background.'
-                    }}
+                <AlertDescription class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <span>
+                        {{
+                            props.rowsPdfExportState.status === 'queued'
+                                ? 'Your PDF ZIP export is queued and will start shortly.'
+                                : 'Your PDF ZIP export is being prepared in the background.'
+                        }}
+                    </span>
+                    <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        class="self-start sm:self-auto"
+                        :disabled="cancelRowsPdfExportForm.processing"
+                        @click="cancelRowsPdfExport"
+                    >
+                        {{ cancelRowsPdfExportForm.processing ? 'Cancelling...' : 'Cancel' }}
+                    </Button>
                 </AlertDescription>
             </Alert>
 

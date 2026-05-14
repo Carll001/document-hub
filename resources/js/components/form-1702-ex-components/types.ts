@@ -99,6 +99,7 @@ export type Form1702ExIndexPageProps = {
     bulkDeleteUrl: string;
     rowsExportUrl: string;
     rowsPdfExportUrl: string;
+    rowsPdfExportCancelUrl: string;
     settingsUpdateUrl: string;
     signatureUploadUrl: string;
     templateSpreadsheetUrl: string;

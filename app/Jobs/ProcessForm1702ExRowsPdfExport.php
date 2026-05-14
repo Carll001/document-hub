@@ -48,16 +48,17 @@ class ProcessForm1702ExRowsPdfExport implements ShouldQueue
             'rowCount' => null,
             'downloadUrl' => null,
             'storagePath' => null,
+            'cancelRequested' => false,
         ]);
 
         try {
-            $rows = $this->rowsQuery($user)->get();
+            $rowsQuery = $this->rowsQuery($user);
 
-            if ($rows->isEmpty()) {
+            if (! (clone $rowsQuery)->exists()) {
                 throw new \RuntimeException('No imported rows matched this export request.');
             }
 
-            $export = $rowsPdfExportService->buildZip($rows, $this->userId);
+            $export = $rowsPdfExportService->buildZipFromQuery($rowsQuery, $this->userId, 10);
 
             $rowsPdfExportService->putState($this->userId, [
                 'status' => Form1702ExRowsPdfExportService::STATUS_READY,
@@ -68,12 +69,26 @@ class ProcessForm1702ExRowsPdfExport implements ShouldQueue
                 'storagePath' => $export['storagePath'],
             ]);
         } catch (\Throwable $exception) {
+            if ($exception->getMessage() === Form1702ExRowsPdfExportService::CANCEL_MESSAGE) {
+                $rowsPdfExportService->putState($this->userId, [
+                    'status' => Form1702ExRowsPdfExportService::STATUS_FAILED,
+                    'error' => null,
+                    'rowCount' => null,
+                    'downloadUrl' => null,
+                    'storagePath' => null,
+                    'cancelRequested' => false,
+                ]);
+
+                return;
+            }
+
             $rowsPdfExportService->putState($this->userId, [
                 'status' => Form1702ExRowsPdfExportService::STATUS_FAILED,
                 'error' => $this->runtimeMessage($exception),
                 'rowCount' => null,
                 'downloadUrl' => null,
                 'storagePath' => null,
+                'cancelRequested' => false,
             ]);
 
             throw $exception;
@@ -126,6 +141,13 @@ class ProcessForm1702ExRowsPdfExport implements ShouldQueue
                     $query
                         ->whereNotNull('receipt_storage_path')
                         ->whereNotNull('receipt_file_name');
+                    break;
+                case 'no_receipt':
+                    $query->where(function ($receiptQuery): void {
+                        $receiptQuery
+                            ->whereNull('receipt_storage_path')
+                            ->orWhereNull('receipt_file_name');
+                    });
                     break;
             }
         }

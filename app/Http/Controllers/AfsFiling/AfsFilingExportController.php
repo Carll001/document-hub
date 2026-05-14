@@ -88,6 +88,7 @@ class AfsFilingExportController extends Controller
             'itemCount' => null,
             'downloadUrl' => null,
             'storagePath' => null,
+            'cancelRequested' => false,
         ]);
 
         ProcessAfsFilingCompletedExport::dispatch($userId, $resolvedIds);
@@ -104,6 +105,20 @@ class AfsFilingExportController extends Controller
         $user = $request->user();
 
         return response()->json($completedExportService->getState((int) $user->getKey()));
+    }
+
+    public function cancel(Request $request, DocumentGeneratorCompletedExportService $completedExportService): JsonResponse
+    {
+        /** @var User $user */
+        $user = $request->user();
+        $cancelled = $completedExportService->requestCancel((int) $user->getKey());
+
+        return response()->json([
+            'message' => $cancelled
+                ? 'PDF export cancel requested.'
+                : 'No queued PDF export to cancel.',
+            'export_state' => $completedExportService->getState((int) $user->getKey()),
+        ], $cancelled ? 200 : 409);
     }
 
     public function download(Request $request, DocumentGeneratorCompletedExportService $completedExportService): StreamedResponse|BinaryFileResponse

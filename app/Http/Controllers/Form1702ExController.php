@@ -87,6 +87,7 @@ class Form1702ExController extends Controller
             'bulkDeleteUrl' => route('forms.form1702ex.rows.destroy'),
             'rowsExportUrl' => route('forms.form1702ex.rows.export', $this->indexRouteParameters($request)),
             'rowsPdfExportUrl' => route('forms.form1702ex.rows.export.pdf', $this->indexRouteParameters($request)),
+            'rowsPdfExportCancelUrl' => route('forms.form1702ex.rows.export.pdf.cancel', $this->indexRouteParameters($request)),
             'settingsUpdateUrl' => route('forms.form1702ex.settings.update'),
             'signatureUploadUrl' => route('forms.form1702ex.signature.upload'),
             'templateSpreadsheetUrl' => asset('form-assets/1702-ex/1702-ex-import-template.xlsx'),
@@ -475,6 +476,7 @@ class Form1702ExController extends Controller
             'rowCount' => null,
             'downloadUrl' => null,
             'storagePath' => null,
+            'cancelRequested' => false,
         ]);
 
         ProcessForm1702ExRowsPdfExport::dispatch(
@@ -522,6 +524,16 @@ class Form1702ExController extends Controller
             $downloadName,
             ['Content-Type' => 'application/zip'],
         );
+    }
+
+    public function cancelRowsPdfList(Request $request): RedirectResponse
+    {
+        $cancelled = $this->form1702ExRowsPdfExportService->requestCancel((int) $request->user()->getKey());
+
+        return to_route('forms.form1702ex.index', $this->indexRouteParameters($request))
+            ->with($cancelled ? 'success' : 'error', $cancelled
+                ? 'Imported rows PDF export cancel requested.'
+                : 'No queued PDF export to cancel.');
     }
 
     public function show(Request $request, Form1702ExBatch $form1702ExBatch): Response

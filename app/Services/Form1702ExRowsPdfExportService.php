@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Models\Form1702ExBatchRow;
-use Illuminate\Support\Collection;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Str;
 use ZipArchive;
@@ -22,6 +22,7 @@ class Form1702ExRowsPdfExportService
     public const STATUS_FAILED = 'failed';
 
     public const STATUS_READY = 'ready';
+    public const CANCEL_MESSAGE = 'Export cancelled by user.';
 
     public function cacheKey(int $userId): string
     {
@@ -101,11 +102,35 @@ class Form1702ExRowsPdfExportService
         Cache::forget($this->cacheKey($userId));
     }
 
+    public function requestCancel(int $userId): bool
+    {
+        $state = Cache::get($this->cacheKey($userId));
+        if (! is_array($state)) {
+            return false;
+        }
+
+        $status = $state['status'] ?? null;
+        if (! in_array($status, [self::STATUS_QUEUED, self::STATUS_PROCESSING], true)) {
+            return false;
+        }
+
+        $state['cancelRequested'] = true;
+        $state['updatedAt'] = now()->toIso8601String();
+        Cache::put($this->cacheKey($userId), $state, now()->addSeconds(self::CACHE_TTL_SECONDS));
+
+        return true;
+    }
+
+    public function cancellationRequested(int $userId): bool
+    {
+        $state = Cache::get($this->cacheKey($userId));
+        return is_array($state) && ($state['cancelRequested'] ?? false) === true;
+    }
+
     /**
-     * @param  Collection<int, Form1702ExBatchRow>  $rows
      * @return array{storagePath: string, downloadFileName: string, rowCount: int}
      */
-    public function buildZip(Collection $rows, int $userId): array
+    public function buildZipFromQuery(Builder $rowsQuery, int $userId, int $chunkSize = 10): array
     {
         $directory = "tmp/form-1702-ex-rows-pdf-exports/user-{$userId}";
         $disk = \App\Support\DocumentStorage::disk();
@@ -127,69 +152,55 @@ class Form1702ExRowsPdfExportService
 
         $usedPaths = [];
         $includedRows = 0;
-        $temporaryPdfPaths = [];
+        $chunkSize = max(1, $chunkSize);
 
         try {
-            foreach ($rows as $row) {
-                $pdfStoragePath = (string) ($row->generated_pdf_storage_path ?? '');
+            $rowsQuery
+                ->clone()
+                ->reorder()
+                ->select('id', 'uuid', 'pdf_status', 'generated_pdf_storage_path', 'generated_pdf_file_name')
+                ->chunkById($chunkSize, function ($rows) use (&$usedPaths, &$includedRows, $archive, $disk, $userId): void {
+                    if ($this->cancellationRequested($userId)) {
+                        throw new \RuntimeException(self::CANCEL_MESSAGE);
+                    }
 
-                if (
-                    $row->pdf_status !== Form1702ExBatchRow::PDF_STATUS_GENERATED
-                    || $pdfStoragePath === ''
-                    || ! \App\Support\DocumentStorage::exists($pdfStoragePath)
-                ) {
-                    continue;
-                }
+                    foreach ($rows as $row) {
+                        $pdfStoragePath = (string) ($row->generated_pdf_storage_path ?? '');
 
-                $zipPath = $this->uniqueZipPath(
-                    (string) ($row->generated_pdf_file_name ?? "imported-row-{$row->uuid}.pdf"),
-                    $usedPaths,
-                );
+                        if (
+                            $row->pdf_status !== Form1702ExBatchRow::PDF_STATUS_GENERATED
+                            || $pdfStoragePath === ''
+                            || ! \App\Support\DocumentStorage::exists($pdfStoragePath)
+                        ) {
+                            continue;
+                        }
 
-                $stream = $disk->readStream($pdfStoragePath);
+                        $zipPath = $this->uniqueZipPath(
+                            (string) ($row->generated_pdf_file_name ?? "imported-row-{$row->uuid}.pdf"),
+                            $usedPaths,
+                        );
 
-                if (! is_resource($stream)) {
-                    continue;
-                }
+                        $stream = $disk->readStream($pdfStoragePath);
+                        if (! is_resource($stream)) {
+                            continue;
+                        }
 
-                $temporaryPdfPath = storage_path('app/tmp/form-1702-ex-row-pdf-'.Str::uuid().'.pdf');
-                $temporaryDirectory = dirname($temporaryPdfPath);
+                        try {
+                            $contents = stream_get_contents($stream);
+                        } finally {
+                            fclose($stream);
+                        }
 
-                if (! is_dir($temporaryDirectory)) {
-                    mkdir($temporaryDirectory, 0777, true);
-                }
+                        if (! is_string($contents) || $contents === '') {
+                            continue;
+                        }
 
-                $temporaryHandle = fopen($temporaryPdfPath, 'wb');
-
-                if (! is_resource($temporaryHandle)) {
-                    fclose($stream);
-                    continue;
-                }
-
-                try {
-                    $bytesCopied = stream_copy_to_stream($stream, $temporaryHandle);
-                } finally {
-                    fclose($stream);
-                    fclose($temporaryHandle);
-                }
-
-                if (! is_int($bytesCopied) || $bytesCopied <= 0 || ! is_file($temporaryPdfPath)) {
-                    @unlink($temporaryPdfPath);
-                    continue;
-                }
-
-                $archive->addFile($temporaryPdfPath, $zipPath);
-                $temporaryPdfPaths[] = $temporaryPdfPath;
-                $includedRows++;
-            }
-
-            $archive->close();
+                        $archive->addFromString($zipPath, $contents);
+                        $includedRows++;
+                    }
+                }, 'id');
         } finally {
-            foreach ($temporaryPdfPaths as $temporaryPdfPath) {
-                if (is_string($temporaryPdfPath) && is_file($temporaryPdfPath)) {
-                    @unlink($temporaryPdfPath);
-                }
-            }
+            $archive->close();
         }
 
         if ($includedRows === 0) {
