@@ -67,6 +67,7 @@ class ProcessAfsFilingCompletedExport implements ShouldQueue
                 'downloadUrl' => route('afs-filing.completed.download.file'),
                 'downloadFileName' => sprintf('AFS_COMPLETED_%s.zip', now()->format('Ymd_His')),
                 'storagePath' => $export['storagePath'],
+                'expiresAt' => now()->addSeconds(30)->toIso8601String(),
             ]);
         } catch (\Throwable $exception) {
             $completedExportService->putState($this->userId, [

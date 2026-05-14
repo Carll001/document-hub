@@ -34,7 +34,8 @@ class DocumentGeneratorCompletedExportService
      *     status: string|null,
      *     error: string|null,
      *     itemCount: int|null,
-     *     downloadUrl: string|null
+     *     downloadUrl: string|null,
+     *     expiresAt: string|null
      * }
      */
     public function getState(int $userId): array
@@ -56,6 +57,19 @@ class DocumentGeneratorCompletedExportService
         }
 
         if ($status === self::STATUS_READY) {
+            $expiresAt = is_string($state['expiresAt'] ?? null) ? $state['expiresAt'] : null;
+            if ($expiresAt !== null) {
+                try {
+                    if (now()->greaterThanOrEqualTo(\Carbon\CarbonImmutable::parse($expiresAt))) {
+                        $this->forgetState($userId);
+
+                        return $this->emptyState();
+                    }
+                } catch (\Throwable) {
+                    // Ignore malformed expiry and continue with storage checks.
+                }
+            }
+
             $storagePath = is_string($state['storagePath'] ?? null) ? $state['storagePath'] : null;
             if ($storagePath === null || ! \App\Support\DocumentStorage::disk()->exists($storagePath)) {
                 $this->forgetState($userId);
@@ -69,6 +83,7 @@ class DocumentGeneratorCompletedExportService
             'error' => is_string($state['error'] ?? null) ? $state['error'] : null,
             'itemCount' => is_numeric($state['itemCount'] ?? null) ? (int) $state['itemCount'] : null,
             'downloadUrl' => is_string($state['downloadUrl'] ?? null) ? $state['downloadUrl'] : null,
+            'expiresAt' => is_string($state['expiresAt'] ?? null) ? $state['expiresAt'] : null,
         ];
     }
 
@@ -182,7 +197,8 @@ class DocumentGeneratorCompletedExportService
      *     status: null,
      *     error: null,
      *     itemCount: null,
-     *     downloadUrl: null
+     *     downloadUrl: null,
+     *     expiresAt: null
      * }
      */
     private function emptyState(): array
@@ -192,6 +208,7 @@ class DocumentGeneratorCompletedExportService
             'error' => null,
             'itemCount' => null,
             'downloadUrl' => null,
+            'expiresAt' => null,
         ];
     }
 

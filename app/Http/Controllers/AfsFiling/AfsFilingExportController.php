@@ -126,7 +126,17 @@ class AfsFilingExportController extends Controller
             ? (string) $cached['downloadFileName']
             : 'afs_filing-completed-files.zip';
 
-        return DocumentStorage::disk()->download((string) $cached['storagePath'], $downloadName);
+        $stream = DocumentStorage::disk()->readStream((string) $cached['storagePath']);
+        if (! is_resource($stream)) {
+            abort(404);
+        }
+
+        return response()->streamDownload(function () use ($stream): void {
+            fpassthru($stream);
+            fclose($stream);
+        }, $downloadName, [
+            'Content-Type' => 'application/zip',
+        ]);
     }
 
     public function destroyCompletedItems(AfsFilingDestroyCompletedItemsRequest $request): JsonResponse

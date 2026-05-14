@@ -41,6 +41,7 @@ export type CompletedExportState = {
     error: string | null;
     itemCount: number | null;
     downloadUrl: string | null;
+    expiresAt?: string | null;
 };
 
 export type SignatureAnchor = 'top_left' | 'top_right' | 'bottom_left' | 'bottom_right' | 'center';

@@ -107,8 +107,11 @@ const exportPdfState = ref<CompletedExportState>({
     error: null,
     itemCount: null,
     downloadUrl: null,
+    expiresAt: null,
 });
 let exportPdfPollTimeout: ReturnType<typeof setTimeout> | null = null;
+const exportCardNow = ref(Date.now());
+let exportCardTicker: ReturnType<typeof setInterval> | null = null;
 
 const editDialogOpen = ref(false);
 const editingItem = ref<UnifiedItem | null>(null);
@@ -293,6 +296,43 @@ const visitIndex = (overrides: Partial<{
 const hasPendingVisibleItems = computed(() =>
     itemsData.value.data.some((item) => ['queued', 'processing', 'docx_done', 'signing', 'deleting'].includes(item.status)),
 );
+
+const exportReadyExpiresAtMs = computed<number | null>(() => {
+    if (exportPdfState.value.status !== 'ready' || !exportPdfState.value.expiresAt) {
+        return null;
+    }
+
+    const parsed = new Date(exportPdfState.value.expiresAt).getTime();
+    return Number.isNaN(parsed) ? null : parsed;
+});
+
+const exportReadySecondsRemaining = computed<number | null>(() => {
+    if (exportReadyExpiresAtMs.value === null) {
+        return null;
+    }
+
+    return Math.max(0, Math.ceil((exportReadyExpiresAtMs.value - exportCardNow.value) / 1000));
+});
+
+const shouldShowExportReadyCard = computed<boolean>(() => {
+    return exportPdfState.value.status === 'ready'
+        && !!exportPdfState.value.downloadUrl
+        && (exportReadySecondsRemaining.value === null || exportReadySecondsRemaining.value > 0);
+});
+
+const exportReadyCountdownLabel = computed<string | null>(() => {
+    if (exportReadySecondsRemaining.value === null) {
+        return null;
+    }
+
+    const totalSeconds = exportReadySecondsRemaining.value;
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    const minuteText = String(minutes).padStart(2, '0');
+    const secondText = String(seconds).padStart(2, '0');
+
+    return `Expires in ${minuteText}:${secondText}`;
+});
 
 const stopPolling = () => {
     pollingActive.value = false;
@@ -1044,6 +1084,20 @@ watch(
     { immediate: true },
 );
 
+watch(exportReadySecondsRemaining, (seconds) => {
+    if (seconds !== 0) {
+        return;
+    }
+
+    exportPdfState.value = {
+        status: null,
+        error: null,
+        itemCount: null,
+        downloadUrl: null,
+        expiresAt: null,
+    };
+});
+
 onBeforeUnmount(() => {
     stopPolling();
 
@@ -1052,6 +1106,9 @@ onBeforeUnmount(() => {
     }
     if (exportPdfPollTimeout) {
         clearTimeout(exportPdfPollTimeout);
+    }
+    if (exportCardTicker) {
+        clearInterval(exportCardTicker);
     }
 });
 
@@ -1080,6 +1137,9 @@ onMounted(() => {
         settingsDialogOpen.value = true;
     }
     void pollAfsPdfExportState();
+    exportCardTicker = setInterval(() => {
+        exportCardNow.value = Date.now();
+    }, 1000);
 });
 </script>
 
@@ -1316,15 +1376,20 @@ onMounted(() => {
                     }}
                 </AlertDescription>
             </Alert>
-            <Alert v-if="exportPdfState.status === 'ready' && exportPdfState.downloadUrl">
+            <Alert v-if="shouldShowExportReadyCard">
                 <AlertTitle>PDF Export Ready</AlertTitle>
                 <AlertDescription class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <span>
+                    <span class="flex flex-col gap-1">
+                        <span>
                         {{
                             exportPdfState.itemCount !== null
                                 ? `Your PDF ZIP export is ready with ${exportPdfState.itemCount} file${exportPdfState.itemCount === 1 ? '' : 's'}.`
                                 : 'Your PDF ZIP export is ready to download.'
                         }}
+                        </span>
+                        <span v-if="exportReadyCountdownLabel" class="text-xs text-muted-foreground">
+                            {{ exportReadyCountdownLabel }}
+                        </span>
                     </span>
                     <Button as-child size="sm" class="self-start sm:self-auto">
                         <a :href="exportPdfState.downloadUrl">
