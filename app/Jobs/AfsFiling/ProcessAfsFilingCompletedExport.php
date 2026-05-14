@@ -51,8 +51,7 @@ class ProcessAfsFilingCompletedExport implements ShouldQueue
             $items = AfsFilingItem::query()
                 ->where('user_id', (int) $user->getKey())
                 ->whereIn('id', $this->itemIds)
-                ->where('status', 'pdf_done')
-                ->whereNotNull('signature_applied_at')
+                ->whereNotNull('pdf_path')
                 ->get();
 
             if ($items->isEmpty()) {
@@ -66,6 +65,7 @@ class ProcessAfsFilingCompletedExport implements ShouldQueue
                 'error' => null,
                 'itemCount' => $export['itemCount'],
                 'downloadUrl' => route('afs-filing.completed.download.file'),
+                'downloadFileName' => sprintf('AFS_COMPLETED_%s.zip', now()->format('Ymd_His')),
                 'storagePath' => $export['storagePath'],
             ]);
         } catch (\Throwable $exception) {

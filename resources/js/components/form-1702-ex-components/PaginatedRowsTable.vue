@@ -362,14 +362,12 @@ function autoReceiptLabel(row: Form1702ExBatchRow): string | null {
                         <SelectItem value="receipt_attached">Receipt attached</SelectItem>
                     </SelectContent>
                 </Select>
-            </div>
 
-            <div class="flex flex-wrap gap-2 self-end md:self-auto">
                 <Button
                     type="button"
                     variant="outline"
                     size="sm"
-                    class="gap-2"
+                    class="gap-2 md:self-start"
                     :disabled="!canExportPdfList"
                     @click="exportPdfList"
                 >
@@ -380,7 +378,9 @@ function autoReceiptLabel(row: Form1702ExBatchRow): string | null {
                             : 'Export PDF List'
                     }}
                 </Button>
+            </div>
 
+            <div class="flex flex-wrap gap-2 self-end md:self-auto">
                 <Button
                     type="button"
                     variant="outline"

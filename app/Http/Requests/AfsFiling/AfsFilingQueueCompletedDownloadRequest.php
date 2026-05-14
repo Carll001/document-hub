@@ -19,6 +19,8 @@ class AfsFilingQueueCompletedDownloadRequest extends BaseFormRequest
             'company_search' => ['nullable', 'string', 'max:255'],
             'sort_by' => ['nullable', 'in:created_at,status,row_number,updated_at'],
             'sort_direction' => ['nullable', 'in:asc,desc'],
+            'status' => ['nullable', 'string', 'in:all,failed,queued,processing,docx_done,pdf_done,signing,deleting'],
+            'include_unsigned' => ['nullable', 'boolean'],
             'item_ids' => ['nullable', 'array', 'min:1'],
             'item_ids.*' => ['required', 'integer'],
         ];

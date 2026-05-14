@@ -40,10 +40,20 @@ class AfsFilingExportController extends Controller
 
         $validated = $request->validated();
 
+        $includeUnsigned = (bool) ($validated['include_unsigned'] ?? false);
+        $status = is_string($validated['status'] ?? null) ? trim((string) $validated['status']) : 'all';
+
         $query = AfsFilingItem::query()
             ->where('user_id', $userId)
-            ->where('status', 'pdf_done')
-            ->whereNotNull('signature_applied_at');
+            ->whereNotNull('pdf_path');
+
+        if (! $includeUnsigned) {
+            $query
+                ->where('status', 'pdf_done')
+                ->whereNotNull('signature_applied_at');
+        } elseif ($status !== '' && $status !== 'all') {
+            $query->where('status', $status);
+        }
 
         if (is_string($validated['company_search'] ?? null) && trim((string) $validated['company_search']) !== '') {
             $search = '%'.trim((string) $validated['company_search']).'%';
@@ -68,7 +78,7 @@ class AfsFilingExportController extends Controller
 
         $resolvedIds = $query->pluck('id')->map(static fn (mixed $id): int => (int) $id)->all();
         if ($resolvedIds === []) {
-            return response()->json(['message' => 'No completed files matched this export request.'], 422);
+            return response()->json(['message' => 'No generated PDFs matched this export request.'], 422);
         }
 
         $completedExportService->forgetState($userId);
@@ -112,7 +122,11 @@ class AfsFilingExportController extends Controller
             404,
         );
 
-        return DocumentStorage::disk()->download((string) $cached['storagePath'], 'afs_filing-completed-files.zip');
+        $downloadName = is_string($cached['downloadFileName'] ?? null) && $cached['downloadFileName'] !== ''
+            ? (string) $cached['downloadFileName']
+            : 'afs_filing-completed-files.zip';
+
+        return DocumentStorage::disk()->download((string) $cached['storagePath'], $downloadName);
     }
 
     public function destroyCompletedItems(AfsFilingDestroyCompletedItemsRequest $request): JsonResponse

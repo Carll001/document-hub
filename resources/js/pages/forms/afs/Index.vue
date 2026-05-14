@@ -7,11 +7,12 @@ import AfsIndexTable from '@/components/afs-components/AfsIndexTable.vue';
 import AfsEditDialog from '@/components/afs-components/AfsEditDialog.vue';
 import AfsSettingsDialog from '@/components/afs-components/AfsSettingsDialog.vue';
 import AfsSignDialog from '@/components/afs-components/AfsSignDialog.vue';
-import type { PaginatedResponse, SignatureSettings, TemplateMappingPayload, UnifiedItem } from '@/components/afs-components/types';
+import type { CompletedExportState, PaginatedResponse, SignatureSettings, TemplateMappingPayload, UnifiedItem } from '@/components/afs-components/types';
 import { useAfsIndexColumns } from '@/components/afs-components/useAfsIndexColumns';
 import {
     csrfToken,
     getApi,
+    sendPostJson,
 } from '@/components/afs-components/utils';
 import { resolveTin } from '@/lib/form-field-aliases';
 import { Button } from '@/components/ui/button';
@@ -100,6 +101,14 @@ const pollingActive = ref(false);
 const deletingItems = ref(false);
 const selectedItemIds = ref<number[]>([]);
 const exportMissingDataBusy = ref(false);
+const exportPdfBusy = ref(false);
+const exportPdfState = ref<CompletedExportState>({
+    status: null,
+    error: null,
+    itemCount: null,
+    downloadUrl: null,
+});
+let exportPdfPollTimeout: ReturnType<typeof setTimeout> | null = null;
 
 const editDialogOpen = ref(false);
 const editingItem = ref<UnifiedItem | null>(null);
@@ -353,6 +362,60 @@ const loadItems = async (
             itemsLoading.value = false;
         }
     }
+};
+
+const queueAfsPdfExport = async (): Promise<void> => {
+    if (exportPdfBusy.value) {
+        return;
+    }
+
+    exportPdfBusy.value = true;
+
+    try {
+        const payload = await sendPostJson<{ message?: string; export_state?: CompletedExportState }>(
+            generatedFilesRoutes.download.url(),
+            {
+                company_search: companySearch.value.trim() || undefined,
+                sort_by: itemsSortBy.value,
+                sort_direction: itemsSortDirection.value,
+                status: itemStatusFilter.value,
+                include_unsigned: true,
+            },
+        );
+
+        if (payload.export_state) {
+            exportPdfState.value = payload.export_state;
+        }
+
+        toast.success(payload.message ?? 'PDF export queued.');
+    } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Unable to export PDF list.');
+    } finally {
+        exportPdfBusy.value = false;
+    }
+};
+
+const pollAfsPdfExportState = async (): Promise<void> => {
+    try {
+        exportPdfState.value = await getApi<CompletedExportState>(generatedFilesRoutes.download.state.url());
+    } catch {
+        // Ignore transient polling errors.
+    }
+};
+
+const scheduleAfsPdfExportPoll = (): void => {
+    if (exportPdfPollTimeout) {
+        return;
+    }
+
+    exportPdfPollTimeout = setTimeout(async () => {
+        exportPdfPollTimeout = null;
+        await pollAfsPdfExportState();
+
+        if (exportPdfState.value.status === 'queued' || exportPdfState.value.status === 'processing') {
+            scheduleAfsPdfExportPoll();
+        }
+    }, 3000);
 };
 
 const startPolling = (forceDurationMs = 0) => {
@@ -964,11 +1027,31 @@ watch(
     { immediate: true },
 );
 
+watch(
+    () => exportPdfState.value.status,
+    (status) => {
+        if (exportPdfPollTimeout) {
+            clearTimeout(exportPdfPollTimeout);
+            exportPdfPollTimeout = null;
+        }
+
+        if (status !== 'queued' && status !== 'processing') {
+            return;
+        }
+
+        scheduleAfsPdfExportPoll();
+    },
+    { immediate: true },
+);
+
 onBeforeUnmount(() => {
     stopPolling();
 
     if (companySearchDebounce) {
         clearTimeout(companySearchDebounce);
+    }
+    if (exportPdfPollTimeout) {
+        clearTimeout(exportPdfPollTimeout);
     }
 });
 
@@ -996,6 +1079,7 @@ onMounted(() => {
     if (props.openSettings) {
         settingsDialogOpen.value = true;
     }
+    void pollAfsPdfExportState();
 });
 </script>
 
@@ -1221,6 +1305,34 @@ onMounted(() => {
                     {{ signingProgressNotice }}
                 </AlertDescription>
             </Alert>
+            <Alert v-if="exportPdfState.status === 'queued' || exportPdfState.status === 'processing'">
+                <LoaderCircle class="size-4 animate-spin" />
+                <AlertTitle>PDF Export In Progress</AlertTitle>
+                <AlertDescription>
+                    {{
+                        exportPdfState.status === 'queued'
+                            ? 'Your PDF ZIP export is queued and will start shortly.'
+                            : 'Your PDF ZIP export is being prepared in the background.'
+                    }}
+                </AlertDescription>
+            </Alert>
+            <Alert v-if="exportPdfState.status === 'ready' && exportPdfState.downloadUrl">
+                <AlertTitle>PDF Export Ready</AlertTitle>
+                <AlertDescription class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <span>
+                        {{
+                            exportPdfState.itemCount !== null
+                                ? `Your PDF ZIP export is ready with ${exportPdfState.itemCount} file${exportPdfState.itemCount === 1 ? '' : 's'}.`
+                                : 'Your PDF ZIP export is ready to download.'
+                        }}
+                    </span>
+                    <Button as-child size="sm" class="self-start sm:self-auto">
+                        <a :href="exportPdfState.downloadUrl">
+                            Download ready
+                        </a>
+                    </Button>
+                </AlertDescription>
+            </Alert>
 
             <Card>
                 <CardContent class="space-y-4">
@@ -1241,8 +1353,10 @@ onMounted(() => {
                         :items-sort-by="itemsSortBy"
                         :items-sort-direction="itemsSortDirection"
                         :item-columns="itemColumns"
+                        :export-pdf-busy="exportPdfBusy"
                         @status-change="onItemStatusChange"
                         @company-search-input="onCompanySearchInput"
+                        @export-pdf-list="void queueAfsPdfExport()"
                         @bulk-sign="applySignatureToSelectedItems"
                         @bulk-delete="deleteSelectedItems"
                         @page-change="(page) => { visitIndex({ page }); startPolling(); }"

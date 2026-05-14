@@ -12,6 +12,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Str;
 
 class ProcessForm1702ExRowsPdfExport implements ShouldQueue
 {
@@ -63,6 +64,7 @@ class ProcessForm1702ExRowsPdfExport implements ShouldQueue
                 'error' => null,
                 'rowCount' => $export['rowCount'],
                 'downloadUrl' => route('forms.form1702ex.rows.export.pdf.file'),
+                'downloadFileName' => $this->downloadFileName(),
                 'storagePath' => $export['storagePath'],
             ]);
         } catch (\Throwable $exception) {
@@ -173,5 +175,21 @@ class ProcessForm1702ExRowsPdfExport implements ShouldQueue
         return $exception->getMessage() !== ''
             ? $exception->getMessage()
             : 'The imported rows PDF ZIP could not be prepared right now.';
+    }
+
+    private function downloadFileName(): string
+    {
+        $status = Str::of($this->status)
+            ->trim()
+            ->replaceMatches('/[^A-Za-z0-9]+/', '_')
+            ->trim('_')
+            ->upper()
+            ->value();
+
+        if ($status === '') {
+            $status = 'ALL';
+        }
+
+        return sprintf('1702EX_%s_%s.zip', $status, now()->format('Ymd_His'));
     }
 }

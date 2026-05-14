@@ -419,6 +419,9 @@ class Form1702ExController extends Controller
         );
 
         $storagePath = (string) $cached['storagePath'];
+        $downloadName = is_string($cached['downloadFileName'] ?? null) && $cached['downloadFileName'] !== ''
+            ? (string) $cached['downloadFileName']
+            : 'form1702ex-imported-rows-pdfs.zip';
         $disk = DocumentStorage::disk();
         $stream = $disk->readStream($storagePath);
 
@@ -513,7 +516,7 @@ class Form1702ExController extends Controller
                     fclose($stream);
                 }
             },
-            'form1702ex-imported-rows-pdfs.zip',
+            $downloadName,
             ['Content-Type' => 'application/zip'],
         );
     }
