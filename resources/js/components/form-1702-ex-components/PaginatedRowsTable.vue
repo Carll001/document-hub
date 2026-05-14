@@ -361,6 +361,9 @@ function autoReceiptLabel(row: Form1702ExBatchRow): string | null {
                         <SelectItem value="not_signed">Not signed</SelectItem>
                         <SelectItem value="receipt_attached">Receipt attached</SelectItem>
                         <SelectItem value="no_receipt">No receipt</SelectItem>
+                        <SelectItem value="no_signature_no_confirmation">No signature + no confirmation</SelectItem>
+                        <SelectItem value="no_signature_with_confirmation">No signature + with confirmation</SelectItem>
+                        <SelectItem value="signed_no_confirmation">Signed + no confirmation</SelectItem>
                     </SelectContent>
                 </Select>
 

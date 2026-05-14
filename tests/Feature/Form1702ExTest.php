@@ -1018,6 +1018,159 @@ class Form1702ExTest extends TestCase
         Queue::assertNothingPushed();
     }
 
+    public function test_index_supports_new_combined_signature_and_confirmation_status_filters(): void
+    {
+        $this->withoutVite();
+
+        $staff = User::factory()->create();
+        $batch = Form1702ExBatch::query()->create([
+            'user_id' => $staff->id,
+            'name' => 'Status Filter Batch',
+        ]);
+
+        $this->createBatchRow($batch, [
+            'payload' => $this->validPayload([
+                'taxpayer_name' => 'No Sig No Confirmation',
+                'signature' => '',
+            ]),
+            'receipt_file_name' => null,
+            'receipt_storage_path' => null,
+        ]);
+
+        $this->createBatchRow($batch, [
+            'payload' => $this->validPayload([
+                'taxpayer_name' => 'No Sig With Confirmation',
+                'signature' => '',
+            ]),
+            'receipt_file_name' => 'confirmed.pdf',
+            'receipt_storage_path' => 'forms/'.$staff->id.'/1702-ex/receipts/'.$batch->id.'/confirmed.pdf',
+        ]);
+
+        $this->createBatchRow($batch, [
+            'payload' => $this->validPayload([
+                'taxpayer_name' => 'Signed No Confirmation Generated',
+                'signature' => 'forms/'.$staff->id.'/1702-ex/signatures/generated.png',
+            ]),
+            'pdf_status' => Form1702ExBatchRow::PDF_STATUS_GENERATED,
+            'receipt_file_name' => null,
+            'receipt_storage_path' => null,
+        ]);
+
+        $this->createBatchRow($batch, [
+            'payload' => $this->validPayload([
+                'taxpayer_name' => 'Signed No Confirmation Processing',
+                'signature' => 'forms/'.$staff->id.'/1702-ex/signatures/processing.png',
+            ]),
+            'pdf_status' => Form1702ExBatchRow::PDF_STATUS_PROCESSING,
+            'receipt_file_name' => null,
+            'receipt_storage_path' => null,
+        ]);
+
+        $this->actingAs($staff)
+            ->get(route('forms.1702-ex.index', [
+                'status' => 'no_signature_no_confirmation',
+            ]))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('pagination.total', 1)
+                ->where('rows.0.taxpayerName', 'No Sig No Confirmation')
+                ->where('filters.status', 'no_signature_no_confirmation')
+            );
+
+        $this->actingAs($staff)
+            ->get(route('forms.1702-ex.index', [
+                'status' => 'no_signature_with_confirmation',
+            ]))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('pagination.total', 1)
+                ->where('rows.0.taxpayerName', 'No Sig With Confirmation')
+                ->where('filters.status', 'no_signature_with_confirmation')
+            );
+
+        $this->actingAs($staff)
+            ->get(route('forms.1702-ex.index', [
+                'status' => 'signed_no_confirmation',
+            ]))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('pagination.total', 1)
+                ->where('rows.0.taxpayerName', 'Signed No Confirmation Generated')
+                ->where('filters.status', 'signed_no_confirmation')
+            );
+    }
+
+    public function test_index_existing_status_filters_continue_to_work_with_new_combined_status_options(): void
+    {
+        $this->withoutVite();
+
+        $staff = User::factory()->create();
+        $batch = Form1702ExBatch::query()->create([
+            'user_id' => $staff->id,
+            'name' => 'Existing Status Batch',
+        ]);
+
+        $this->createBatchRow($batch, [
+            'payload' => $this->validPayload([
+                'taxpayer_name' => 'Signed Existing',
+                'signature' => 'forms/'.$staff->id.'/1702-ex/signatures/existing.png',
+            ]),
+            'pdf_status' => Form1702ExBatchRow::PDF_STATUS_GENERATED,
+            'receipt_file_name' => 'signed-receipt.pdf',
+            'receipt_storage_path' => 'forms/'.$staff->id.'/1702-ex/receipts/'.$batch->id.'/signed-receipt.pdf',
+        ]);
+
+        $this->createBatchRow($batch, [
+            'payload' => $this->validPayload([
+                'taxpayer_name' => 'Unsigned Existing',
+                'signature' => '',
+            ]),
+            'pdf_status' => Form1702ExBatchRow::PDF_STATUS_FAILED,
+            'receipt_file_name' => null,
+            'receipt_storage_path' => null,
+        ]);
+
+        $this->actingAs($staff)
+            ->get(route('forms.1702-ex.index', [
+                'status' => 'signed',
+            ]))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('pagination.total', 1)
+                ->where('rows.0.taxpayerName', 'Signed Existing')
+            );
+
+        $this->actingAs($staff)
+            ->get(route('forms.1702-ex.index', [
+                'status' => 'not_signed',
+            ]))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('pagination.total', 1)
+                ->where('rows.0.taxpayerName', 'Unsigned Existing')
+            );
+
+        $this->actingAs($staff)
+            ->get(route('forms.1702-ex.index', [
+                'status' => 'receipt_attached',
+            ]))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('pagination.total', 1)
+                ->where('rows.0.taxpayerName', 'Signed Existing')
+            );
+
+        $this->actingAs($staff)
+            ->get(route('forms.1702-ex.index', [
+                'status' => 'no_receipt',
+            ]))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->where('pagination.total', 1)
+                ->where('rows.0.taxpayerName', 'Unsigned Existing')
+            );
+    }
+
     public function test_superadmins_are_redirected_to_users_from_the_staff_only_page(): void
     {
         $superadmin = User::factory()->create([

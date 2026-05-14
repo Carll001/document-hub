@@ -65,7 +65,7 @@ class Form1702ExController extends Controller
             'search' => ['nullable', 'string', 'max:120'],
             'sort' => ['nullable', 'string', 'in:uploadedAt,generatedAt,pdfStatus,sourceRowNumber'],
             'direction' => ['nullable', 'string', 'in:asc,desc'],
-            'status' => ['nullable', 'string', 'in:all,generated,processing,signed,not_signed,receipt_attached,no_receipt'],
+            'status' => ['nullable', 'string', 'in:all,generated,processing,signed,not_signed,receipt_attached,no_receipt,no_signature_no_confirmation,no_signature_with_confirmation,signed_no_confirmation'],
         ]);
         $user = $request->user();
         $rowPage = $this->rowPage(
@@ -138,7 +138,7 @@ class Form1702ExController extends Controller
             'search' => ['nullable', 'string', 'max:120'],
             'sort' => ['nullable', 'string', 'in:uploadedAt,generatedAt,pdfStatus,sourceRowNumber'],
             'direction' => ['nullable', 'string', 'in:asc,desc'],
-            'status' => ['nullable', 'string', 'in:all,generated,processing,signed,not_signed,receipt_attached,no_receipt'],
+            'status' => ['nullable', 'string', 'in:all,generated,processing,signed,not_signed,receipt_attached,no_receipt,no_signature_no_confirmation,no_signature_with_confirmation,signed_no_confirmation'],
         ]);
         $user = $request->user();
         $rowPage = $this->rowPage(
@@ -273,7 +273,7 @@ class Form1702ExController extends Controller
             'search' => ['nullable', 'string', 'max:120'],
             'sort' => ['nullable', 'string', 'in:uploadedAt,generatedAt,pdfStatus,sourceRowNumber'],
             'direction' => ['nullable', 'string', 'in:asc,desc'],
-            'status' => ['nullable', 'string', 'in:all,generated,processing,signed,not_signed,receipt_attached,no_receipt'],
+            'status' => ['nullable', 'string', 'in:all,generated,processing,signed,not_signed,receipt_attached,no_receipt,no_signature_no_confirmation,no_signature_with_confirmation,signed_no_confirmation'],
             'rowIds' => ['nullable', 'array', 'min:1'],
             'rowIds.*' => ['required', 'string', 'uuid'],
         ]);
@@ -363,7 +363,7 @@ class Form1702ExController extends Controller
             'search' => ['nullable', 'string', 'max:120'],
             'sort' => ['nullable', 'string', 'in:uploadedAt,generatedAt,pdfStatus,sourceRowNumber'],
             'direction' => ['nullable', 'string', 'in:asc,desc'],
-            'status' => ['nullable', 'string', 'in:all,generated,processing,signed,not_signed,receipt_attached,no_receipt'],
+            'status' => ['nullable', 'string', 'in:all,generated,processing,signed,not_signed,receipt_attached,no_receipt,no_signature_no_confirmation,no_signature_with_confirmation,signed_no_confirmation'],
         ]);
 
         $query = $this->unmatchedRowsQuery(
@@ -447,7 +447,7 @@ class Form1702ExController extends Controller
             'search' => ['nullable', 'string', 'max:120'],
             'sort' => ['nullable', 'string', 'in:uploadedAt,generatedAt,pdfStatus,sourceRowNumber'],
             'direction' => ['nullable', 'string', 'in:asc,desc'],
-            'status' => ['nullable', 'string', 'in:all,generated,processing,signed,not_signed,receipt_attached,no_receipt'],
+            'status' => ['nullable', 'string', 'in:all,generated,processing,signed,not_signed,receipt_attached,no_receipt,no_signature_no_confirmation,no_signature_with_confirmation,signed_no_confirmation'],
         ]);
 
         $query = $this->unmatchedRowsQuery(
@@ -2416,6 +2416,40 @@ class Form1702ExController extends Controller
                         ->whereNull('receipt_storage_path')
                         ->orWhereNull('receipt_file_name');
                 });
+                break;
+            case 'no_signature_no_confirmation':
+                $query
+                    ->where(function ($signatureQuery): void {
+                        $signatureQuery
+                            ->whereNull('payload->signature')
+                            ->orWhere('payload->signature', '=', '');
+                    })
+                    ->where(function ($receiptQuery): void {
+                        $receiptQuery
+                            ->whereNull('receipt_storage_path')
+                            ->orWhereNull('receipt_file_name');
+                    });
+                break;
+            case 'no_signature_with_confirmation':
+                $query
+                    ->where(function ($signatureQuery): void {
+                        $signatureQuery
+                            ->whereNull('payload->signature')
+                            ->orWhere('payload->signature', '=', '');
+                    })
+                    ->whereNotNull('receipt_storage_path')
+                    ->whereNotNull('receipt_file_name');
+                break;
+            case 'signed_no_confirmation':
+                $query
+                    ->whereNotNull('payload->signature')
+                    ->where('payload->signature', '!=', '')
+                    ->where(function ($receiptQuery): void {
+                        $receiptQuery
+                            ->whereNull('receipt_storage_path')
+                            ->orWhereNull('receipt_file_name');
+                    })
+                    ->where('pdf_status', Form1702ExBatchRow::PDF_STATUS_GENERATED);
                 break;
             default:
                 break;
