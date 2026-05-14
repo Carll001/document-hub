@@ -177,6 +177,8 @@ Route::middleware(['auth', 'verified'])->group(function () {
                         Route::delete('rows', 'destroyRowsDirect')->name('rows.destroy');
                         Route::get('rows/export', 'downloadRowsList')->name('rows.export');
                         Route::get('rows/export/file', 'downloadRowsListPrepared')->name('rows.export.file');
+                        Route::get('rows/export/pdf', 'downloadRowsPdfList')->name('rows.export.pdf');
+                        Route::get('rows/export/pdf/file', 'downloadRowsPdfListPrepared')->name('rows.export.pdf.file');
                         Route::get('rows/{form1702ExBatchRow}/preview', 'previewRowDirect')->name('rows.preview');
                         Route::get('rows/{form1702ExBatchRow}/download', 'downloadRowDirect')->name('rows.download');
                         Route::patch('rows/{form1702ExBatchRow}/recipient', 'updateRecipient')->name('rows.recipient.update');

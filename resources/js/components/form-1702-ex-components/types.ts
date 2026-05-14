@@ -98,6 +98,7 @@ export type Form1702ExIndexPageProps = {
     importCancelUrl: string;
     bulkDeleteUrl: string;
     rowsExportUrl: string;
+    rowsPdfExportUrl: string;
     settingsUpdateUrl: string;
     signatureUploadUrl: string;
     templateSpreadsheetUrl: string;
@@ -111,6 +112,7 @@ export type Form1702ExIndexPageProps = {
     importError: string | null;
     importSourceName: string | null;
     rowsExportState: Form1702ExCompletedExportState;
+    rowsPdfExportState: Form1702ExCompletedExportState;
     hasActiveJobs: boolean;
 };
 

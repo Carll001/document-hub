@@ -56,6 +56,7 @@ import {
 const props = withDefaults(
     defineProps<{
         exportUrl: string;
+        pdfExportUrl: string;
         filters: Form1702ExRowFilters;
         isBusy?: boolean;
         isDeleteProcessing?: boolean;
@@ -63,6 +64,7 @@ const props = withDefaults(
         pagination: Form1702ExRowPagination;
         rows: Form1702ExBatchRow[];
         rowsExportState: Form1702ExCompletedExportState;
+        rowsPdfExportState: Form1702ExCompletedExportState;
     }>(),
     {
         isBusy: false,
@@ -99,8 +101,16 @@ const isRowsExportBusy = computed(
         props.rowsExportState.status === 'queued'
         || props.rowsExportState.status === 'processing',
 );
+const isRowsPdfExportBusy = computed(
+    () =>
+        props.rowsPdfExportState.status === 'queued'
+        || props.rowsPdfExportState.status === 'processing',
+);
 const canExportList = computed(
     () => props.pagination.total > 0 && !isRowsExportBusy.value,
+);
+const canExportPdfList = computed(
+    () => props.pagination.total > 0 && !isRowsPdfExportBusy.value,
 );
 const selectAllState = computed<boolean | 'indeterminate'>(() => {
     if (props.rows.length === 0) {
@@ -264,6 +274,21 @@ function exportList(): void {
     );
 }
 
+function exportPdfList(): void {
+    if (!canExportPdfList.value) {
+        return;
+    }
+
+    router.get(
+        props.pdfExportUrl,
+        {},
+        {
+            preserveScroll: true,
+            preserveState: true,
+        },
+    );
+}
+
 function deleteDisabled(row: Form1702ExBatchRow): boolean {
     return (
         props.isBusy
@@ -340,6 +365,22 @@ function autoReceiptLabel(row: Form1702ExBatchRow): string | null {
             </div>
 
             <div class="flex flex-wrap gap-2 self-end md:self-auto">
+                <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    class="gap-2"
+                    :disabled="!canExportPdfList"
+                    @click="exportPdfList"
+                >
+                    <Download class="size-4" />
+                    {{
+                        isRowsPdfExportBusy
+                            ? 'Preparing PDF ZIP...'
+                            : 'Export PDF List'
+                    }}
+                </Button>
+
                 <Button
                     type="button"
                     variant="outline"

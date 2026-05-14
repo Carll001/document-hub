@@ -9,6 +9,7 @@ use App\Jobs\ProcessForm1702ExBatchImport;
 use App\Jobs\ProcessForm1702ExBatchRows;
 use App\Jobs\ProcessForm1702ExCompletedExport;
 use App\Jobs\ProcessForm1702ExRowsExport;
+use App\Jobs\ProcessForm1702ExRowsPdfExport;
 use App\Models\Form1702ExBatch;
 use App\Models\Form1702ExBatchRow;
 use App\Models\SyncedEmail;
@@ -20,6 +21,7 @@ use App\Services\Form1702ExImportService;
 use App\Services\SignatureImageService;
 use App\Services\Form1702ExRowReceiptService;
 use App\Services\Form1702ExRowsExportService;
+use App\Services\Form1702ExRowsPdfExportService;
 use App\Services\Form1702ExService;
 use App\Support\DocumentStorage;
 use App\Support\Form1702ExRecipientEmailNormalizer;
@@ -51,6 +53,7 @@ class Form1702ExController extends Controller
         private readonly Form1702ExCompletedEmailService $form1702ExCompletedEmailService,
         private readonly Form1702ExImportService $form1702ExImportService,
         private readonly Form1702ExRowsExportService $form1702ExRowsExportService,
+        private readonly Form1702ExRowsPdfExportService $form1702ExRowsPdfExportService,
         private readonly Form1702ExService $form1702ExService,
         private readonly Form1702ExRecipientEmailNormalizer $recipientEmailNormalizer,
     ) {}
@@ -83,6 +86,7 @@ class Form1702ExController extends Controller
             'importCancelUrl' => route('forms.form1702ex.import.cancel'),
             'bulkDeleteUrl' => route('forms.form1702ex.rows.destroy'),
             'rowsExportUrl' => route('forms.form1702ex.rows.export', $this->indexRouteParameters($request)),
+            'rowsPdfExportUrl' => route('forms.form1702ex.rows.export.pdf', $this->indexRouteParameters($request)),
             'settingsUpdateUrl' => route('forms.form1702ex.settings.update'),
             'signatureUploadUrl' => route('forms.form1702ex.signature.upload'),
             'templateSpreadsheetUrl' => asset('form-assets/1702-ex/1702-ex-import-template.xlsx'),
@@ -121,6 +125,7 @@ class Form1702ExController extends Controller
             'importError' => $this->indexImportError($user),
             'importSourceName' => $this->indexImportSourceName($user),
             'rowsExportState' => $this->rowsExportState($user),
+            'rowsPdfExportState' => $this->rowsPdfExportState($user),
             'hasActiveJobs' => $this->userHasActiveJobs($user),
         ]);
     }
@@ -429,6 +434,87 @@ class Form1702ExController extends Controller
             },
             'form1702ex-unmatched-rows.xlsx',
             ['Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+        );
+    }
+
+    public function downloadRowsPdfList(Request $request): RedirectResponse
+    {
+        $validated = $request->validate([
+            'search' => ['nullable', 'string', 'max:120'],
+            'sort' => ['nullable', 'string', 'in:uploadedAt,generatedAt,pdfStatus,sourceRowNumber'],
+            'direction' => ['nullable', 'string', 'in:asc,desc'],
+            'status' => ['nullable', 'string', 'in:all,generated,processing,signed,not_signed,receipt_attached'],
+        ]);
+
+        $query = $this->unmatchedRowsQuery(
+            $request->user(),
+            isset($validated['search']) ? (string) $validated['search'] : '',
+            isset($validated['sort']) ? (string) $validated['sort'] : 'uploadedAt',
+            isset($validated['direction']) ? (string) $validated['direction'] : 'desc',
+            isset($validated['status']) ? (string) $validated['status'] : 'all',
+        );
+
+        if ($this->rowsPdfExportIsBusy($request->user())) {
+            return to_route('forms.form1702ex.index', $this->indexRouteParameters($request))
+                ->with('error', 'An imported rows PDF export is already processing.');
+        }
+
+        if (! $query->exists()) {
+            return to_route('forms.form1702ex.index', $this->indexRouteParameters($request))
+                ->with('error', 'No imported rows matched this export request.');
+        }
+
+        $userId = (int) $request->user()->getKey();
+        $this->form1702ExRowsPdfExportService->forgetState($userId);
+        $this->form1702ExRowsPdfExportService->putState($userId, [
+            'status' => Form1702ExRowsPdfExportService::STATUS_QUEUED,
+            'error' => null,
+            'rowCount' => null,
+            'downloadUrl' => null,
+            'storagePath' => null,
+        ]);
+
+        ProcessForm1702ExRowsPdfExport::dispatch(
+            $userId,
+            isset($validated['search']) ? (string) $validated['search'] : '',
+            isset($validated['sort']) ? (string) $validated['sort'] : 'uploadedAt',
+            isset($validated['direction']) ? (string) $validated['direction'] : 'desc',
+            isset($validated['status']) ? (string) $validated['status'] : 'all',
+        );
+
+        return to_route('forms.form1702ex.index', $this->indexRouteParameters($request))
+            ->with('success', 'Imported rows PDF export queued. Your ZIP will be ready shortly.');
+    }
+
+    public function downloadRowsPdfListPrepared(Request $request): StreamedResponse
+    {
+        $state = $this->form1702ExRowsPdfExportService->getState((int) $request->user()->getKey());
+        $cached = cache()->get($this->form1702ExRowsPdfExportService->cacheKey((int) $request->user()->getKey()));
+
+        abort_unless(
+            $state['status'] === Form1702ExRowsPdfExportService::STATUS_READY
+                && is_array($cached)
+                && is_string($cached['storagePath'] ?? null)
+                && DocumentStorage::exists((string) $cached['storagePath']),
+            404,
+        );
+
+        $storagePath = (string) $cached['storagePath'];
+        $disk = DocumentStorage::disk();
+        $stream = $disk->readStream($storagePath);
+
+        abort_unless(is_resource($stream), 404);
+
+        return response()->streamDownload(
+            static function () use ($stream): void {
+                fpassthru($stream);
+
+                if (is_resource($stream)) {
+                    fclose($stream);
+                }
+            },
+            'form1702ex-imported-rows-pdfs.zip',
+            ['Content-Type' => 'application/zip'],
         );
     }
 
@@ -2649,6 +2735,29 @@ XML;
         return in_array($state['status'], [
             Form1702ExRowsExportService::STATUS_QUEUED,
             Form1702ExRowsExportService::STATUS_PROCESSING,
+        ], true);
+    }
+
+    /**
+     * @return array{
+     *     status: 'queued'|'processing'|'failed'|'ready'|null,
+     *     error: string|null,
+     *     rowCount: int|null,
+     *     downloadUrl: string|null
+     * }
+     */
+    private function rowsPdfExportState($user): array
+    {
+        return $this->form1702ExRowsPdfExportService->getState((int) $user->getKey());
+    }
+
+    private function rowsPdfExportIsBusy($user): bool
+    {
+        $state = $this->rowsPdfExportState($user);
+
+        return in_array($state['status'], [
+            Form1702ExRowsPdfExportService::STATUS_QUEUED,
+            Form1702ExRowsPdfExportService::STATUS_PROCESSING,
         ], true);
     }
 }

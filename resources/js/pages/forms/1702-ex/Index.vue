@@ -128,6 +128,7 @@ const signatureUploadError = ref<string | null>(null);
 const uploadedSignaturePath = ref<string | null>(null);
 const uploadedSignatureUrl = ref<string | null>(null);
 const lastRowsExportErrorShown = ref<string | null>(null);
+const lastRowsPdfExportErrorShown = ref<string | null>(null);
 
 const canSubmitImport = computed(
     () => importForm.spreadsheet instanceof File && !importForm.processing,
@@ -202,8 +203,13 @@ const isRowsExportBusy = computed(
         props.rowsExportState.status === 'queued'
         || props.rowsExportState.status === 'processing',
 );
+const isRowsPdfExportBusy = computed(
+    () =>
+        props.rowsPdfExportState.status === 'queued'
+        || props.rowsPdfExportState.status === 'processing',
+);
 const shouldPoll = computed(
-    () => props.hasActiveJobs || isRowsExportBusy.value,
+    () => props.hasActiveJobs || isRowsExportBusy.value || isRowsPdfExportBusy.value,
 );
 
 watch(
@@ -279,6 +285,26 @@ watch(
 );
 
 watch(
+    () => [props.rowsPdfExportState.status, props.rowsPdfExportState.error] as const,
+    ([status, error]) => {
+        if (status !== 'failed' || !error) {
+            if (status !== 'failed') {
+                lastRowsPdfExportErrorShown.value = null;
+            }
+            return;
+        }
+
+        if (lastRowsPdfExportErrorShown.value === error) {
+            return;
+        }
+
+        lastRowsPdfExportErrorShown.value = error;
+        toast.error(error);
+    },
+    { immediate: true },
+);
+
+watch(
     () => shouldPoll.value,
     (polling) => {
         if (!polling) {
@@ -319,7 +345,7 @@ function schedulePoll(): void {
 
     pollTimeoutId.value = window.setTimeout(() => {
         router.reload({
-            only: ['rows', 'pagination', 'filters', 'hasActiveJobs', 'settings', 'flash', 'importStatus', 'importError', 'importSourceName', 'rowsExportState'],
+            only: ['rows', 'pagination', 'filters', 'hasActiveJobs', 'settings', 'flash', 'importStatus', 'importError', 'importSourceName', 'rowsExportState', 'rowsPdfExportState'],
             preserveState: true,
             onFinish: () => {
                 pollTimeoutId.value = null;
@@ -1068,6 +1094,18 @@ function submitRemoveReceipt(): void {
                 </AlertDescription>
             </Alert>
 
+            <Alert v-if="isRowsPdfExportBusy">
+                <LoaderCircle class="size-4 animate-spin" />
+                <AlertTitle>Rows PDF Export In Progress</AlertTitle>
+                <AlertDescription>
+                    {{
+                        props.rowsPdfExportState.status === 'queued'
+                            ? 'Your PDF ZIP export is queued and will start shortly.'
+                            : 'Your PDF ZIP export is being prepared in the background.'
+                    }}
+                </AlertDescription>
+            </Alert>
+
             <Alert v-if="props.rowsExportState.status === 'ready' && props.rowsExportState.downloadUrl">
                 <AlertTitle>Rows Export Ready</AlertTitle>
                 <AlertDescription class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1087,12 +1125,32 @@ function submitRemoveReceipt(): void {
                 </AlertDescription>
             </Alert>
 
+            <Alert v-if="props.rowsPdfExportState.status === 'ready' && props.rowsPdfExportState.downloadUrl">
+                <AlertTitle>Rows PDF Export Ready</AlertTitle>
+                <AlertDescription class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <span>
+                        {{
+                            props.rowsPdfExportState.rowCount !== null
+                                ? `Your PDF ZIP export is ready with ${props.rowsPdfExportState.rowCount}
+                        file${props.rowsPdfExportState.rowCount === 1 ? '' : 's'}.`
+                                : 'Your PDF ZIP export is ready to download.'
+                        }}
+                    </span>
+                    <Button as-child size="sm" class="self-start sm:self-auto">
+                        <a :href="props.rowsPdfExportState.downloadUrl">
+                            Download ready
+                        </a>
+                    </Button>
+                </AlertDescription>
+            </Alert>
+
             <Card >
                 <CardContent class="space-y-4">
-                    <PaginatedRowsTable :export-url="props.rowsExportUrl" :filters="props.filters"
+                    <PaginatedRowsTable :export-url="props.rowsExportUrl" :pdf-export-url="props.rowsPdfExportUrl" :filters="props.filters"
                         :is-busy="props.hasActiveJobs" :is-delete-processing="deleteRowsForm.processing"
                         :page-url="props.indexUrl" :pagination="props.pagination" :rows="props.rows"
-                        :rows-export-state="props.rowsExportState" @open-recipient-editor="openRecipientEditor"
+                        :rows-export-state="props.rowsExportState" :rows-pdf-export-state="props.rowsPdfExportState"
+                        @open-recipient-editor="openRecipientEditor"
                         @open-signature="openSignatureDialogForRow"
                         @open-signature-preview="openSignaturePreviewDialogForRow"
                         @open-receipt="openReceiptDialog" @open-remove-receipt="openRemoveReceiptDialog"
