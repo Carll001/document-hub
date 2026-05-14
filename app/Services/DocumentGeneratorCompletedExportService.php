@@ -20,6 +20,7 @@ class DocumentGeneratorCompletedExportService
     public const STATUS_QUEUED = 'queued';
 
     public const STATUS_PROCESSING = 'processing';
+    public const STATUS_CANCELLING = 'cancelling';
 
     public const STATUS_FAILED = 'failed';
 
@@ -51,6 +52,7 @@ class DocumentGeneratorCompletedExportService
         if (! in_array($status, [
             self::STATUS_QUEUED,
             self::STATUS_PROCESSING,
+            self::STATUS_CANCELLING,
             self::STATUS_FAILED,
             self::STATUS_READY,
         ], true)) {
@@ -123,10 +125,11 @@ class DocumentGeneratorCompletedExportService
         }
 
         $status = $state['status'] ?? null;
-        if (! in_array($status, [self::STATUS_QUEUED, self::STATUS_PROCESSING], true)) {
+        if (! in_array($status, [self::STATUS_QUEUED, self::STATUS_PROCESSING, self::STATUS_CANCELLING], true)) {
             return false;
         }
 
+        $state['status'] = self::STATUS_CANCELLING;
         $state['cancelRequested'] = true;
         Cache::put($this->cacheKey($userId), $state, now()->addSeconds(self::CACHE_TTL_SECONDS));
 

@@ -31,6 +31,7 @@ class AfsFilingExportController extends Controller
         if (in_array($state['status'], [
             DocumentGeneratorCompletedExportService::STATUS_QUEUED,
             DocumentGeneratorCompletedExportService::STATUS_PROCESSING,
+            DocumentGeneratorCompletedExportService::STATUS_CANCELLING,
         ], true)) {
             return response()->json([
                 'message' => 'A completed files export is already processing.',

@@ -12,6 +12,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 class ProcessForm1702ExRowsPdfExport implements ShouldQueue
@@ -22,7 +23,8 @@ class ProcessForm1702ExRowsPdfExport implements ShouldQueue
     use SerializesModels;
 
     public int $tries = 1;
-    public int $timeout = 600;
+    public int $timeout = 3600;
+    public bool $failOnTimeout = true;
 
     public function __construct(
         public readonly int $userId,
@@ -112,7 +114,14 @@ class ProcessForm1702ExRowsPdfExport implements ShouldQueue
                 'cancelRequested' => false,
             ]);
 
-            throw $exception;
+            Log::error('1702 rows PDF export failed.', [
+                'user_id' => $this->userId,
+                'status_filter' => $this->status,
+                'message' => $exception->getMessage(),
+                'exception' => $exception::class,
+            ]);
+
+            return;
         }
     }
 

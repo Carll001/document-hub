@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Head, router } from '@inertiajs/vue3';
-import { Download, LoaderCircle, Settings2, Trash2, Upload } from 'lucide-vue-next';
+import { Download, LoaderCircle, Settings2, Trash2, Upload, X } from 'lucide-vue-next';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { toast } from 'vue-sonner';
 import AfsIndexTable from '@/components/afs-components/AfsIndexTable.vue';
@@ -113,6 +113,11 @@ const exportPdfState = ref<CompletedExportState>({
 let exportPdfPollTimeout: ReturnType<typeof setTimeout> | null = null;
 const exportCardNow = ref(Date.now());
 let exportCardTicker: ReturnType<typeof setInterval> | null = null;
+const dismissedExportDownloadUrl = ref<string | null>(null);
+
+if (typeof window !== 'undefined') {
+    dismissedExportDownloadUrl.value = window.sessionStorage.getItem('afs:dismissed-pdf-export-url');
+}
 
 const editDialogOpen = ref(false);
 const editingItem = ref<UnifiedItem | null>(null);
@@ -318,6 +323,7 @@ const exportReadySecondsRemaining = computed<number | null>(() => {
 const shouldShowExportReadyCard = computed<boolean>(() => {
     return exportPdfState.value.status === 'ready'
         && !!exportPdfState.value.downloadUrl
+        && dismissedExportDownloadUrl.value !== exportPdfState.value.downloadUrl
         && (exportReadySecondsRemaining.value === null || exportReadySecondsRemaining.value > 0);
 });
 
@@ -478,10 +484,25 @@ const scheduleAfsPdfExportPoll = (): void => {
         exportPdfPollTimeout = null;
         await pollAfsPdfExportState();
 
-        if (exportPdfState.value.status === 'queued' || exportPdfState.value.status === 'processing') {
+        if (
+            exportPdfState.value.status === 'queued'
+            || exportPdfState.value.status === 'processing'
+            || exportPdfState.value.status === 'cancelling'
+        ) {
             scheduleAfsPdfExportPoll();
         }
     }, 3000);
+};
+
+const dismissAfsPdfExportReadyCard = (): void => {
+    if (!exportPdfState.value.downloadUrl) {
+        return;
+    }
+
+    dismissedExportDownloadUrl.value = exportPdfState.value.downloadUrl;
+    if (typeof window !== 'undefined') {
+        window.sessionStorage.setItem('afs:dismissed-pdf-export-url', exportPdfState.value.downloadUrl);
+    }
 };
 
 const startPolling = (forceDurationMs = 0) => {
@@ -1101,7 +1122,7 @@ watch(
             exportPdfPollTimeout = null;
         }
 
-        if (status !== 'queued' && status !== 'processing') {
+        if (status !== 'queued' && status !== 'processing' && status !== 'cancelling') {
             return;
         }
 
@@ -1391,7 +1412,7 @@ onMounted(() => {
                     {{ signingProgressNotice }}
                 </AlertDescription>
             </Alert>
-            <Alert v-if="exportPdfState.status === 'queued' || exportPdfState.status === 'processing'">
+            <Alert v-if="exportPdfState.status === 'queued' || exportPdfState.status === 'processing' || exportPdfState.status === 'cancelling'">
                 <LoaderCircle class="size-4 animate-spin" />
                 <AlertTitle>PDF Export In Progress</AlertTitle>
                 <AlertDescription class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1399,7 +1420,9 @@ onMounted(() => {
                         {{
                             exportPdfState.status === 'queued'
                                 ? 'Your PDF ZIP export is queued and will start shortly.'
-                                : 'Your PDF ZIP export is being prepared in the background.'
+                                : exportPdfState.status === 'cancelling'
+                                    ? 'Cancelling your PDF ZIP export...'
+                                    : 'Your PDF ZIP export is being prepared in the background.'
                         }}
                     </span>
                     <Button
@@ -1407,21 +1430,29 @@ onMounted(() => {
                         size="sm"
                         variant="outline"
                         class="self-start sm:self-auto"
-                        :disabled="cancelExportPdfBusy"
+                        :disabled="cancelExportPdfBusy || exportPdfState.status === 'cancelling'"
                         @click="void cancelAfsPdfExport()"
                     >
-                        {{ cancelExportPdfBusy ? 'Cancelling...' : 'Cancel' }}
+                        {{ cancelExportPdfBusy || exportPdfState.status === 'cancelling' ? 'Cancelling...' : 'Cancel' }}
                     </Button>
                 </AlertDescription>
             </Alert>
-            <Alert v-if="shouldShowExportReadyCard">
-                <AlertTitle>PDF Export Ready</AlertTitle>
+            <Alert v-if="shouldShowExportReadyCard" class="relative pr-14">
+                <Button
+                    size="icon"
+                    variant="ghost"
+                    class="absolute top-2 right-2 z-20 h-7 w-7"
+                    @click="dismissAfsPdfExportReadyCard"
+                >
+                    <X class="size-4" />
+                </Button>
+                <AlertTitle>PDF ZIP Export Ready</AlertTitle>
                 <AlertDescription class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <span class="flex flex-col gap-1">
                         <span>
                         {{
                             exportPdfState.itemCount !== null
-                                ? `Your PDF ZIP export is ready with ${exportPdfState.itemCount} file${exportPdfState.itemCount === 1 ? '' : 's'}.`
+                                ? `Your PDF ZIP export is ready with ${exportPdfState.itemCount} item${exportPdfState.itemCount === 1 ? '' : 's'}.`
                                 : 'Your PDF ZIP export is ready to download.'
                         }}
                         </span>

@@ -130,8 +130,13 @@ const uploadedSignaturePath = ref<string | null>(null);
 const uploadedSignatureUrl = ref<string | null>(null);
 const lastRowsExportErrorShown = ref<string | null>(null);
 const lastRowsPdfExportErrorShown = ref<string | null>(null);
-const dismissRowsExportReadyCard = ref(false);
-const dismissRowsPdfReadyCard = ref(false);
+const dismissedRowsExportDownloadUrl = ref<string | null>(null);
+const dismissedRowsPdfDownloadUrl = ref<string | null>(null);
+
+if (typeof window !== 'undefined') {
+    dismissedRowsExportDownloadUrl.value = window.sessionStorage.getItem('form1702ex:dismissed-xlsx-export-url');
+    dismissedRowsPdfDownloadUrl.value = window.sessionStorage.getItem('form1702ex:dismissed-pdf-export-url');
+}
 
 const canSubmitImport = computed(
     () => importForm.spreadsheet instanceof File && !importForm.processing,
@@ -217,15 +222,15 @@ const shouldPoll = computed(
 );
 const showRowsPdfReadyCard = computed(
     () =>
-        !dismissRowsPdfReadyCard.value
-        && props.rowsPdfExportState.status === 'ready'
-        && !!props.rowsPdfExportState.downloadUrl,
+        props.rowsPdfExportState.status === 'ready'
+        && !!props.rowsPdfExportState.downloadUrl
+        && dismissedRowsPdfDownloadUrl.value !== props.rowsPdfExportState.downloadUrl,
 );
 const showRowsExportReadyCard = computed(
     () =>
-        !dismissRowsExportReadyCard.value
-        && props.rowsExportState.status === 'ready'
-        && !!props.rowsExportState.downloadUrl,
+        props.rowsExportState.status === 'ready'
+        && !!props.rowsExportState.downloadUrl
+        && dismissedRowsExportDownloadUrl.value !== props.rowsExportState.downloadUrl,
 );
 
 watch(
@@ -283,10 +288,6 @@ watch(
 watch(
     () => [props.rowsExportState.status, props.rowsExportState.error] as const,
     ([status, error]) => {
-        if (status !== 'ready') {
-            dismissRowsExportReadyCard.value = false;
-        }
-
         if (status !== 'failed' || !error) {
             if (status !== 'failed') {
                 lastRowsExportErrorShown.value = null;
@@ -307,10 +308,6 @@ watch(
 watch(
     () => [props.rowsPdfExportState.status, props.rowsPdfExportState.error] as const,
     ([status, error]) => {
-        if (status !== 'ready') {
-            dismissRowsPdfReadyCard.value = false;
-        }
-
         if (status !== 'failed' || !error) {
             if (status !== 'failed') {
                 lastRowsPdfExportErrorShown.value = null;
@@ -345,6 +342,30 @@ watch(
 onBeforeUnmount(() => {
     clearPollTimeout();
 });
+
+function dismissXlsxExportReadyCard(): void {
+    const downloadUrl = props.rowsExportState.downloadUrl;
+    if (!downloadUrl) {
+        return;
+    }
+
+    dismissedRowsExportDownloadUrl.value = downloadUrl;
+    if (typeof window !== 'undefined') {
+        window.sessionStorage.setItem('form1702ex:dismissed-xlsx-export-url', downloadUrl);
+    }
+}
+
+function dismissPdfExportReadyCard(): void {
+    const downloadUrl = props.rowsPdfExportState.downloadUrl;
+    if (!downloadUrl) {
+        return;
+    }
+
+    dismissedRowsPdfDownloadUrl.value = downloadUrl;
+    if (typeof window !== 'undefined') {
+        window.sessionStorage.setItem('form1702ex:dismissed-pdf-export-url', downloadUrl);
+    }
+}
 
 function resetImportForm(): void {
     importForm.reset();
@@ -1118,19 +1139,19 @@ function submitRemoveReceipt(): void {
 
             <Alert v-if="isRowsExportBusy">
                 <LoaderCircle class="size-4 animate-spin" />
-                <AlertTitle>Rows Export In Progress</AlertTitle>
+                <AlertTitle>XLSX Export In Progress</AlertTitle>
                 <AlertDescription>
                     {{
                         props.rowsExportState.status === 'queued'
-                            ? 'Your Excel export is queued and will start shortly.'
-                            : 'Your Excel export is being prepared in the background.'
+                            ? 'Your XLSX export is queued and will start shortly.'
+                            : 'Your XLSX export is being prepared in the background.'
                     }}
                 </AlertDescription>
             </Alert>
 
             <Alert v-if="isRowsPdfExportBusy">
                 <LoaderCircle class="size-4 animate-spin" />
-                <AlertTitle>Rows PDF Export In Progress</AlertTitle>
+                <AlertTitle>PDF ZIP Export In Progress</AlertTitle>
                 <AlertDescription class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <span>
                         {{
@@ -1163,18 +1184,18 @@ function submitRemoveReceipt(): void {
                     size="icon"
                     variant="ghost"
                     class="absolute top-2 right-2 z-20 h-7 w-7"
-                    @click="dismissRowsExportReadyCard = true"
+                    @click="dismissXlsxExportReadyCard"
                 >
                     <X class="size-4" />
                 </Button>
-                <AlertTitle>Rows Export Ready</AlertTitle>
+                <AlertTitle>XLSX Export Ready</AlertTitle>
                 <AlertDescription class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <span>
                         {{
                             props.rowsExportState.rowCount !== null
-                                ? `Your Excel export is ready with ${props.rowsExportState.rowCount}
-                        row${props.rowsExportState.rowCount === 1 ? '' : 's'}.`
-                                : 'Your Excel export is ready to download.'
+                                ? `Your XLSX export is ready with ${props.rowsExportState.rowCount}
+                        item${props.rowsExportState.rowCount === 1 ? '' : 's'}.`
+                                : 'Your XLSX export is ready to download.'
                         }}
                     </span>
                     <Button as-child size="sm" class="self-start sm:self-auto">
@@ -1190,11 +1211,11 @@ function submitRemoveReceipt(): void {
                     size="icon"
                     variant="ghost"
                     class="absolute top-2 right-2 z-20 h-7 w-7"
-                    @click="dismissRowsPdfReadyCard = true"
+                    @click="dismissPdfExportReadyCard"
                 >
                     <X class="size-4" />
                 </Button>
-                <AlertTitle>Rows PDF Export Ready</AlertTitle>
+                <AlertTitle>PDF ZIP Export Ready</AlertTitle>
                 <AlertDescription class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <span>
                         {{

@@ -37,7 +37,7 @@ export type PaginatedResponse<T> = {
 };
 
 export type CompletedExportState = {
-    status: 'queued' | 'processing' | 'failed' | 'ready' | null;
+    status: 'queued' | 'processing' | 'cancelling' | 'failed' | 'ready' | null;
     error: string | null;
     itemCount: number | null;
     downloadUrl: string | null;

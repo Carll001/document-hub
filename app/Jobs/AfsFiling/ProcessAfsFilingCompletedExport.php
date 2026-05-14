@@ -12,6 +12,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Log;
 
 class ProcessAfsFilingCompletedExport implements ShouldQueue
 {
@@ -21,6 +22,8 @@ class ProcessAfsFilingCompletedExport implements ShouldQueue
     use SerializesModels;
 
     public int $tries = 1;
+    public int $timeout = 3600;
+    public bool $failOnTimeout = true;
 
     /**
      * @param list<int> $itemIds
@@ -107,7 +110,14 @@ class ProcessAfsFilingCompletedExport implements ShouldQueue
                 'cancelRequested' => false,
             ]);
 
-            throw $exception;
+            Log::error('AFS completed PDF export failed.', [
+                'user_id' => $this->userId,
+                'item_count' => count($this->itemIds),
+                'message' => $exception->getMessage(),
+                'exception' => $exception::class,
+            ]);
+
+            return;
         }
     }
 }
