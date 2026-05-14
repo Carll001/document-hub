@@ -114,6 +114,7 @@ class Form1702ExCompletedExportService
 
         $usedPaths = [];
         $includedRows = 0;
+        $temporaryEntryPaths = [];
 
         foreach ($rows as $row) {
             $pdfStoragePath = (string) ($row->generated_pdf_storage_path ?? '');
@@ -127,11 +128,52 @@ class Form1702ExCompletedExportService
                 $usedPaths,
             );
 
-            $archive->addFile($disk->path($pdfStoragePath), $zipPath);
+            $stream = $disk->readStream($pdfStoragePath);
+            if (! is_resource($stream)) {
+                continue;
+            }
+
+            $localEntryPath = tempnam(sys_get_temp_dir(), 'f1702completed-');
+            if ($localEntryPath === false) {
+                fclose($stream);
+                continue;
+            }
+
+            $target = @fopen($localEntryPath, 'wb');
+            if (! is_resource($target)) {
+                fclose($stream);
+                @unlink($localEntryPath);
+                continue;
+            }
+
+            try {
+                stream_copy_to_stream($stream, $target);
+            } finally {
+                fclose($stream);
+                fclose($target);
+            }
+
+            if ((@filesize($localEntryPath) ?: 0) <= 0) {
+                @unlink($localEntryPath);
+                continue;
+            }
+
+            if (! $archive->addFile($localEntryPath, $zipPath)) {
+                @unlink($localEntryPath);
+                continue;
+            }
+
+            $temporaryEntryPaths[] = $localEntryPath;
             $includedRows++;
         }
 
         $archive->close();
+
+        foreach ($temporaryEntryPaths as $temporaryEntryPath) {
+            if (is_string($temporaryEntryPath) && is_file($temporaryEntryPath)) {
+                @unlink($temporaryEntryPath);
+            }
+        }
 
         if ($includedRows === 0) {
             @unlink($temporaryZipPath);
