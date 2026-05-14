@@ -43,6 +43,7 @@ class ProcessForm1702ExRowsPdfExport implements ShouldQueue
         }
 
         $cancelRequested = $rowsPdfExportService->cancellationRequested($this->userId);
+        $scopeLabel = $this->scopeLabel();
 
         if ($cancelRequested) {
             $rowsPdfExportService->putState($this->userId, [
@@ -50,6 +51,7 @@ class ProcessForm1702ExRowsPdfExport implements ShouldQueue
                 'error' => null,
                 'rowCount' => null,
                 'downloadUrl' => null,
+                'downloadScopeLabel' => $scopeLabel,
                 'storagePath' => null,
                 'cancelRequested' => false,
             ]);
@@ -62,6 +64,7 @@ class ProcessForm1702ExRowsPdfExport implements ShouldQueue
             'error' => null,
             'rowCount' => null,
             'downloadUrl' => null,
+            'downloadScopeLabel' => $scopeLabel,
             'storagePath' => null,
             'cancelRequested' => $cancelRequested,
         ]);
@@ -80,6 +83,7 @@ class ProcessForm1702ExRowsPdfExport implements ShouldQueue
                 'error' => null,
                 'rowCount' => $export['rowCount'],
                 'downloadUrl' => route('forms.form1702ex.rows.export.pdf.file'),
+                'downloadScopeLabel' => $scopeLabel,
                 'downloadFileName' => $this->downloadFileName(),
                 'storagePath' => $export['storagePath'],
             ]);
@@ -90,6 +94,7 @@ class ProcessForm1702ExRowsPdfExport implements ShouldQueue
                     'error' => null,
                     'rowCount' => null,
                     'downloadUrl' => null,
+                    'downloadScopeLabel' => $scopeLabel,
                     'storagePath' => null,
                     'cancelRequested' => false,
                 ]);
@@ -102,6 +107,7 @@ class ProcessForm1702ExRowsPdfExport implements ShouldQueue
                 'error' => $this->runtimeMessage($exception),
                 'rowCount' => null,
                 'downloadUrl' => null,
+                'downloadScopeLabel' => $scopeLabel,
                 'storagePath' => null,
                 'cancelRequested' => false,
             ]);
@@ -228,5 +234,21 @@ class ProcessForm1702ExRowsPdfExport implements ShouldQueue
         }
 
         return sprintf('1702EX_%s_%s.zip', $status, now()->format('Ymd_His'));
+    }
+
+    private function scopeLabel(): string
+    {
+        return match (trim($this->status)) {
+            'generated' => 'Generated',
+            'processing' => 'Processing',
+            'signed' => 'Signed',
+            'not_signed' => 'Not Signed',
+            'receipt_attached' => 'Receipt Attached',
+            'no_receipt' => 'No Receipt',
+            'no_signature_no_confirmation' => 'No Signature, No Confirmation',
+            'no_signature_with_confirmation' => 'No Signature, With Confirmation',
+            'signed_no_confirmation' => 'Signed, No Confirmation',
+            default => 'All Files',
+        };
     }
 }

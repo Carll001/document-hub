@@ -1135,10 +1135,10 @@ function submitRemoveReceipt(): void {
                     <span>
                         {{
                             props.rowsPdfExportState.status === 'queued'
-                                ? 'Your PDF ZIP export is queued and will start shortly.'
+                                ? `Your PDF ZIP export for ${props.rowsPdfExportState.downloadScopeLabel ?? 'All Files'} is queued and will start shortly.`
                                 : props.rowsPdfExportState.status === 'cancelling'
-                                    ? 'Cancelling your PDF ZIP export...'
-                                    : 'Your PDF ZIP export is being prepared in the background.'
+                                    ? `Cancelling your PDF ZIP export for ${props.rowsPdfExportState.downloadScopeLabel ?? 'All Files'}...`
+                                    : `Your PDF ZIP export for ${props.rowsPdfExportState.downloadScopeLabel ?? 'All Files'} is being prepared in the background.`
                         }}
                     </span>
                     <Button
@@ -1199,9 +1199,9 @@ function submitRemoveReceipt(): void {
                     <span>
                         {{
                             props.rowsPdfExportState.rowCount !== null
-                                ? `Your PDF ZIP export is ready with ${props.rowsPdfExportState.rowCount}
+                                ? `Your PDF ZIP export for ${props.rowsPdfExportState.downloadScopeLabel ?? 'All Files'} is ready with ${props.rowsPdfExportState.rowCount}
                         file${props.rowsPdfExportState.rowCount === 1 ? '' : 's'}.`
-                                : 'Your PDF ZIP export is ready to download.'
+                                : `Your PDF ZIP export for ${props.rowsPdfExportState.downloadScopeLabel ?? 'All Files'} is ready to download.`
                         }}
                     </span>
                     <div class="flex items-center gap-2 self-start sm:self-auto">

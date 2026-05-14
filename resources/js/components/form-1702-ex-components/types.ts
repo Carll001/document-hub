@@ -88,6 +88,7 @@ export type Form1702ExCompletedExportState = {
     error: string | null;
     rowCount: number | null;
     downloadUrl: string | null;
+    downloadScopeLabel: string | null;
 };
 
 export type Form1702ExIndexPageProps = {

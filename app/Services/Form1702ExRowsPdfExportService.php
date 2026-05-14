@@ -76,6 +76,7 @@ class Form1702ExRowsPdfExportService
             'error' => is_string($state['error'] ?? null) ? $state['error'] : null,
             'rowCount' => is_numeric($state['rowCount'] ?? null) ? (int) $state['rowCount'] : null,
             'downloadUrl' => is_string($state['downloadUrl'] ?? null) ? $state['downloadUrl'] : null,
+            'downloadScopeLabel' => is_string($state['downloadScopeLabel'] ?? null) ? $state['downloadScopeLabel'] : null,
         ];
     }
 

@@ -469,12 +469,14 @@ class Form1702ExController extends Controller
         }
 
         $userId = (int) $request->user()->getKey();
+        $statusFilter = isset($validated['status']) ? (string) $validated['status'] : 'all';
         $this->form1702ExRowsPdfExportService->forgetState($userId);
         $this->form1702ExRowsPdfExportService->putState($userId, [
             'status' => Form1702ExRowsPdfExportService::STATUS_QUEUED,
             'error' => null,
             'rowCount' => null,
             'downloadUrl' => null,
+            'downloadScopeLabel' => $this->rowsPdfExportScopeLabel($statusFilter),
             'storagePath' => null,
             'cancelRequested' => false,
         ]);
@@ -484,7 +486,7 @@ class Form1702ExController extends Controller
             isset($validated['search']) ? (string) $validated['search'] : '',
             isset($validated['sort']) ? (string) $validated['sort'] : 'uploadedAt',
             isset($validated['direction']) ? (string) $validated['direction'] : 'desc',
-            isset($validated['status']) ? (string) $validated['status'] : 'all',
+            $statusFilter,
         );
 
         return to_route('forms.form1702ex.index', $this->indexRouteParameters($request))
@@ -2819,5 +2821,21 @@ XML;
             Form1702ExRowsPdfExportService::STATUS_PROCESSING,
             Form1702ExRowsPdfExportService::STATUS_CANCELLING,
         ], true);
+    }
+
+    private function rowsPdfExportScopeLabel(string $status): string
+    {
+        return match (trim($status)) {
+            'generated' => 'Generated',
+            'processing' => 'Processing',
+            'signed' => 'Signed',
+            'not_signed' => 'Not Signed',
+            'receipt_attached' => 'Receipt Attached',
+            'no_receipt' => 'No Receipt',
+            'no_signature_no_confirmation' => 'No Signature, No Confirmation',
+            'no_signature_with_confirmation' => 'No Signature, With Confirmation',
+            'signed_no_confirmation' => 'Signed, No Confirmation',
+            default => 'All Files',
+        };
     }
 }
