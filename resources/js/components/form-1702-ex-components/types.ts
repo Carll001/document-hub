@@ -129,7 +129,7 @@ export type Form1702ExRowFilters = {
     search: string;
     sort: 'uploadedAt' | 'generatedAt' | 'pdfStatus' | 'sourceRowNumber';
     direction: 'asc' | 'desc';
-    status: 'all' | 'generated' | 'processing' | 'signed' | 'not_signed' | 'receipt_attached';
+    status: 'all' | 'generated' | 'processing' | 'signed' | 'not_signed' | 'receipt_attached' | 'no_receipt';
 };
 
 export type Form1702ExCompletedPageProps = {

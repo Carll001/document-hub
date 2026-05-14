@@ -65,7 +65,7 @@ class Form1702ExController extends Controller
             'search' => ['nullable', 'string', 'max:120'],
             'sort' => ['nullable', 'string', 'in:uploadedAt,generatedAt,pdfStatus,sourceRowNumber'],
             'direction' => ['nullable', 'string', 'in:asc,desc'],
-            'status' => ['nullable', 'string', 'in:all,generated,processing,signed,not_signed,receipt_attached'],
+            'status' => ['nullable', 'string', 'in:all,generated,processing,signed,not_signed,receipt_attached,no_receipt'],
         ]);
         $user = $request->user();
         $rowPage = $this->rowPage(
@@ -137,7 +137,7 @@ class Form1702ExController extends Controller
             'search' => ['nullable', 'string', 'max:120'],
             'sort' => ['nullable', 'string', 'in:uploadedAt,generatedAt,pdfStatus,sourceRowNumber'],
             'direction' => ['nullable', 'string', 'in:asc,desc'],
-            'status' => ['nullable', 'string', 'in:all,generated,processing,signed,not_signed,receipt_attached'],
+            'status' => ['nullable', 'string', 'in:all,generated,processing,signed,not_signed,receipt_attached,no_receipt'],
         ]);
         $user = $request->user();
         $rowPage = $this->rowPage(
@@ -272,7 +272,7 @@ class Form1702ExController extends Controller
             'search' => ['nullable', 'string', 'max:120'],
             'sort' => ['nullable', 'string', 'in:uploadedAt,generatedAt,pdfStatus,sourceRowNumber'],
             'direction' => ['nullable', 'string', 'in:asc,desc'],
-            'status' => ['nullable', 'string', 'in:all,generated,processing,signed,not_signed,receipt_attached'],
+            'status' => ['nullable', 'string', 'in:all,generated,processing,signed,not_signed,receipt_attached,no_receipt'],
             'rowIds' => ['nullable', 'array', 'min:1'],
             'rowIds.*' => ['required', 'string', 'uuid'],
         ]);
@@ -362,7 +362,7 @@ class Form1702ExController extends Controller
             'search' => ['nullable', 'string', 'max:120'],
             'sort' => ['nullable', 'string', 'in:uploadedAt,generatedAt,pdfStatus,sourceRowNumber'],
             'direction' => ['nullable', 'string', 'in:asc,desc'],
-            'status' => ['nullable', 'string', 'in:all,generated,processing,signed,not_signed,receipt_attached'],
+            'status' => ['nullable', 'string', 'in:all,generated,processing,signed,not_signed,receipt_attached,no_receipt'],
         ]);
 
         $query = $this->unmatchedRowsQuery(
@@ -446,7 +446,7 @@ class Form1702ExController extends Controller
             'search' => ['nullable', 'string', 'max:120'],
             'sort' => ['nullable', 'string', 'in:uploadedAt,generatedAt,pdfStatus,sourceRowNumber'],
             'direction' => ['nullable', 'string', 'in:asc,desc'],
-            'status' => ['nullable', 'string', 'in:all,generated,processing,signed,not_signed,receipt_attached'],
+            'status' => ['nullable', 'string', 'in:all,generated,processing,signed,not_signed,receipt_attached,no_receipt'],
         ]);
 
         $query = $this->unmatchedRowsQuery(
@@ -2397,6 +2397,13 @@ class Form1702ExController extends Controller
                 $query
                     ->whereNotNull('receipt_storage_path')
                     ->whereNotNull('receipt_file_name');
+                break;
+            case 'no_receipt':
+                $query->where(function ($receiptQuery): void {
+                    $receiptQuery
+                        ->whereNull('receipt_storage_path')
+                        ->orWhereNull('receipt_file_name');
+                });
                 break;
             default:
                 break;
