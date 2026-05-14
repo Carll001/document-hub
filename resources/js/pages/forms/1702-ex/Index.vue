@@ -129,6 +129,7 @@ const uploadedSignaturePath = ref<string | null>(null);
 const uploadedSignatureUrl = ref<string | null>(null);
 const lastRowsExportErrorShown = ref<string | null>(null);
 const lastRowsPdfExportErrorShown = ref<string | null>(null);
+const dismissRowsExportReadyCard = ref(false);
 const dismissRowsPdfReadyCard = ref(false);
 
 const canSubmitImport = computed(
@@ -218,6 +219,12 @@ const showRowsPdfReadyCard = computed(
         && props.rowsPdfExportState.status === 'ready'
         && !!props.rowsPdfExportState.downloadUrl,
 );
+const showRowsExportReadyCard = computed(
+    () =>
+        !dismissRowsExportReadyCard.value
+        && props.rowsExportState.status === 'ready'
+        && !!props.rowsExportState.downloadUrl,
+);
 
 watch(
     () => props.settings,
@@ -274,6 +281,10 @@ watch(
 watch(
     () => [props.rowsExportState.status, props.rowsExportState.error] as const,
     ([status, error]) => {
+        if (status !== 'ready') {
+            dismissRowsExportReadyCard.value = false;
+        }
+
         if (status !== 'failed' || !error) {
             if (status !== 'failed') {
                 lastRowsExportErrorShown.value = null;
@@ -1117,7 +1128,15 @@ function submitRemoveReceipt(): void {
                 </AlertDescription>
             </Alert>
 
-            <Alert v-if="props.rowsExportState.status === 'ready' && props.rowsExportState.downloadUrl">
+            <Alert v-if="showRowsExportReadyCard" class="relative pr-14">
+                <Button
+                    size="icon"
+                    variant="ghost"
+                    class="absolute top-2 right-2 z-20 h-7 w-7"
+                    @click="dismissRowsExportReadyCard = true"
+                >
+                    <X class="size-4" />
+                </Button>
                 <AlertTitle>Rows Export Ready</AlertTitle>
                 <AlertDescription class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <span>
@@ -1140,7 +1159,7 @@ function submitRemoveReceipt(): void {
                 <Button
                     size="icon"
                     variant="ghost"
-                    class="absolute top-3 right-3 h-7 w-7"
+                    class="absolute top-2 right-2 z-20 h-7 w-7"
                     @click="dismissRowsPdfReadyCard = true"
                 >
                     <X class="size-4" />
