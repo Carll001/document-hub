@@ -26,9 +26,9 @@ class DocumentGeneratorCompletedExportService
 
     public const STATUS_READY = 'ready';
 
-    public function cacheKey(int $userId): string
+    public function cacheKey(int $userId, string $context = 'index'): string
     {
-        return "afs_filing:completed-export:{$userId}";
+        return "afs_filing:completed-export:{$this->normalizeContext($context)}:{$userId}";
     }
 
     /**
@@ -37,12 +37,13 @@ class DocumentGeneratorCompletedExportService
      *     error: string|null,
      *     itemCount: int|null,
      *     downloadUrl: string|null,
-     *     expiresAt: string|null
+     *     expiresAt: string|null,
+     *     batchId?: string|null
      * }
      */
-    public function getState(int $userId): array
+    public function getState(int $userId, string $context = 'index'): array
     {
-        $state = Cache::get($this->cacheKey($userId));
+        $state = Cache::get($this->cacheKey($userId, $context));
 
         if (! is_array($state)) {
             return $this->emptyState();
@@ -60,22 +61,9 @@ class DocumentGeneratorCompletedExportService
         }
 
         if ($status === self::STATUS_READY) {
-            $expiresAt = is_string($state['expiresAt'] ?? null) ? $state['expiresAt'] : null;
-            if ($expiresAt !== null) {
-                try {
-                    if (now()->greaterThanOrEqualTo(\Carbon\CarbonImmutable::parse($expiresAt))) {
-                        $this->forgetState($userId);
-
-                        return $this->emptyState();
-                    }
-                } catch (\Throwable) {
-                    // Ignore malformed expiry and continue with storage checks.
-                }
-            }
-
             $storagePath = is_string($state['storagePath'] ?? null) ? $state['storagePath'] : null;
             if ($storagePath === null || ! \App\Support\DocumentStorage::disk()->exists($storagePath)) {
-                $this->forgetState($userId);
+                $this->forgetState($userId, $context);
 
                 return $this->emptyState();
             }
@@ -87,6 +75,7 @@ class DocumentGeneratorCompletedExportService
             'itemCount' => is_numeric($state['itemCount'] ?? null) ? (int) $state['itemCount'] : null,
             'downloadUrl' => is_string($state['downloadUrl'] ?? null) ? $state['downloadUrl'] : null,
             'expiresAt' => is_string($state['expiresAt'] ?? null) ? $state['expiresAt'] : null,
+            'batchId' => is_string($state['batchId'] ?? null) ? $state['batchId'] : null,
         ];
     }
 
@@ -99,14 +88,14 @@ class DocumentGeneratorCompletedExportService
      *     storagePath?: string|null
      * }  $state
      */
-    public function putState(int $userId, array $state): void
+    public function putState(int $userId, array $state, string $context = 'index'): void
     {
-        Cache::put($this->cacheKey($userId), $state, now()->addSeconds(self::CACHE_TTL_SECONDS));
+        Cache::put($this->cacheKey($userId, $context), $state, now()->addSeconds(self::CACHE_TTL_SECONDS));
     }
 
-    public function forgetState(int $userId): void
+    public function forgetState(int $userId, string $context = 'index'): void
     {
-        $cached = Cache::get($this->cacheKey($userId));
+        $cached = Cache::get($this->cacheKey($userId, $context));
         if (is_array($cached)) {
             $storagePath = $cached['storagePath'] ?? null;
             if (is_string($storagePath) && $storagePath !== '') {
@@ -114,12 +103,12 @@ class DocumentGeneratorCompletedExportService
             }
         }
 
-        Cache::forget($this->cacheKey($userId));
+        Cache::forget($this->cacheKey($userId, $context));
     }
 
-    public function requestCancel(int $userId): bool
+    public function requestCancel(int $userId, string $context = 'index'): bool
     {
-        $state = Cache::get($this->cacheKey($userId));
+        $state = Cache::get($this->cacheKey($userId, $context));
         if (! is_array($state)) {
             return false;
         }
@@ -131,15 +120,37 @@ class DocumentGeneratorCompletedExportService
 
         $state['status'] = self::STATUS_CANCELLING;
         $state['cancelRequested'] = true;
-        Cache::put($this->cacheKey($userId), $state, now()->addSeconds(self::CACHE_TTL_SECONDS));
+        Cache::put($this->cacheKey($userId, $context), $state, now()->addSeconds(self::CACHE_TTL_SECONDS));
 
         return true;
     }
 
-    public function cancellationRequested(int $userId): bool
+    public function cancellationRequested(int $userId, string $context = 'index'): bool
     {
-        $state = Cache::get($this->cacheKey($userId));
+        $state = Cache::get($this->cacheKey($userId, $context));
         return is_array($state) && ($state['cancelRequested'] ?? false) === true;
+    }
+
+    public function currentBatchId(int $userId, string $context = 'index'): ?string
+    {
+        $state = Cache::get($this->cacheKey($userId, $context));
+        if (! is_array($state)) {
+            return null;
+        }
+
+        $batchId = $state['batchId'] ?? null;
+
+        return is_string($batchId) && $batchId !== '' ? $batchId : null;
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    public function rawState(int $userId, string $context = 'index'): ?array
+    {
+        $state = Cache::get($this->cacheKey($userId, $context));
+
+        return is_array($state) ? $state : null;
     }
 
     /**
@@ -278,6 +289,13 @@ class DocumentGeneratorCompletedExportService
             'downloadUrl' => null,
             'expiresAt' => null,
         ];
+    }
+
+    private function normalizeContext(string $context): string
+    {
+        $normalized = trim(strtolower($context));
+
+        return $normalized === 'completed' ? 'completed' : 'index';
     }
 
     private function uniqueZipPath(string $fileName, array &$usedPaths): string

@@ -245,14 +245,6 @@ class Form1702ExImportService
                 $worksheetXml,
                 $signatureColumnIndex,
             );
-            logger()->info('1702EX XLSX signature extraction summary', [
-                'worksheet_path' => $worksheetPath,
-                'header_count' => count($headers),
-                'signature_column_index' => $signatureColumnIndex,
-                'signature_header' => is_int($signatureColumnIndex) ? ($headers[$signatureColumnIndex - 1] ?? null) : null,
-                'embedded_signature_row_count' => count($embeddedSignatureByRow),
-                'embedded_signature_rows_sample' => array_slice(array_keys($embeddedSignatureByRow), 0, 20),
-            ]);
             $rows = [];
 
             foreach ($parsedRows as $row) {
@@ -278,17 +270,6 @@ class Form1702ExImportService
                             $signatureWasPatchedFromEmbedded = true;
                         }
                     }
-                }
-
-                if ($signatureColumnIndex !== null) {
-                    logger()->info('1702EX XLSX row signature debug', [
-                        'row_number' => $rowNumber,
-                        'signature_header' => $signatureHeader,
-                        'signature_cell_value_preview' => $signatureCellValue !== '' ? Str::limit($signatureCellValue, 80) : '',
-                        'signature_cell_is_error_token' => $signatureWasErrorToken,
-                        'embedded_signature_found' => $embeddedSignatureFound,
-                        'signature_patched_from_embedded' => $signatureWasPatchedFromEmbedded,
-                    ]);
                 }
 
                 $rows[] = [
@@ -536,14 +517,6 @@ class Form1702ExImportService
         $payload['signature'] = $this->isSpreadsheetErrorToken($signature)
             ? ''
             : ($signature !== '' ? $signature : (string) ($payload['signature'] ?? ''));
-        logger()->info('1702EX payload signature mapped', [
-            'signature_source_value_preview' => $signature !== '' ? Str::limit($signature, 80) : '',
-            'signature_is_error_token' => $this->isSpreadsheetErrorToken($signature),
-            'payload_signature_present' => (string) ($payload['signature'] ?? '') !== '',
-            'payload_signature_preview' => (string) ($payload['signature'] ?? '') !== ''
-                ? Str::limit((string) $payload['signature'], 80)
-                : '',
-        ]);
 
         $payload['tax_due'] = $this->normalizeMoney(
             $this->firstFilled($normalizedRow, ['taxdue']),

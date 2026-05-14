@@ -8,10 +8,12 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\AfsFiling\AfsFilingDestroyCompletedItemsRequest;
 use App\Http\Requests\AfsFiling\AfsFilingQueueCompletedDownloadRequest;
 use App\Jobs\AfsFiling\DeleteAfsFilingItemJob;
-use App\Jobs\AfsFiling\ProcessAfsFilingCompletedExport;
+use App\Jobs\AfsFiling\StartAfsCompletedExportBatch;
 use App\Models\AfsFilingItem;
 use App\Models\User;
+use App\Services\AfsFiling\AfsCompletedExportBatchAdapter;
 use App\Services\DocumentGeneratorCompletedExportService;
+use App\Services\ExportBatches\ExportBatchOrchestrator;
 use App\Support\DocumentStorage;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -27,7 +29,11 @@ class AfsFilingExportController extends Controller
         $user = $request->user();
         $userId = (int) $user->getKey();
 
-        $state = $completedExportService->getState($userId);
+        $validated = $request->validated();
+        $includeUnsigned = (bool) ($validated['include_unsigned'] ?? false);
+        $context = $includeUnsigned ? 'index' : 'completed';
+
+        $state = $completedExportService->getState($userId, $context);
         if (in_array($state['status'], [
             DocumentGeneratorCompletedExportService::STATUS_QUEUED,
             DocumentGeneratorCompletedExportService::STATUS_PROCESSING,
@@ -39,9 +45,6 @@ class AfsFilingExportController extends Controller
             ], 409);
         }
 
-        $validated = $request->validated();
-
-        $includeUnsigned = (bool) ($validated['include_unsigned'] ?? false);
         $status = is_string($validated['status'] ?? null) ? trim((string) $validated['status']) : 'all';
 
         $query = AfsFilingItem::query()
@@ -52,8 +55,13 @@ class AfsFilingExportController extends Controller
             $query
                 ->where('status', 'pdf_done')
                 ->whereNotNull('signature_applied_at');
-        } elseif ($status !== '' && $status !== 'all') {
-            $query->where('status', $status);
+        } else {
+            // "Index" export context: keep this limited to unsigned workspace rows.
+            $query->whereNull('signature_applied_at');
+
+            if ($status !== '' && $status !== 'all') {
+                $query->where('status', $status);
+            }
         }
 
         if (is_string($validated['company_search'] ?? null) && trim((string) $validated['company_search']) !== '') {
@@ -82,7 +90,7 @@ class AfsFilingExportController extends Controller
             return response()->json(['message' => 'No generated PDFs matched this export request.'], 422);
         }
 
-        $completedExportService->forgetState($userId);
+        $completedExportService->forgetState($userId, $context);
         $completedExportService->putState($userId, [
             'status' => DocumentGeneratorCompletedExportService::STATUS_QUEUED,
             'error' => null,
@@ -90,13 +98,13 @@ class AfsFilingExportController extends Controller
             'downloadUrl' => null,
             'storagePath' => null,
             'cancelRequested' => false,
-        ]);
+        ], $context);
 
-        ProcessAfsFilingCompletedExport::dispatch($userId, $resolvedIds);
+        StartAfsCompletedExportBatch::dispatch($userId, $resolvedIds, $context);
 
         return response()->json([
             'message' => 'Completed files export queued. Your ZIP will be ready shortly.',
-            'export_state' => $completedExportService->getState($userId),
+            'export_state' => $completedExportService->getState($userId, $context),
         ]);
     }
 
@@ -105,20 +113,31 @@ class AfsFilingExportController extends Controller
         /** @var User $user */
         $user = $request->user();
 
-        return response()->json($completedExportService->getState((int) $user->getKey()));
+        $context = $this->context($request);
+
+        return response()->json($completedExportService->getState((int) $user->getKey(), $context));
     }
 
-    public function cancel(Request $request, DocumentGeneratorCompletedExportService $completedExportService): JsonResponse
+    public function cancel(
+        Request $request,
+        DocumentGeneratorCompletedExportService $completedExportService,
+        ExportBatchOrchestrator $orchestrator,
+        AfsCompletedExportBatchAdapter $adapter,
+    ): JsonResponse
     {
         /** @var User $user */
         $user = $request->user();
-        $cancelled = $completedExportService->requestCancel((int) $user->getKey());
+        $context = $this->context($request);
+        $cancelled = $completedExportService->requestCancel((int) $user->getKey(), $context);
+        if ($cancelled) {
+            $orchestrator->cancel((int) $user->getKey(), $adapter, $context);
+        }
 
         return response()->json([
             'message' => $cancelled
                 ? 'PDF export cancel requested.'
                 : 'No queued PDF export to cancel.',
-            'export_state' => $completedExportService->getState((int) $user->getKey()),
+            'export_state' => $completedExportService->getState((int) $user->getKey(), $context),
         ], $cancelled ? 200 : 409);
     }
 
@@ -127,8 +146,9 @@ class AfsFilingExportController extends Controller
         /** @var User $user */
         $user = $request->user();
         $userId = (int) $user->getKey();
-        $state = $completedExportService->getState($userId);
-        $cached = cache()->get($completedExportService->cacheKey($userId));
+        $context = $this->context($request);
+        $state = $completedExportService->getState($userId, $context);
+        $cached = cache()->get($completedExportService->cacheKey($userId, $context));
 
         abort_unless(
             $state['status'] === DocumentGeneratorCompletedExportService::STATUS_READY
@@ -193,5 +213,12 @@ class AfsFilingExportController extends Controller
             'message' => $queuedCount === 1 ? 'Queued 1 delete task.' : "Queued {$queuedCount} delete tasks.",
             'queued_count' => $queuedCount,
         ]);
+    }
+
+    private function context(Request $request): string
+    {
+        $context = strtolower(trim((string) $request->query('context', 'index')));
+
+        return $context === 'completed' ? 'completed' : 'index';
     }
 }

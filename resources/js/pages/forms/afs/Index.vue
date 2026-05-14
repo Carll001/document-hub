@@ -108,15 +108,12 @@ const exportPdfState = ref<CompletedExportState>({
     error: null,
     itemCount: null,
     downloadUrl: null,
-    expiresAt: null,
 });
 let exportPdfPollTimeout: ReturnType<typeof setTimeout> | null = null;
-const exportCardNow = ref(Date.now());
-let exportCardTicker: ReturnType<typeof setInterval> | null = null;
-const dismissedExportDownloadUrl = ref<string | null>(null);
+const dismissedExportReadyKey = ref<string | null>(null);
 
 if (typeof window !== 'undefined') {
-    dismissedExportDownloadUrl.value = window.sessionStorage.getItem('afs:dismissed-pdf-export-url');
+    dismissedExportReadyKey.value = window.sessionStorage.getItem('afs:dismissed-pdf-export-key');
 }
 
 const editDialogOpen = ref(false);
@@ -303,42 +300,22 @@ const hasPendingVisibleItems = computed(() =>
     itemsData.value.data.some((item) => ['queued', 'processing', 'docx_done', 'signing', 'deleting'].includes(item.status)),
 );
 
-const exportReadyExpiresAtMs = computed<number | null>(() => {
-    if (exportPdfState.value.status !== 'ready' || !exportPdfState.value.expiresAt) {
-        return null;
+const exportReadyStateKey = computed<string | null>(() => {
+    const batchId = typeof exportPdfState.value.batchId === 'string' && exportPdfState.value.batchId !== ''
+        ? exportPdfState.value.batchId
+        : null;
+    if (batchId) {
+        return `batch:${batchId}`;
     }
 
-    const parsed = new Date(exportPdfState.value.expiresAt).getTime();
-    return Number.isNaN(parsed) ? null : parsed;
-});
-
-const exportReadySecondsRemaining = computed<number | null>(() => {
-    if (exportReadyExpiresAtMs.value === null) {
-        return null;
-    }
-
-    return Math.max(0, Math.ceil((exportReadyExpiresAtMs.value - exportCardNow.value) / 1000));
+    return exportPdfState.value.downloadUrl ? `url:${exportPdfState.value.downloadUrl}` : null;
 });
 
 const shouldShowExportReadyCard = computed<boolean>(() => {
     return exportPdfState.value.status === 'ready'
         && !!exportPdfState.value.downloadUrl
-        && dismissedExportDownloadUrl.value !== exportPdfState.value.downloadUrl
-        && (exportReadySecondsRemaining.value === null || exportReadySecondsRemaining.value > 0);
-});
-
-const exportReadyCountdownLabel = computed<string | null>(() => {
-    if (exportReadySecondsRemaining.value === null) {
-        return null;
-    }
-
-    const totalSeconds = exportReadySecondsRemaining.value;
-    const minutes = Math.floor(totalSeconds / 60);
-    const seconds = totalSeconds % 60;
-    const minuteText = String(minutes).padStart(2, '0');
-    const secondText = String(seconds).padStart(2, '0');
-
-    return `Expires in ${minuteText}:${secondText}`;
+        && exportReadyStateKey.value !== null
+        && dismissedExportReadyKey.value !== exportReadyStateKey.value;
 });
 
 const stopPolling = () => {
@@ -420,7 +397,7 @@ const queueAfsPdfExport = async (): Promise<void> => {
 
     try {
         const payload = await sendPostJson<{ message?: string; export_state?: CompletedExportState }>(
-            generatedFilesRoutes.download.url(),
+            `${generatedFilesRoutes.download.url()}?context=index`,
             {
                 company_search: companySearch.value.trim() || undefined,
                 sort_by: itemsSortBy.value,
@@ -451,7 +428,7 @@ const cancelAfsPdfExport = async (): Promise<void> => {
 
     try {
         const payload = await sendPostJson<{ message?: string; export_state?: CompletedExportState }>(
-            '/afs-filing/completed/download/cancel',
+            '/afs-filing/completed/download/cancel?context=index',
             {},
         );
 
@@ -469,7 +446,7 @@ const cancelAfsPdfExport = async (): Promise<void> => {
 
 const pollAfsPdfExportState = async (): Promise<void> => {
     try {
-        exportPdfState.value = await getApi<CompletedExportState>(generatedFilesRoutes.download.state.url());
+        exportPdfState.value = await getApi<CompletedExportState>(`${generatedFilesRoutes.download.state.url()}?context=index`);
     } catch {
         // Ignore transient polling errors.
     }
@@ -495,13 +472,13 @@ const scheduleAfsPdfExportPoll = (): void => {
 };
 
 const dismissAfsPdfExportReadyCard = (): void => {
-    if (!exportPdfState.value.downloadUrl) {
+    if (!exportReadyStateKey.value) {
         return;
     }
 
-    dismissedExportDownloadUrl.value = exportPdfState.value.downloadUrl;
+    dismissedExportReadyKey.value = exportReadyStateKey.value;
     if (typeof window !== 'undefined') {
-        window.sessionStorage.setItem('afs:dismissed-pdf-export-url', exportPdfState.value.downloadUrl);
+        window.sessionStorage.setItem('afs:dismissed-pdf-export-key', exportReadyStateKey.value);
     }
 };
 
@@ -1131,20 +1108,6 @@ watch(
     { immediate: true },
 );
 
-watch(exportReadySecondsRemaining, (seconds) => {
-    if (seconds !== 0) {
-        return;
-    }
-
-    exportPdfState.value = {
-        status: null,
-        error: null,
-        itemCount: null,
-        downloadUrl: null,
-        expiresAt: null,
-    };
-});
-
 onBeforeUnmount(() => {
     stopPolling();
 
@@ -1153,9 +1116,6 @@ onBeforeUnmount(() => {
     }
     if (exportPdfPollTimeout) {
         clearTimeout(exportPdfPollTimeout);
-    }
-    if (exportCardTicker) {
-        clearInterval(exportCardTicker);
     }
 });
 
@@ -1184,9 +1144,6 @@ onMounted(() => {
         settingsDialogOpen.value = true;
     }
     void pollAfsPdfExportState();
-    exportCardTicker = setInterval(() => {
-        exportCardNow.value = Date.now();
-    }, 1000);
 });
 </script>
 
@@ -1455,9 +1412,6 @@ onMounted(() => {
                                 ? `Your PDF ZIP export is ready with ${exportPdfState.itemCount} item${exportPdfState.itemCount === 1 ? '' : 's'}.`
                                 : 'Your PDF ZIP export is ready to download.'
                         }}
-                        </span>
-                        <span v-if="exportReadyCountdownLabel" class="text-xs text-muted-foreground">
-                            {{ exportReadyCountdownLabel }}
                         </span>
                     </span>
                     <Button as-child size="sm" class="self-start sm:self-auto">

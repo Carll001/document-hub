@@ -203,7 +203,7 @@ const queueCompletedExport = async (itemIds?: number[]) => {
         const payload = await postJson<{
             message: string;
             export_state: CompletedExportState;
-        }>(documentGeneratorRoutes.completed.download.url(), {
+        }>(`${documentGeneratorRoutes.completed.download.url()}?context=completed`, {
             company_search: companySearch.value.trim() || undefined,
             sort_by: itemsSortBy.value,
             sort_direction: itemsSortDirection.value,
@@ -221,7 +221,7 @@ const queueCompletedExport = async (itemIds?: number[]) => {
 
 const pollExportState = async () => {
     try {
-        const state = await getApi<CompletedExportState>(documentGeneratorRoutes.completed.download.state.url());
+        const state = await getApi<CompletedExportState>(`${documentGeneratorRoutes.completed.download.state.url()}?context=completed`);
         const previousStatus = exportState.value.status;
         exportState.value = state;
 

@@ -95,7 +95,7 @@ class AfsFilingPageController extends Controller
                 'company_search' => isset($validated['company_search']) ? trim((string) $validated['company_search']) : '',
                 'completed_only' => true,
             ]),
-            'initialExportState' => $completedExportService->getState((int) $user->getKey()),
+            'initialExportState' => $completedExportService->getState((int) $user->getKey(), 'completed'),
         ]);
     }
 
