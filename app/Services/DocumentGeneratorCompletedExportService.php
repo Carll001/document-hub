@@ -60,6 +60,30 @@ class DocumentGeneratorCompletedExportService
             return $this->emptyState();
         }
 
+        if ($status === self::STATUS_CANCELLING) {
+            $batchId = $state['batchId'] ?? null;
+            if (! is_string($batchId) || trim($batchId) === '') {
+                $this->putState($userId, [
+                    'status' => self::STATUS_FAILED,
+                    'error' => null,
+                    'itemCount' => null,
+                    'downloadUrl' => null,
+                    'storagePath' => null,
+                    'cancelRequested' => false,
+                    'batchId' => null,
+                ], $context);
+
+                return [
+                    'status' => self::STATUS_FAILED,
+                    'error' => null,
+                    'itemCount' => null,
+                    'downloadUrl' => null,
+                    'expiresAt' => null,
+                    'batchId' => null,
+                ];
+            }
+        }
+
         if ($status === self::STATUS_READY) {
             $storagePath = is_string($state['storagePath'] ?? null) ? $state['storagePath'] : null;
             if ($storagePath === null || ! \App\Support\DocumentStorage::disk()->exists($storagePath)) {
@@ -156,7 +180,7 @@ class DocumentGeneratorCompletedExportService
     /**
      * @return array{storagePath: string, downloadFileName: string, itemCount: int}
      */
-    public function buildZipFromQuery(Builder $query, int $userId, int $chunkSize = 10): array
+    public function buildZipFromQuery(Builder $query, int $userId, int $chunkSize = 10, string $context = 'index'): array
     {
         $directory = "tmp/afs_filing-completed-exports/user-{$userId}";
         DocumentStorage::disk()->makeDirectory($directory);
@@ -185,8 +209,8 @@ class DocumentGeneratorCompletedExportService
                 ->clone()
                 ->reorder()
                 ->select(['id', 'row_number', 'row_data', 'pdf_path'])
-                ->chunkById(max(1, $chunkSize), function ($items) use ($disk, $archive, &$usedPaths, &$includedItems, &$temporaryEntryPaths, $userId): void {
-                    if ($this->cancellationRequested($userId)) {
+                ->chunkById(max(1, $chunkSize), function ($items) use ($disk, $archive, &$usedPaths, &$includedItems, &$temporaryEntryPaths, $userId, $context): void {
+                    if ($this->cancellationRequested($userId, $context)) {
                         throw new \RuntimeException(self::CANCEL_MESSAGE);
                     }
 

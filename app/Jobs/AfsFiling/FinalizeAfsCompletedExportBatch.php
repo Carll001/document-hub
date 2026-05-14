@@ -83,7 +83,7 @@ class FinalizeAfsCompletedExportBatch implements ShouldQueue
                 throw new \RuntimeException('No completed files matched this export request.');
             }
 
-            $export = $completedExportService->buildZipFromQuery($itemsQuery, $this->userId, 25);
+            $export = $completedExportService->buildZipFromQuery($itemsQuery, $this->userId, 25, $this->context);
 
             $completedExportService->putState($this->userId, [
                 'status' => DocumentGeneratorCompletedExportService::STATUS_READY,

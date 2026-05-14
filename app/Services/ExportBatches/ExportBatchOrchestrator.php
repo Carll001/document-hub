@@ -21,23 +21,26 @@ class ExportBatchOrchestrator
         $batch = Bus::batch($jobs)
             ->name(sprintf('%s-export-user-%d', $adapter->key(), $userId))
             ->onQueue($adapter->queueName())
-            ->then(function (Batch $batch) use ($adapterClass, $userId, $context): void {
+            ->catch(function (Batch $batch, Throwable $exception) use ($adapterClass, $userId, $context): void {
+                /** @var ExportBatchAdapterInterface $resolved */
+                $resolved = app($adapterClass);
+                $resolved->handleBatchFailure($userId, $batch, $exception, $context);
+            })
+            ->finally(function (Batch $batch) use ($adapterClass, $userId, $context): void {
+                /** @var ExportBatchAdapterInterface $resolved */
+                $resolved = app($adapterClass);
+
                 if ($batch->cancelled()) {
-                    /** @var ExportBatchAdapterInterface $resolved */
-                    $resolved = app($adapterClass);
                     $resolved->handleBatchCancelled($userId, $batch, $context);
 
                     return;
                 }
 
-                /** @var ExportBatchAdapterInterface $resolved */
-                $resolved = app($adapterClass);
+                if ($batch->hasFailures()) {
+                    return;
+                }
+
                 $resolved->dispatchFinalize($userId, $batch->id, $context);
-            })
-            ->catch(function (Batch $batch, Throwable $exception) use ($adapterClass, $userId, $context): void {
-                /** @var ExportBatchAdapterInterface $resolved */
-                $resolved = app($adapterClass);
-                $resolved->handleBatchFailure($userId, $batch, $exception, $context);
             })
             ->dispatch();
 

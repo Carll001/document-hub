@@ -102,7 +102,6 @@ const deletingItems = ref(false);
 const selectedItemIds = ref<number[]>([]);
 const exportMissingDataBusy = ref(false);
 const exportPdfBusy = ref(false);
-const cancelExportPdfBusy = ref(false);
 const exportPdfState = ref<CompletedExportState>({
     status: null,
     error: null,
@@ -416,31 +415,6 @@ const queueAfsPdfExport = async (): Promise<void> => {
         toast.error(error instanceof Error ? error.message : 'Unable to export PDF list.');
     } finally {
         exportPdfBusy.value = false;
-    }
-};
-
-const cancelAfsPdfExport = async (): Promise<void> => {
-    if (cancelExportPdfBusy.value) {
-        return;
-    }
-
-    cancelExportPdfBusy.value = true;
-
-    try {
-        const payload = await sendPostJson<{ message?: string; export_state?: CompletedExportState }>(
-            '/afs-filing/completed/download/cancel?context=index',
-            {},
-        );
-
-        if (payload.export_state) {
-            exportPdfState.value = payload.export_state;
-        }
-
-        toast.success(payload.message ?? 'PDF export cancel requested.');
-    } catch (error) {
-        toast.error(error instanceof Error ? error.message : 'Unable to cancel PDF export.');
-    } finally {
-        cancelExportPdfBusy.value = false;
     }
 };
 
@@ -1339,7 +1313,7 @@ onMounted(() => {
                                 Cancel
                             </Button>
                             <Button type="submit" :disabled="creatingBatch">
-                                <Spinner v-if="creatingBatch" class="size-4" />
+                                <LoaderCircle v-if="creatingBatch" class="size-4 animate-spin" />
                                 <Upload v-else class="mr-2 size-4" />
                                 {{ creatingBatch ? 'Uploading...' : 'Start Batch' }}
                             </Button>
@@ -1372,7 +1346,7 @@ onMounted(() => {
             <Alert v-if="exportPdfState.status === 'queued' || exportPdfState.status === 'processing' || exportPdfState.status === 'cancelling'">
                 <LoaderCircle class="size-4 animate-spin" />
                 <AlertTitle>PDF Export In Progress</AlertTitle>
-                <AlertDescription class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <AlertDescription>
                     <span>
                         {{
                             exportPdfState.status === 'queued'
@@ -1382,16 +1356,6 @@ onMounted(() => {
                                     : 'Your PDF ZIP export is being prepared in the background.'
                         }}
                     </span>
-                    <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        class="self-start sm:self-auto"
-                        :disabled="cancelExportPdfBusy || exportPdfState.status === 'cancelling'"
-                        @click="void cancelAfsPdfExport()"
-                    >
-                        {{ cancelExportPdfBusy || exportPdfState.status === 'cancelling' ? 'Cancelling...' : 'Cancel' }}
-                    </Button>
                 </AlertDescription>
             </Alert>
             <Alert v-if="shouldShowExportReadyCard" class="relative pr-14">

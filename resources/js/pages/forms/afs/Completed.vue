@@ -329,7 +329,7 @@ watch(
             exportPollTimeout = null;
         }
 
-        if (status !== 'queued' && status !== 'processing') {
+        if (status !== 'queued' && status !== 'processing' && status !== 'cancelling') {
             return;
         }
 

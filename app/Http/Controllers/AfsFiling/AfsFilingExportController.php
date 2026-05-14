@@ -130,7 +130,18 @@ class AfsFilingExportController extends Controller
         $context = $this->context($request);
         $cancelled = $completedExportService->requestCancel((int) $user->getKey(), $context);
         if ($cancelled) {
-            $orchestrator->cancel((int) $user->getKey(), $adapter, $context);
+            $batchCancelled = $orchestrator->cancel((int) $user->getKey(), $adapter, $context);
+            if (! $batchCancelled) {
+                $completedExportService->putState((int) $user->getKey(), [
+                    'status' => DocumentGeneratorCompletedExportService::STATUS_FAILED,
+                    'error' => null,
+                    'itemCount' => null,
+                    'downloadUrl' => null,
+                    'storagePath' => null,
+                    'cancelRequested' => false,
+                    'batchId' => null,
+                ], $context);
+            }
         }
 
         return response()->json([
