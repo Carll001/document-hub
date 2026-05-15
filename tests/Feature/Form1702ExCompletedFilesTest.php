@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature;
 
 use App\Mail\Form1702ExCompletedRowEmail;
-use App\Jobs\ProcessForm1702ExCompletedExport;
+use App\Jobs\StartForm1702ExCompletedExportBatch;
 use App\Models\Form1702ExBatch;
 use App\Models\Form1702ExBatchRow;
 use App\Models\SyncedEmail;
@@ -118,11 +118,14 @@ class Form1702ExCompletedFilesTest extends TestCase
             ]))
             ->assertSessionHas('success', 'Completed files export queued. Your ZIP will be ready shortly.');
 
-        Queue::assertPushed(ProcessForm1702ExCompletedExport::class, function (ProcessForm1702ExCompletedExport $job): bool {
-            return $job->search === 'Foundation'
-                && $job->sort === 'generatedAt'
-                && $job->direction === 'desc'
-                && $job->rowUuids === [];
+        Queue::assertPushed(StartForm1702ExCompletedExportBatch::class, function (StartForm1702ExCompletedExportBatch $job) use ($alphaRow, $betaRow): bool {
+            $rowIds = $job->rowIds;
+            sort($rowIds);
+            $expected = [(int) $alphaRow->id, (int) $betaRow->id];
+            sort($expected);
+
+            return $job->userId === (int) $alphaRow->batch->user_id
+                && $rowIds === $expected;
         });
 
         $this->assertNotNull($alphaRow->fresh());
@@ -149,13 +152,23 @@ class Form1702ExCompletedFilesTest extends TestCase
             'receipt_file_size' => null,
         ]);
 
-        $job = new ProcessForm1702ExCompletedExport(
-            $staff->id,
-            '',
-            'generatedAt',
-            'desc',
-        );
-        $job->handle(app(Form1702ExCompletedExportService::class));
+        $service = app(Form1702ExCompletedExportService::class);
+        $rows = Form1702ExBatchRow::query()
+            ->whereHas('batch', fn ($query) => $query->whereBelongsTo($staff))
+            ->where('pdf_status', Form1702ExBatchRow::PDF_STATUS_GENERATED)
+            ->whereNotNull('generated_pdf_storage_path')
+            ->whereNotNull('receipt_storage_path')
+            ->whereNotNull('receipt_file_name')
+            ->where('receipt_is_temporary', false)
+            ->get();
+        $export = $service->buildZip($rows, (int) $staff->id);
+        $service->putState((int) $staff->id, [
+            'status' => Form1702ExCompletedExportService::STATUS_READY,
+            'error' => null,
+            'rowCount' => $export['rowCount'],
+            'downloadUrl' => route('forms.form1702ex.completed.download.file'),
+            'storagePath' => $export['storagePath'],
+        ]);
 
         $response = $this->actingAs($staff)
             ->get(route('forms.1702-ex.completed.download.file'));
@@ -193,14 +206,24 @@ class Form1702ExCompletedFilesTest extends TestCase
             'source_row_number' => 3,
         ]);
 
-        $job = new ProcessForm1702ExCompletedExport(
-            $staff->id,
-            '',
-            'generatedAt',
-            'desc',
-            [$selectedRow->uuid],
-        );
-        $job->handle(app(Form1702ExCompletedExportService::class));
+        $service = app(Form1702ExCompletedExportService::class);
+        $rows = Form1702ExBatchRow::query()
+            ->whereHas('batch', fn ($query) => $query->whereBelongsTo($staff))
+            ->where('uuid', $selectedRow->uuid)
+            ->where('pdf_status', Form1702ExBatchRow::PDF_STATUS_GENERATED)
+            ->whereNotNull('generated_pdf_storage_path')
+            ->whereNotNull('receipt_storage_path')
+            ->whereNotNull('receipt_file_name')
+            ->where('receipt_is_temporary', false)
+            ->get();
+        $export = $service->buildZip($rows, (int) $staff->id);
+        $service->putState((int) $staff->id, [
+            'status' => Form1702ExCompletedExportService::STATUS_READY,
+            'error' => null,
+            'rowCount' => $export['rowCount'],
+            'downloadUrl' => route('forms.form1702ex.completed.download.file'),
+            'storagePath' => $export['storagePath'],
+        ]);
 
         $response = $this->actingAs($staff)
             ->get(route('forms.1702-ex.completed.download.file'));

@@ -7,7 +7,7 @@ namespace App\Http\Controllers;
 use App\Jobs\GenerateForm1702ExRowReceipt;
 use App\Jobs\ProcessForm1702ExBatchImport;
 use App\Jobs\ProcessForm1702ExBatchRows;
-use App\Jobs\ProcessForm1702ExCompletedExport;
+use App\Jobs\StartForm1702ExCompletedExportBatch;
 use App\Jobs\ProcessForm1702ExRowsExport;
 use App\Jobs\ProcessForm1702ExRowsPdfExport;
 use App\Models\Form1702ExBatch;
@@ -297,7 +297,13 @@ class Form1702ExController extends Controller
                 ->with('error', 'A completed files export is already processing.');
         }
 
-        if (! $query->when($rowUuids !== [], fn($rowsQuery) => $rowsQuery->whereIn('uuid', $rowUuids))->exists()) {
+        $resolvedRowIds = $query
+            ->when($rowUuids !== [], fn($rowsQuery) => $rowsQuery->whereIn('uuid', $rowUuids))
+            ->pluck('id')
+            ->map(static fn (mixed $id): int => (int) $id)
+            ->all();
+
+        if ($resolvedRowIds === []) {
             return to_route('forms.form1702ex.completed.index', $this->completedRouteParameters($request))
                 ->with('error', 'No completed files matched this export request.');
         }
@@ -311,13 +317,9 @@ class Form1702ExController extends Controller
             'storagePath' => null,
         ]);
 
-        ProcessForm1702ExCompletedExport::dispatch(
+        StartForm1702ExCompletedExportBatch::dispatch(
             (int) $request->user()->getKey(),
-            isset($validated['search']) ? (string) $validated['search'] : '',
-            isset($validated['sort']) ? (string) $validated['sort'] : 'generatedAt',
-            isset($validated['direction']) ? (string) $validated['direction'] : 'desc',
-            isset($validated['status']) ? (string) $validated['status'] : 'all',
-            $rowUuids,
+            $resolvedRowIds,
         );
 
         return to_route('forms.form1702ex.completed.index', $this->completedRouteParameters($request))
