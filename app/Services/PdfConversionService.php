@@ -9,8 +9,17 @@ class PdfConversionService
 {
     public function convertDocxToPdf(string $docxPath): string
     {
-        $directory = dirname($docxPath);
-        $configuredBinary = '/usr/bin/libreoffice';
+        $sourcePath = realpath($docxPath) ?: $docxPath;
+
+        if (! is_file($sourcePath) || ! is_readable($sourcePath)) {
+            throw new RuntimeException(sprintf(
+                'PDF conversion failed: source DOCX file is missing or unreadable. Path: %s',
+                $docxPath
+            ));
+        }
+
+        $directory = dirname($sourcePath);
+        $configuredBinary = (string) config('services.document_generator.libreoffice_binary', 'libreoffice');
         $binaries = array_values(array_unique(array_filter([
             trim($configuredBinary),
             'libreoffice',
@@ -45,11 +54,11 @@ class PdfConversionService
                     'pdf:writer_pdf_Export',
                     '--outdir',
                     $directory,
-                    $docxPath,
+                    $sourcePath,
                 ]);
 
                 if ($process->successful()) {
-                    $pdfPath = $this->resolveGeneratedPdfPath($docxPath, $directory);
+                    $pdfPath = $this->resolveGeneratedPdfPath($sourcePath, $directory);
                     if ($pdfPath !== null) {
                         return $pdfPath;
                     }
