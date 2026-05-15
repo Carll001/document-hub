@@ -19,6 +19,17 @@ class PdfConversionService
         }
 
         $directory = dirname($sourcePath);
+        $workingDirectory = $this->createWorkingDirectory();
+        $workingDocxPath = $workingDirectory.'/source.docx';
+        $workingPdfPath = $workingDirectory.'/source.pdf';
+
+        if (! @copy($sourcePath, $workingDocxPath)) {
+            throw new RuntimeException(sprintf(
+                'PDF conversion failed: unable to copy DOCX to working directory. Source: %s',
+                $sourcePath
+            ));
+        }
+
         $configuredBinary = (string) config('services.document_generator.libreoffice_binary', 'libreoffice');
         $binaries = array_values(array_unique(array_filter([
             trim($configuredBinary),
@@ -53,14 +64,26 @@ class PdfConversionService
                     '--convert-to',
                     'pdf:writer_pdf_Export',
                     '--outdir',
-                    $directory,
-                    $sourcePath,
+                    $workingDirectory,
+                    $workingDocxPath,
                 ]);
 
                 if ($process->successful()) {
-                    $pdfPath = $this->resolveGeneratedPdfPath($sourcePath, $directory);
+                    $pdfPath = $this->resolveGeneratedPdfPath($workingDocxPath, $workingDirectory);
                     if ($pdfPath !== null) {
-                        return $pdfPath;
+                        $outputPath = preg_replace('/\.docx$/i', '.pdf', $sourcePath);
+                        if (! is_string($outputPath) || $outputPath === '') {
+                            throw new RuntimeException('PDF conversion failed: could not resolve output path.');
+                        }
+
+                        if (! @copy($pdfPath, $outputPath)) {
+                            throw new RuntimeException(sprintf(
+                                'PDF conversion failed: unable to save generated PDF to output path. Output: %s',
+                                $outputPath
+                            ));
+                        }
+
+                        return $outputPath;
                     }
 
                     throw new RuntimeException(sprintf(
@@ -80,6 +103,10 @@ class PdfConversionService
             // Kill any orphaned soffice processes tied to this profile to prevent
             // them from accumulating and exhausting server memory across jobs.
             Process::run(['pkill', '-f', $userProfileDir]);
+
+            if (is_dir($workingDirectory)) {
+                app(\Illuminate\Filesystem\Filesystem::class)->deleteDirectory($workingDirectory);
+            }
 
             if (is_dir($userProfileDir)) {
                 app(\Illuminate\Filesystem\Filesystem::class)->deleteDirectory($userProfileDir);
@@ -121,5 +148,15 @@ class PdfConversionService
         }
 
         return null;
+    }
+
+    private function createWorkingDirectory(): string
+    {
+        $path = sys_get_temp_dir().'/libreoffice-work-'.uniqid('', true);
+        if (! @mkdir($path, 0777, true) && ! is_dir($path)) {
+            throw new RuntimeException('PDF conversion failed: unable to create working directory.');
+        }
+
+        return $path;
     }
 }
