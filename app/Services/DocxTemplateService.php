@@ -4,6 +4,7 @@ namespace App\Services;
 
 use DOMDocument;
 use DOMXPath;
+use PhpOffice\PhpWord\Settings;
 use PhpOffice\PhpWord\TemplateProcessor;
 use RuntimeException;
 use ZipArchive;
@@ -86,23 +87,29 @@ class DocxTemplateService
                 $this->configureMacroChars($processor);
 
                 $normalizedMap = $this->normalizeRowData($rowData);
+                $previousEscaping = Settings::isOutputEscapingEnabled();
+                Settings::setOutputEscapingEnabled(true);
 
-                $keysInTemplate = $this->extractPlaceholderKeys($processor);
-                foreach ($keysInTemplate as $key) {
-                    if ($this->isSignatureImagePlaceholder($key)) {
-                        // Keep signature placeholders unresolved so they can be injected later during signing.
-                        continue;
+                try {
+                    $keysInTemplate = $this->extractPlaceholderKeys($processor);
+                    foreach ($keysInTemplate as $key) {
+                        if ($this->isSignatureImagePlaceholder($key)) {
+                            // Keep signature placeholders unresolved so they can be injected later during signing.
+                            continue;
+                        }
+
+                        $resolution = $this->resolvePlaceholderValue($key, $normalizedMap, $selectedTemplateYear);
+                        $value = $resolution['status'] === 'resolved'
+                            ? $this->formatValueForTemplate($resolution['value'])
+                            : '';
+
+                        $processor->setValue($key, $value);
                     }
 
-                    $resolution = $this->resolvePlaceholderValue($key, $normalizedMap, $selectedTemplateYear);
-                    $value = $resolution['status'] === 'resolved'
-                        ? $this->formatValueForTemplate($resolution['value'])
-                        : '';
-
-                    $processor->setValue($key, $value);
+                    $processor->saveAs($outputPath);
+                } finally {
+                    Settings::setOutputEscapingEnabled($previousEscaping);
                 }
-
-                $processor->saveAs($outputPath);
             }
         );
     }

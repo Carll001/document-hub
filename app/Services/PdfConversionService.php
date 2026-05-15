@@ -18,10 +18,8 @@ class PdfConversionService
             ));
         }
 
-        $directory = dirname($sourcePath);
         $workingDirectory = $this->createWorkingDirectory();
         $workingDocxPath = $workingDirectory.'/source.docx';
-        $workingPdfPath = $workingDirectory.'/source.pdf';
 
         if (! @copy($sourcePath, $workingDocxPath)) {
             throw new RuntimeException(sprintf(
@@ -30,7 +28,7 @@ class PdfConversionService
             ));
         }
 
-        $configuredBinary = (string) config('services.document_generator.libreoffice_binary', 'libreoffice');
+        $configuredBinary = '/usr/bin/libreoffice';
         $binaries = array_values(array_unique(array_filter([
             trim($configuredBinary),
             'libreoffice',
@@ -56,17 +54,17 @@ class PdfConversionService
                         'FONTCONFIG_FILE' => '/etc/fonts/fonts.conf',
                     ])
                     ->run([
-                    $binary,
-                    '--headless',
-                    '--norestore',
-                    '--nofirststartwizard',
-                    "-env:UserInstallation=file://{$userProfileDir}",
-                    '--convert-to',
-                    'pdf:writer_pdf_Export',
-                    '--outdir',
-                    $workingDirectory,
-                    $workingDocxPath,
-                ]);
+                        $binary,
+                        '--headless',
+                        '--norestore',
+                        '--nofirststartwizard',
+                        "-env:UserInstallation=file://{$userProfileDir}",
+                        '--convert-to',
+                        'pdf:writer_pdf_Export',
+                        '--outdir',
+                        $workingDirectory,
+                        $workingDocxPath,
+                    ]);
 
                 if ($process->successful()) {
                     $pdfPath = $this->resolveGeneratedPdfPath($workingDocxPath, $workingDirectory);
@@ -87,8 +85,10 @@ class PdfConversionService
                     }
 
                     throw new RuntimeException(sprintf(
-                        'PDF conversion failed: output file was not generated. Binary: %s. Command output: %s',
+                        'PDF conversion failed: output file was not generated. Binary: %s. Source: %s. Size: %d bytes. Command output: %s',
                         $binary,
+                        $workingDocxPath,
+                        @filesize($workingDocxPath) ?: 0,
                         trim($process->output() ?: $process->errorOutput())
                     ));
                 }
@@ -114,8 +114,7 @@ class PdfConversionService
         }
 
         throw new RuntimeException(
-            'PDF conversion failed. Install LibreOffice and ensure the binary is available, '.
-            'or set LIBREOFFICE_BINARY in .env. Attempts: '.implode(' | ', $errors)
+            'PDF conversion failed. LibreOffice conversion attempts: '.implode(' | ', $errors)
         );
     }
 
