@@ -40,12 +40,16 @@ class PdfConversionService
                 ]);
 
                 if ($process->successful()) {
-                    $pdfPath = preg_replace('/\.docx$/i', '.pdf', $docxPath);
-                    if ($pdfPath !== null && file_exists($pdfPath)) {
+                    $pdfPath = $this->resolveGeneratedPdfPath($docxPath, $directory);
+                    if ($pdfPath !== null) {
                         return $pdfPath;
                     }
 
-                    throw new RuntimeException('PDF conversion failed: output file was not generated.');
+                    throw new RuntimeException(sprintf(
+                        'PDF conversion failed: output file was not generated. Binary: %s. Command output: %s',
+                        $binary,
+                        trim($process->output() ?: $process->errorOutput())
+                    ));
                 }
 
                 $errors[] = sprintf(
@@ -68,5 +72,36 @@ class PdfConversionService
             'PDF conversion failed. Install LibreOffice and ensure the binary is available, '.
             'or set LIBREOFFICE_BINARY in .env. Attempts: '.implode(' | ', $errors)
         );
+    }
+
+    private function resolveGeneratedPdfPath(string $docxPath, string $directory): ?string
+    {
+        $expected = preg_replace('/\.docx$/i', '.pdf', $docxPath);
+        if (is_string($expected) && is_file($expected)) {
+            return $expected;
+        }
+
+        // Some environments write the file with a short delay after process exit.
+        $waitUntil = microtime(true) + 2.0;
+        while (microtime(true) < $waitUntil) {
+            usleep(200_000);
+            if (is_string($expected) && is_file($expected)) {
+                return $expected;
+            }
+        }
+
+        $docxBase = pathinfo($docxPath, PATHINFO_FILENAME);
+        if ($docxBase === '') {
+            return null;
+        }
+
+        $matches = glob($directory.'/'.$docxBase.'.[Pp][Dd][Ff]') ?: [];
+        foreach ($matches as $match) {
+            if (is_file($match)) {
+                return $match;
+            }
+        }
+
+        return null;
     }
 }
