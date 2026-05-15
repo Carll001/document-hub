@@ -7,6 +7,7 @@ namespace App\Services;
 use App\Models\Form1702ExBatchRow;
 use App\Models\User;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Str;
 use ZipArchive;
@@ -14,6 +15,7 @@ use ZipArchive;
 class Form1702ExCompletedExportService
 {
     private const CACHE_TTL_SECONDS = 21600;
+    private const ACTIVE_STATE_MAX_AGE_SECONDS = 7200;
 
     public const STATUS_QUEUED = 'queued';
 
@@ -47,6 +49,42 @@ class Form1702ExCompletedExportService
             return $this->emptyState();
         }
 
+        if (in_array($status, [self::STATUS_QUEUED, self::STATUS_PROCESSING], true)) {
+            $batchId = is_string($state['batchId'] ?? null) ? trim((string) $state['batchId']) : '';
+
+            if ($batchId !== '') {
+                $batch = Bus::findBatch($batchId);
+
+                if ($batch === null) {
+                    if ($this->isStateStale($state)) {
+                        $this->forgetState($userId);
+
+                        return $this->emptyState();
+                    }
+                } elseif ($batch->cancelled() || ($batch->finished() && $batch->hasFailures())) {
+                    $this->putState($userId, [
+                        'status' => self::STATUS_FAILED,
+                        'error' => 'The completed files ZIP could not be prepared right now.',
+                        'rowCount' => null,
+                        'downloadUrl' => null,
+                        'storagePath' => null,
+                        'batchId' => $batch->id,
+                    ]);
+
+                    return [
+                        'status' => self::STATUS_FAILED,
+                        'error' => 'The completed files ZIP could not be prepared right now.',
+                        'rowCount' => null,
+                        'downloadUrl' => null,
+                    ];
+                }
+            } elseif ($this->isStateStale($state)) {
+                $this->forgetState($userId);
+
+                return $this->emptyState();
+            }
+        }
+
         if ($status === self::STATUS_READY) {
             $storagePath = is_string($state['storagePath'] ?? null) ? $state['storagePath'] : null;
 
@@ -70,6 +108,8 @@ class Form1702ExCompletedExportService
      */
     public function putState(int $userId, array $state): void
     {
+        $state['updatedAt'] = now()->toIso8601String();
+
         Cache::put($this->cacheKey($userId), $state, now()->addSeconds(self::CACHE_TTL_SECONDS));
     }
 
@@ -547,5 +587,20 @@ class Form1702ExCompletedExportService
     private function chunkDirectory(int $userId, string $exportRunId): string
     {
         return "tmp/form-1702-ex-completed-exports/user-{$userId}/chunks/{$exportRunId}";
+    }
+
+    /**
+     * @param  array<string, mixed>  $state
+     */
+    private function isStateStale(array $state): bool
+    {
+        $updatedAtRaw = $state['updatedAt'] ?? null;
+        $updatedAt = is_string($updatedAtRaw) ? strtotime($updatedAtRaw) : false;
+
+        if (! is_int($updatedAt) || $updatedAt <= 0) {
+            return true;
+        }
+
+        return (time() - $updatedAt) > self::ACTIVE_STATE_MAX_AGE_SECONDS;
     }
 }
