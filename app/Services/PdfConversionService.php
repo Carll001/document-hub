@@ -10,7 +10,7 @@ class PdfConversionService
     public function convertDocxToPdf(string $docxPath): string
     {
         $directory = dirname($docxPath);
-        $configuredBinary = (string) config('services.document_generator.libreoffice_binary', 'libreoffice');
+        $configuredBinary = '/usr/bin/libreoffice';
         $binaries = array_values(array_unique(array_filter([
             trim($configuredBinary),
             'libreoffice',
@@ -23,10 +23,19 @@ class PdfConversionService
         // concurrent or back-to-back jobs when a prior LibreOffice run left
         // orphaned child processes holding the default profile lock.
         $userProfileDir = sys_get_temp_dir().'/libreoffice-profile-'.uniqid('', true);
+        $cacheDir = $userProfileDir.'/cache';
+        @mkdir($cacheDir, 0777, true);
 
         try {
             foreach ($binaries as $binary) {
-                $process = Process::timeout(120)->run([
+                $process = Process::timeout(120)
+                    ->env([
+                        'HOME' => $userProfileDir,
+                        'XDG_CACHE_HOME' => $cacheDir,
+                        'FONTCONFIG_PATH' => '/etc/fonts',
+                        'FONTCONFIG_FILE' => '/etc/fonts/fonts.conf',
+                    ])
+                    ->run([
                     $binary,
                     '--headless',
                     '--norestore',
